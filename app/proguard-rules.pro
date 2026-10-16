@@ -1,0 +1,12 @@
+# SmartLedger Pro Android Proguard Rules
+-keep class androidx.room.** { *; }
+-dontwarn androidx.room.**
+-keep class * extends androidx.room.RoomDatabase
+-keep @androidx.room.Entity class * { *; }
+-keep @androidx.room.Dao interface * { *; }
+-keep class com.smartledger.pro.data.local.entity.** { *; }
+-keep class com.smartledger.pro.data.local.dao.** { *; }
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+-dontwarn kotlinx.coroutines.**
+-keep class kotlinx.coroutines.** { *; }
+-keep class androidx.compose.runtime.** { *; }
