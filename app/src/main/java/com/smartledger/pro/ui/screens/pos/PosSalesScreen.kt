@@ -1,5 +1,7 @@
 package com.smartledger.pro.ui.screens.pos
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -60,7 +62,14 @@ fun PosSalesScreen(
     var showBarcodeScanner by rememberSaveable { mutableStateOf(false) }
     var showClearCartConfirm by rememberSaveable { mutableStateOf(false) }
 
-    var lineToEditQuantityOrPrice by remember { mutableStateOf<CartLineItem?>(null) }
+    var editingLineProductId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val lineToEditQuantityOrPrice = editingLineProductId?.let { id -> cartLines.firstOrNull { it.productId == id } }
+    val btPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) {
+            isStatusError = true
+            statusMessage = "يلزم منح إذن البلوتوث (الأجهزة القريبة) للاتصال بالطابعة الحرارية."
+        }
+    }
     var lastRemovedItem by remember { mutableStateOf<CartLineItem?>(null) }
     var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var isStatusError by rememberSaveable { mutableStateOf(false) }
@@ -358,7 +367,7 @@ fun PosSalesScreen(
                             viewModel.updateLineQuantities(line.productId, maj, min)
                         },
                         onEditLineDetails = {
-                            lineToEditQuantityOrPrice = line
+                            editingLineProductId = line.productId
                         },
                         onRemoveLine = {
                             lastRemovedItem = line
@@ -398,7 +407,7 @@ fun PosSalesScreen(
         // نافذة تعديل كمية وسعر بند في السلة العائمة فوق لوحة المفاتيح
         if (lineToEditQuantityOrPrice != null) {
             val targetLine = lineToEditQuantityOrPrice!!
-            FloatingModalDialog(onDismissRequest = { lineToEditQuantityOrPrice = null }) {
+            FloatingModalDialog(onDismissRequest = { editingLineProductId = null }) {
                 var minorQtyText by rememberSaveable(targetLine.productId) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.minorQuantity)) }
                 var majorQtyText by rememberSaveable(targetLine.productId) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.majorQuantity)) }
                 var minorPriceText by rememberSaveable(targetLine.productId) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.minorUnitPrice)) }
@@ -409,7 +418,7 @@ fun PosSalesScreen(
                     title = "تعديل الكمية والسعر للبند",
                     subtitle = targetLine.name,
                     headerIcon = Icons.Default.EditNote,
-                    onDismiss = { lineToEditQuantityOrPrice = null },
+                    onDismiss = { editingLineProductId = null },
                     primaryButtonText = "تحديث البند",
                     onPrimaryClick = {
                         val newMinQty = NumberFormatter.parseDouble(minorQtyText, 0.0)
@@ -418,7 +427,7 @@ fun PosSalesScreen(
                         val newMajPrice = NumberFormatter.parseDouble(majorPriceText, targetLine.majorUnitPrice)
                         viewModel.updateLineUnitPrice(targetLine.productId, newMinPrice, newMajPrice)
                         viewModel.updateLineQuantities(targetLine.productId, newMajQty, newMinQty)
-                        lineToEditQuantityOrPrice = null
+                        editingLineProductId = null
                     }
                 ) {
                     FormSectionGroup(title = "الوحدة الصغرى (${targetLine.smallUnit})") {
@@ -755,6 +764,12 @@ fun PosSalesScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                         OutlinedButton(
                             onClick = {
+                                val reqPerm = ThermalPrinterHelper.requiredBluetoothRuntimePermission()
+                                if (reqPerm != null && !ThermalPrinterHelper.hasBluetoothConnectPermission(context)) {
+                                    btPermissionLauncher.launch(reqPerm)
+                                    printStatusMsg = "يرجى الموافقة على إذن البلوتوث ثم الضغط على طباعة مرة أخرى."
+                                    return@OutlinedButton
+                                }
                                 isPrinting = true
                                 scope.launch {
                                     val printRes = ThermalPrinterHelper.printInvoiceByAddress(
@@ -826,7 +841,8 @@ fun PosSalesScreen(
 
         // نافذة سجل الفواتير الصادرة وإدارة المرتجعات العائمة
         if (showInvoicesHistorySheet) {
-            var invoiceToReverse by remember { mutableStateOf<InvoiceEntity?>(null) }
+            var invoiceIdToReverse by rememberSaveable { mutableStateOf<Long?>(null) }
+            val invoiceToReverse = remember(recentInvoices, invoiceIdToReverse) { invoiceIdToReverse?.let { id -> recentInvoices.firstOrNull { it.Id == id } } }
             var selectedInvoiceForLines by remember { mutableStateOf<InvoiceEntity?>(null) }
             var selectedInvoiceLines by remember { mutableStateOf<List<InvoiceLineEntity>>(emptyList()) }
 
@@ -893,7 +909,7 @@ fun PosSalesScreen(
                                                 }
                                             } else {
                                                 OutlinedButton(
-                                                    onClick = { invoiceToReverse = inv },
+                                                    onClick = { invoiceIdToReverse = inv.Id },
                                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = SmartLedgerColors.StateDanger),
                                                     border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateDangerBorder)),
                                                     shape = RoundedCornerShape(6.dp),
@@ -938,12 +954,12 @@ fun PosSalesScreen(
                     onConfirm = { reason ->
                         scope.launch {
                             viewModel.reverseInvoice(targetInv.Id, reason ?: "مرتجع مبيعات معتمد")
-                            invoiceToReverse = null
+                            invoiceIdToReverse = null
                             isStatusError = false
                             statusMessage = "تم إرجاع الفاتورة ${targetInv.InvoiceNumber} واستعادة المخزون بنجاح."
                         }
                     },
-                    onDismiss = { invoiceToReverse = null }
+                    onDismiss = { invoiceIdToReverse = null }
                 )
             }
         }

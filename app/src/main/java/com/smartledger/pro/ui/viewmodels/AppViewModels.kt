@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.smartledger.pro.data.local.dao.*
 import com.smartledger.pro.data.local.entity.*
@@ -15,9 +16,13 @@ import com.smartledger.pro.di.AppContainer
 import com.smartledger.pro.domain.model.UnitConversionEngine
 import com.smartledger.pro.domain.usecase.SaleLineDraft
 import com.smartledger.pro.util.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -258,7 +263,19 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
     }
 }
 
-class PosViewModel(application: Application) : AndroidViewModel(application) {
+/**
+ * نموذج عرض نقطة البيع السريعة (`PosViewModel`) مع حماية كاملة ضد قتل العملية في الخلفية (`Process Death`):
+ * - يحفظ عناصر السلة (`cartLines`) ومعرّف العميل المختار (`selectedCustomer`) تلقائياً داخل `SavedStateHandle`
+ *   بصيغة JSON مضغوطة وآمنة ضد `TransactionTooLargeException`.
+ * - يستعيد السلة والعميل تلقائياً عند إعادة إنشاء العملية بواسطة نظام أندرويد.
+ */
+class PosViewModel(
+    application: Application,
+    private val savedStateHandle: SavedStateHandle
+) : AndroidViewModel(application) {
+
+    constructor(application: Application) : this(application, SavedStateHandle())
+
     private val container = AppContainer.getInstance(application)
     private val invoiceRepo = container.invoiceRepository
     private val productRepo = container.inventoryRepository
@@ -281,8 +298,83 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     val recentInvoices: StateFlow<List<InvoiceEntity>> = invoiceRepo.getRecentInvoices(40)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    var selectedCustomer by mutableStateOf<AccountBalanceSummary?>(null)
+    private var _selectedCustomer by mutableStateOf<AccountBalanceSummary?>(null)
+    var selectedCustomer: AccountBalanceSummary?
+        get() = _selectedCustomer
+        set(value) {
+            _selectedCustomer = value
+            savedStateHandle[KEY_SAVED_CUSTOMER_ID] = value?.PersonId ?: 0L
+        }
+
     val cartLines = mutableStateListOf<CartLineItem>()
+
+    init {
+        restoreCartFromSavedState()
+        observeCustomersToRestoreSelection()
+    }
+
+    private fun observeCustomersToRestoreSelection() {
+        viewModelScope.launch {
+            customers.collect { list ->
+                val savedId = savedStateHandle.get<Long>(KEY_SAVED_CUSTOMER_ID) ?: 0L
+                if (savedId > 0L && _selectedCustomer == null) {
+                    _selectedCustomer = list.firstOrNull { it.PersonId == savedId }
+                }
+            }
+        }
+    }
+
+    private fun persistCartToSavedState() {
+        runCatching {
+            val arr = JSONArray()
+            for (item in cartLines.take(MAX_SAVED_CART_LINES)) {
+                arr.put(
+                    JSONObject().apply {
+                        put("id", item.productId)
+                        put("n", item.name)
+                        put("bc", item.barcode ?: "")
+                        put("su", item.smallUnit)
+                        put("lu", item.largeUnit ?: "")
+                        put("uf", item.unitFactor)
+                        put("st", item.availableStockMinor)
+                        put("mp", item.minorUnitPrice)
+                        put("jp", item.majorUnitPrice)
+                        put("mc", item.minorUnitCost)
+                        put("jq", item.majorQuantity)
+                        put("mq", item.minorQuantity)
+                    }
+                )
+            }
+            savedStateHandle[KEY_SAVED_CART_JSON] = arr.toString()
+        }
+    }
+
+    private fun restoreCartFromSavedState() {
+        val rawJson = savedStateHandle.get<String>(KEY_SAVED_CART_JSON) ?: return
+        if (rawJson.isBlank() || cartLines.isNotEmpty()) return
+        runCatching {
+            val arr = JSONArray(rawJson)
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                cartLines.add(
+                    CartLineItem(
+                        productId = obj.getLong("id"),
+                        name = obj.optString("n"),
+                        barcode = obj.optString("bc").ifBlank { null },
+                        smallUnit = obj.optString("su", "قطعة"),
+                        largeUnit = obj.optString("lu").ifBlank { null },
+                        unitFactor = obj.optDouble("uf", 1.0),
+                        availableStockMinor = obj.optDouble("st", 0.0),
+                        minorUnitPrice = obj.optDouble("mp", 0.0),
+                        majorUnitPrice = obj.optDouble("jp", 0.0),
+                        minorUnitCost = obj.optDouble("mc", 0.0),
+                        majorQuantity = obj.optDouble("jq", 0.0),
+                        minorQuantity = obj.optDouble("mq", 1.0)
+                    )
+                )
+            }
+        }
+    }
 
     fun addItemToCart(product: ProductStockItem, asMajorUnit: Boolean = false) {
         val index = cartLines.indexOfFirst { it.productId == product.Id }
@@ -313,6 +405,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 )
             )
         }
+        persistCartToSavedState()
     }
 
     fun updateLineQuantities(productId: Long, majorQty: Double, minorQty: Double) {
@@ -326,6 +419,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     minorQuantity = minorQty.coerceAtLeast(0.0)
                 )
             }
+            persistCartToSavedState()
         }
     }
 
@@ -336,16 +430,20 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 minorUnitPrice = NumberFormatter.roundCurrency(newMinorPrice.coerceAtLeast(0.0)),
                 majorUnitPrice = NumberFormatter.roundCurrency(newMajorPrice.coerceAtLeast(0.0))
             )
+            persistCartToSavedState()
         }
     }
 
     fun removeItemFromCart(productId: Long) {
         cartLines.removeAll { it.productId == productId }
+        persistCartToSavedState()
     }
 
     fun clearCart() {
         cartLines.clear()
         selectedCustomer = null
+        savedStateHandle[KEY_SAVED_CART_JSON] = ""
+        savedStateHandle[KEY_SAVED_CUSTOMER_ID] = 0L
     }
 
     suspend fun getInvoiceLines(invoiceId: Long): List<InvoiceLineEntity> {
@@ -394,6 +492,12 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             clearCart()
         }
         return result
+    }
+
+    companion object {
+        private const val KEY_SAVED_CART_JSON = "pos_saved_cart_json_v1"
+        private const val KEY_SAVED_CUSTOMER_ID = "pos_saved_customer_id_v1"
+        private const val MAX_SAVED_CART_LINES = 60
     }
 }
 
@@ -597,8 +701,7 @@ class ReportsViewModel(application: Application) : AndroidViewModel(application)
  * نموذج عرض الإعدادات والنسخ الاحتياطي والأمان (`SettingsViewModel`).
  *
  * يدير العمليات الحرجة (النسخ الاحتياطي، التصدير، الفحص، الاستعادة، الرفع السحابي، وتشفير PIN)
- * داخل `viewModelScope` بدلاً من `rememberCoroutineScope()` التابع للـ Composable،
- * مما يمنع انقطاع النسخ أو الاستعادة عند تدوير الشاشة أو إعادة بناء الواجهة.
+ * داخل `viewModelScope` وبعيداً عن الخيط الرئيسي (`Main Thread`).
  */
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
@@ -660,9 +763,22 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         prefsRepo.updateSettings(transform)
     }
 
-    fun updateAppPin(rawPin: String) {
-        val hashed = if (rawPin.isBlank()) "" else SecurityCryptoHelper.hashPin(rawPin.trim())
-        prefsRepo.updateSettings { it.copy(appPinCode = hashed) }
+    /**
+     * اشتقاق بصمة رمز الحماية (PBKDF2-SHA256) على خيط خلفي (`Dispatchers.Default`) لمنع تجميد الخيط الرئيسي
+     */
+    fun updateAppPin(rawPin: String, onComplete: (() -> Unit)? = null) {
+        viewModelScope.launch {
+            val clean = rawPin.trim()
+            val hashed = if (clean.isBlank()) {
+                ""
+            } else {
+                withContext(Dispatchers.Default) {
+                    SecurityCryptoHelper.hashPin(clean)
+                }
+            }
+            prefsRepo.updateSettings { it.copy(appPinCode = hashed) }
+            onComplete?.invoke()
+        }
     }
 
     fun resetPreferencesToDefault() {

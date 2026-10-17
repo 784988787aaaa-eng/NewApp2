@@ -58,7 +58,8 @@ fun AccountsScreen(
     var selectedAccountIdForStatement by rememberSaveable { mutableStateOf<Long?>(null) }
     var quickVoucherPersonId by rememberSaveable { mutableStateOf<Long?>(null) }
     var quickVoucherInitialReceipt by rememberSaveable { mutableStateOf(true) }
-    var accountToDelete by remember { mutableStateOf<AccountBalanceSummary?>(null) }
+    var accountIdToDelete by rememberSaveable { mutableStateOf<Long?>(null) }
+    val accountToDelete = remember(accounts, accountIdToDelete) { accountIdToDelete?.let { id -> accounts.firstOrNull { it.PersonId == id } } }
     var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var isStatusError by rememberSaveable { mutableStateOf(false) }
 
@@ -99,7 +100,13 @@ fun AccountsScreen(
         val phone = acc.Phone?.trim()
         if (!phone.isNullOrBlank()) {
             try {
-                val cleanPhone = if (phone.startsWith("+") || phone.startsWith("00")) phone.removePrefix("+").removePrefix("00") else "967$phone"
+                val digitsOnly = phone.filter { it.isDigit() || it == '+' }
+                val cleanPhone = when {
+                    digitsOnly.startsWith("+") -> digitsOnly.removePrefix("+")
+                    digitsOnly.startsWith("00") -> digitsOnly.removePrefix("00")
+                    digitsOnly.startsWith("967") -> digitsOnly
+                    else -> "967" + digitsOnly.trimStart('0')
+                }
                 val url = "https://api.whatsapp.com/send?phone=$cleanPhone&text=${Uri.encode(msg)}"
                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
             } catch (_: Exception) {
@@ -253,7 +260,7 @@ fun AccountsScreen(
                         },
                         onCall = { safeCallPhone(account.Phone) },
                         onShare = { safeShareWhatsApp(account) },
-                        onDelete = { accountToDelete = account }
+                        onDelete = { accountIdToDelete = account.PersonId }
                     )
                 }
             }
@@ -371,11 +378,11 @@ fun AccountsScreen(
                 requireReason = true,
                 onConfirm = { reason ->
                     viewModel.deleteAccount(target.PersonId, reason)
-                    accountToDelete = null
+                    accountIdToDelete = null
                     isStatusError = false
                     statusMessage = "تمت أرشفة الحساب «${target.PersonName}»."
                 },
-                onDismiss = { accountToDelete = null }
+                onDismiss = { accountIdToDelete = null }
             )
         }
     }
@@ -640,7 +647,8 @@ fun AccountStatementSheetContent(
     val allOperations by operationsFlow.collectAsState(initial = emptyList())
     var periodFilter by rememberSaveable { mutableStateOf("ALL") }
     var typeFilter by rememberSaveable { mutableStateOf("ALL") }
-    var operationToDelete by remember { mutableStateOf<OperationEntity?>(null) }
+    var operationIdToDelete by rememberSaveable { mutableStateOf<Long?>(null) }
+    val operationToDelete = remember(allOperations, operationIdToDelete) { operationIdToDelete?.let { id -> allOperations.firstOrNull { it.Id == id } } }
 
     val operationsWithRunningBalance = remember(allOperations) {
         val chronological = allOperations.sortedWith(compareBy<OperationEntity> { it.OccurredAt }.thenBy { it.Id })
@@ -848,7 +856,7 @@ fun AccountStatementSheetContent(
                             if (!isAlreadyReversed) {
                                 Spacer(modifier = Modifier.width(6.dp))
                                 IconButton(
-                                    onClick = { operationToDelete = op },
+                                    onClick = { operationIdToDelete = op.Id },
                                     modifier = Modifier.size(26.dp)
                                 ) {
                                     Icon(Icons.Default.Undo, contentDescription = "إلغاء بقيد عكسي", tint = SmartLedgerColors.StateWarning, modifier = Modifier.size(16.dp))
@@ -871,9 +879,9 @@ fun AccountStatementSheetContent(
             reasonLabel = "سبب الإلغاء المحاسبي",
             onConfirm = { reason ->
                 viewModel.deleteOperation(targetOp.Id, reason)
-                operationToDelete = null
+                operationIdToDelete = null
             },
-            onDismiss = { operationToDelete = null }
+            onDismiss = { operationIdToDelete = null }
         )
     }
 }

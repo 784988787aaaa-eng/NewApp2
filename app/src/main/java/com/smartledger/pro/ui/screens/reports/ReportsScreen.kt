@@ -35,6 +35,10 @@ import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.ui.viewmodels.ReportsViewModel
 import com.smartledger.pro.util.NumberFormatter
 import com.smartledger.pro.util.ThermalPrinterHelper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.util.Locale
 
 @Composable
@@ -46,6 +50,7 @@ fun ReportsScreen(
     val selectedPeriod by viewModel.selectedPeriod.collectAsState()
     val identity by viewModel.businessIdentity.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var statusBanner by rememberSaveable { mutableStateOf<String?>(null) }
     var isErrorBanner by rememberSaveable { mutableStateOf(false) }
@@ -66,21 +71,31 @@ fun ReportsScreen(
         contract = ActivityResultContracts.CreateDocument("text/html")
     ) { uri ->
         if (uri != null) {
-            try {
-                val htmlContent = buildPrintableHtmlReport(
-                    tradeName = identity?.TradeName ?: "الدفتر الذكي Pro",
-                    periodLabel = periodLabel,
-                    currency = AppDesignState.currencySymbol,
-                    summary = summary
-                )
-                context.contentResolver.openOutputStream(uri)?.use { os ->
-                    os.write(htmlContent.toByteArray(Charsets.UTF_8))
+            val tradeNameSnap = identity?.TradeName ?: "الدفتر الذكي Pro"
+            val currencySnap = AppDesignState.currencySymbol
+            val summarySnap = summary
+            scope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        val htmlContent = buildPrintableHtmlReport(
+                            tradeName = tradeNameSnap,
+                            periodLabel = periodLabel,
+                            currency = currencySnap,
+                            summary = summarySnap
+                        )
+                        val outStream = context.contentResolver.openOutputStream(uri)
+                            ?: throw IOException("تعذر فتح مسار الحفظ المختار")
+                        outStream.use { os ->
+                            os.write(htmlContent.toByteArray(Charsets.UTF_8))
+                            os.flush()
+                        }
+                    }
+                    isErrorBanner = false
+                    statusBanner = "تم تصدير التقرير المالي القابل للطباعة بنجاح."
+                } catch (e: Exception) {
+                    isErrorBanner = true
+                    statusBanner = "تعذر حفظ ملف التقرير: ${e.localizedMessage}"
                 }
-                isErrorBanner = false
-                statusBanner = "تم تصدير التقرير المالي القابل للطباعة بنجاح."
-            } catch (e: Exception) {
-                isErrorBanner = true
-                statusBanner = "تعذر حفظ ملف التقرير: ${e.localizedMessage}"
             }
         }
     }
@@ -89,22 +104,32 @@ fun ReportsScreen(
         contract = ActivityResultContracts.CreateDocument("text/csv")
     ) { uri ->
         if (uri != null) {
-            try {
-                val csvContent = buildCsvFinancialReport(
-                    tradeName = identity?.TradeName ?: "الدفتر الذكي Pro",
-                    periodLabel = periodLabel,
-                    currency = AppDesignState.currencySymbol,
-                    summary = summary
-                )
-                context.contentResolver.openOutputStream(uri)?.use { os ->
-                    os.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
-                    os.write(csvContent.toByteArray(Charsets.UTF_8))
+            val tradeNameSnap = identity?.TradeName ?: "الدفتر الذكي Pro"
+            val currencySnap = AppDesignState.currencySymbol
+            val summarySnap = summary
+            scope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        val csvContent = buildCsvFinancialReport(
+                            tradeName = tradeNameSnap,
+                            periodLabel = periodLabel,
+                            currency = currencySnap,
+                            summary = summarySnap
+                        )
+                        val outStream = context.contentResolver.openOutputStream(uri)
+                            ?: throw IOException("تعذر فتح مسار الحفظ المختار")
+                        outStream.use { os ->
+                            os.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
+                            os.write(csvContent.toByteArray(Charsets.UTF_8))
+                            os.flush()
+                        }
+                    }
+                    isErrorBanner = false
+                    statusBanner = "تم تصدير جدول البيانات المالي (CSV / Excel) بنجاح."
+                } catch (e: Exception) {
+                    isErrorBanner = true
+                    statusBanner = "تعذر تصدير جدول البيانات: ${e.localizedMessage}"
                 }
-                isErrorBanner = false
-                statusBanner = "تم تصدير جدول البيانات المالي (CSV / Excel) بنجاح."
-            } catch (e: Exception) {
-                isErrorBanner = true
-                statusBanner = "تعذر تصدير جدول البيانات: ${e.localizedMessage}"
             }
         }
     }

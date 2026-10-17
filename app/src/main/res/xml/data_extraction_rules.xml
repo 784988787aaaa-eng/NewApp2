@@ -4,6 +4,7 @@
         <exclude domain="database" path="smartledger.db" />
         <exclude domain="database" path="smartledger.db-wal" />
         <exclude domain="database" path="smartledger.db-shm" />
+        <exclude domain="file" path="Backups" />
         <exclude domain="sharedpref" path="smartledger_pro_settings.xml" />
         <exclude domain="sharedpref" path="smartledger_secure_secrets.xml" />
     </cloud-backup>

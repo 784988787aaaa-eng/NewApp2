@@ -1,8 +1,11 @@
 package com.smartledger.pro.ui.components
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.SystemClock
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
@@ -23,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,7 +49,9 @@ import java.util.concurrent.Executors
 
 /**
  * نافذة مسح الباركود الذكية العائمة (BarcodeScannerSheet)
- * تعمل كنافذة عائمة فوق لوحة المفاتيح مع دعم الكاميرا الحية والإدخال اليدوي البديل.
+ * - تعمل كنافذة عائمة فوق لوحة المفاتيح مع دعم الكاميرا الحية والإدخال اليدوي البديل.
+ * - تحرر موارد CameraX (`unbindAll`) ومحلل ML Kit (`scanner.close`) فور إغلاق النافذة لمنع استنزاف البطارية أو قفل الكاميرا.
+ * - تعالج حالة الرفض الدائم لإذن الكاميرا في أندرويد 11+ بتوفير زر مباشر لفتح إعدادات أذونات التطبيق في النظام.
  */
 @Composable
 fun BarcodeScannerSheet(
@@ -66,10 +72,10 @@ fun BarcodeScannerSheet(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         )
     }
-    var permissionDeniedOnce by remember { mutableStateOf(false) }
-    var manualBarcode by remember { mutableStateOf("") }
-    var manualError by remember { mutableStateOf<String?>(null) }
-    var useCameraMode by remember { mutableStateOf(hasCameraHardware && hasCameraPermission) }
+    var permissionDeniedOnce by rememberSaveable { mutableStateOf(false) }
+    var manualBarcode by rememberSaveable { mutableStateOf("") }
+    var manualError by rememberSaveable { mutableStateOf<String?>(null) }
+    var useCameraMode by rememberSaveable { mutableStateOf(hasCameraHardware && hasCameraPermission) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -78,6 +84,18 @@ fun BarcodeScannerSheet(
         useCameraMode = granted && hasCameraHardware
         if (!granted) {
             permissionDeniedOnce = true
+        }
+    }
+
+    val openSystemAppSettings: () -> Unit = {
+        runCatching {
+            val intent = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", context.packageName, null)
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
         }
     }
 
@@ -109,9 +127,14 @@ fun BarcodeScannerSheet(
                 selectedOption = useCameraMode,
                 onOptionSelected = { wantCamera ->
                     if (wantCamera) {
+                        val latestGranted = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.CAMERA
+                        ) == PackageManager.PERMISSION_GRANTED
+                        hasCameraPermission = latestGranted
                         if (!hasCameraHardware) {
                             useCameraMode = false
-                        } else if (hasCameraPermission) {
+                        } else if (latestGranted) {
                             useCameraMode = true
                         } else {
                             permissionLauncher.launch(Manifest.permission.CAMERA)
@@ -172,7 +195,7 @@ fun BarcodeScannerSheet(
                         )
                         Text(
                             text = if (permissionDeniedOnce) {
-                                "تم رفض إذن الكاميرا. يمكنك منح الإذن لقراءة الرموز تلقائياً أو المتابعة بالإدخال اليدوي بالأسفل."
+                                "تم رفض إذن الكاميرا. يمكنك منح الإذن من نافذة النظام أو من إعدادات التطبيق، أو المتابعة بالإدخال اليدوي بالأسفل."
                             } else {
                                 "يُستخدم إذن الكاميرا حصراً لقراءة باركود الأصناف أثناء البيع أو الجرد، ولا يتم التقاط أو حفظ أي صور."
                             },
@@ -180,14 +203,27 @@ fun BarcodeScannerSheet(
                             color = SmartLedgerColors.TextMuted
                         )
                         Spacer(modifier = Modifier.height(10.dp))
-                        Button(
-                            onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
-                            colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
-                            shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
-                        ) {
-                            Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("منح إذن الكاميرا وبدء المسح", fontWeight = FontWeight.Bold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                                colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
+                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
+                            ) {
+                                Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("منح إذن الكاميرا", fontWeight = FontWeight.Bold)
+                            }
+                            if (permissionDeniedOnce) {
+                                OutlinedButton(
+                                    onClick = openSystemAppSettings,
+                                    shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
+                                    border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
+                                ) {
+                                    Icon(Icons.Default.Settings, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("إعدادات التطبيق", color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
                     }
                 }
@@ -251,19 +287,23 @@ private fun CameraBarcodePreviewBox(
     onDetected: (String) -> Unit
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    var torchEnabled by remember { mutableStateOf(false) }
+    var torchEnabled by rememberSaveable { mutableStateOf(false) }
     var cameraRef by remember { mutableStateOf<Camera?>(null) }
+    var cameraProviderRef by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+    var imageAnalysisRef by remember { mutableStateOf<ImageAnalysis?>(null) }
     var lastDetectedTime by remember { mutableStateOf(0L) }
     var lastDetectedCode by remember { mutableStateOf("") }
     var cameraError by remember { mutableStateOf<String?>(null) }
 
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
-    DisposableEffect(Unit) {
+    val barcodeScanner = remember { BarcodeScanning.getClient() }
+
+    DisposableEffect(lifecycleOwner) {
         onDispose {
-            try {
-                analysisExecutor.shutdown()
-            } catch (_: Exception) {
-            }
+            runCatching { imageAnalysisRef?.clearAnalyzer() }
+            runCatching { cameraProviderRef?.unbindAll() }
+            runCatching { barcodeScanner.close() }
+            runCatching { analysisExecutor.shutdown() }
         }
     }
 
@@ -298,19 +338,20 @@ private fun CameraBarcodePreviewBox(
                     cameraProviderFuture.addListener({
                         try {
                             val cameraProvider = cameraProviderFuture.get()
+                            cameraProviderRef = cameraProvider
                             val preview = Preview.Builder().build().also {
                                 it.setSurfaceProvider(previewView.surfaceProvider)
                             }
-                            val scanner = BarcodeScanning.getClient()
                             val imageAnalysis = ImageAnalysis.Builder()
                                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                                 .build()
+                            imageAnalysisRef = imageAnalysis
 
                             imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
                                 val mediaImage = imageProxy.image
                                 if (mediaImage != null) {
                                     val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-                                    scanner.process(image)
+                                    barcodeScanner.process(image)
                                         .addOnSuccessListener { barcodes ->
                                             val rawValue = barcodes.firstOrNull { !it.rawValue.isNullOrBlank() }?.rawValue
                                             if (!rawValue.isNullOrBlank()) {

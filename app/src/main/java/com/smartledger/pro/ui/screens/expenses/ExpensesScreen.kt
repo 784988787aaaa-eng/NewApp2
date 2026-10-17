@@ -41,7 +41,8 @@ fun ExpensesScreen(
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var selectedCategory by rememberSaveable { mutableStateOf("ALL") }
     var showAddExpenseDialog by rememberSaveable { mutableStateOf(false) }
-    var expenseToDelete by remember { mutableStateOf<ExpenseEntity?>(null) }
+    var expenseIdToDelete by rememberSaveable { mutableStateOf<Long?>(null) }
+    val expenseToDelete = remember(allExpenses, expenseIdToDelete) { expenseIdToDelete?.let { id -> allExpenses.firstOrNull { it.Id == id } } }
     var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
     val filteredExpenses = remember(allExpenses, searchQuery, selectedCategory) {
@@ -219,7 +220,7 @@ fun ExpensesScreen(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     IconButton(
-                                        onClick = { expenseToDelete = expense },
+                                        onClick = { expenseIdToDelete = expense.Id },
                                         modifier = Modifier.size(26.dp)
                                     ) {
                                         Icon(Icons.Default.DeleteOutline, contentDescription = "حذف النفقة", tint = SmartLedgerColors.StateDanger, modifier = Modifier.size(16.dp))
@@ -271,10 +272,10 @@ fun ExpensesScreen(
                 requireReason = true,
                 onConfirm = { reason ->
                     viewModel.deleteExpense(target.Id, reason)
-                    expenseToDelete = null
+                    expenseIdToDelete = null
                     statusMessage = "تم حذف النفقة التشغيلية."
                 },
-                onDismiss = { expenseToDelete = null }
+                onDismiss = { expenseIdToDelete = null }
             )
         }
     }

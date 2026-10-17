@@ -46,7 +46,8 @@ fun PurchasesScreen(
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var showAddPurchaseSheet by rememberSaveable { mutableStateOf(false) }
-    var purchaseToReverse by remember { mutableStateOf<InvoiceEntity?>(null) }
+    var purchaseIdToReverse by rememberSaveable { mutableStateOf<Long?>(null) }
+    val purchaseToReverse = remember(allInvoices, purchaseIdToReverse) { purchaseIdToReverse?.let { id -> allInvoices.firstOrNull { it.Id == id } } }
     var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var isStatusError by rememberSaveable { mutableStateOf(false) }
 
@@ -217,7 +218,7 @@ fun PurchasesScreen(
                                     Text("مرتجعة / ملغاة", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.StateDanger, fontWeight = FontWeight.Bold)
                                 } else {
                                     TextButton(
-                                        onClick = { purchaseToReverse = invoice },
+                                        onClick = { purchaseIdToReverse = invoice.Id },
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                                     ) {
                                         Text("مرتجع شراء", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.StateDanger, fontWeight = FontWeight.Bold)
@@ -274,12 +275,12 @@ fun PurchasesScreen(
                 onConfirm = { reason ->
                     scope.launch {
                         viewModel.reversePurchaseInvoice(target.Id, reason)
-                        purchaseToReverse = null
+                        purchaseIdToReverse = null
                         isStatusError = false
                         statusMessage = "تم عكس فاتورة المشتريات ${target.InvoiceNumber}."
                     }
                 },
-                onDismiss = { purchaseToReverse = null }
+                onDismiss = { purchaseIdToReverse = null }
             )
         }
     }

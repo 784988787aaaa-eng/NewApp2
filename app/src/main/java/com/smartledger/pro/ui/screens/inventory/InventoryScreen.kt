@@ -48,7 +48,8 @@ fun InventoryScreen(
     var initialScannedBarcode by rememberSaveable { mutableStateOf<String?>(null) }
 
     var selectedProductIdForDetails by rememberSaveable { mutableStateOf<Long?>(null) }
-    var productToDelete by remember { mutableStateOf<ProductStockItem?>(null) }
+    var productIdToDelete by rememberSaveable { mutableStateOf<Long?>(null) }
+    val productToDelete = remember(products, productIdToDelete) { productIdToDelete?.let { id -> products.firstOrNull { it.Id == id } } }
     var showRapidStockCountSheet by rememberSaveable { mutableStateOf(false) }
     var initialStockCountProductId by rememberSaveable { mutableStateOf<Long?>(null) }
     var showBarcodeScanner by rememberSaveable { mutableStateOf(false) }
@@ -205,7 +206,7 @@ fun InventoryScreen(
                             initialStockCountProductId = product.Id
                             showRapidStockCountSheet = true
                         },
-                        onDelete = { productToDelete = product }
+                        onDelete = { productIdToDelete = product.Id }
                     )
                 }
             }
@@ -349,10 +350,10 @@ fun InventoryScreen(
                 reasonLabel = "سبب الأرشفة (اختياري)",
                 onConfirm = { reason ->
                     viewModel.deleteProduct(target.Id, reason)
-                    productToDelete = null
+                    productIdToDelete = null
                     statusBanner = "تمت أرشفة الصنف «${target.Name}»."
                 },
-                onDismiss = { productToDelete = null }
+                onDismiss = { productIdToDelete = null }
             )
         }
     }

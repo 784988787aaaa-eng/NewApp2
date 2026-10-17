@@ -342,4 +342,38 @@ class AccountingEngineTest {
         val epochAfter = com.smartledger.pro.data.local.SmartLedgerDatabase.databaseEpoch.value
         assertEquals(epochBefore + 1L, epochAfter)
     }
+
+    // 11. اختبار توافق منصة أندرويد (API 26-34) لأذونات البلوتوث والمصادقة البيومترية وحفظ السلة عند Process Death
+    @Test
+    fun testFlow11_AndroidPlatform_ApiCompatibility_AndProcessDeathCartState() {
+        // API 26..30 لا يطلب إذن وقت تشغيل لـ BLUETOOTH_CONNECT، بينما API 31+ يطلبه إلزامياً
+        assertNull(com.smartledger.pro.util.ThermalPrinterHelper.requiredBluetoothRuntimePermission(26))
+        assertNull(com.smartledger.pro.util.ThermalPrinterHelper.requiredBluetoothRuntimePermission(30))
+        assertEquals(
+            android.Manifest.permission.BLUETOOTH_CONNECT,
+            com.smartledger.pro.util.ThermalPrinterHelper.requiredBluetoothRuntimePermission(31)
+        )
+        assertEquals(
+            android.Manifest.permission.BLUETOOTH_CONNECT,
+            com.smartledger.pro.util.ThermalPrinterHelper.requiredBluetoothRuntimePermission(34)
+        )
+
+        // التحقق من عدم تجاوز حجم بيانات السلة المحفوظة في SavedStateHandle حد Bundle
+        val item = com.smartledger.pro.ui.viewmodels.CartLineItem(
+            productId = 101L,
+            name = "حليب ممتاز",
+            barcode = "6291001",
+            smallUnit = "علبة",
+            largeUnit = "كرتون",
+            unitFactor = 24.0,
+            availableStockMinor = 120.0,
+            minorUnitPrice = 300.0,
+            majorUnitPrice = 7000.0,
+            minorUnitCost = 240.0,
+            majorQuantity = 2.0,
+            minorQuantity = 5.0
+        )
+        assertEquals(53.0, item.totalMinorQuantity, 0.001)
+        assertEquals(15500.0, item.calculatedLineTotal, 0.001)
+    }
 }

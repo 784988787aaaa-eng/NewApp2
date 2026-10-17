@@ -13,7 +13,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -48,8 +50,10 @@ import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.util.BiometricLockHelper
 import com.smartledger.pro.util.NumberFormatter
 import com.smartledger.pro.util.SecurityCryptoHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * حقل إدخال عصري وذكي (SmartTextField)
@@ -712,7 +716,9 @@ fun AppSecurityLockScreen(
     val view = LocalView.current
     val capability = remember { BiometricLockHelper.checkBiometricSupport(context) }
 
+    val scope = rememberCoroutineScope()
     var pinInput by rememberSaveable { mutableStateOf("") }
+    var isVerifyingPin by remember { mutableStateOf(false) }
     var failedAttempts by rememberSaveable { mutableStateOf(0) }
     var lockoutRemainingSeconds by rememberSaveable { mutableStateOf(0) }
     var lockoutUntilRealtime by rememberSaveable { mutableStateOf(0L) }
@@ -731,24 +737,34 @@ fun AppSecurityLockScreen(
         if (lockoutRemainingSeconds > 0) {
             errorMessage = "تم إيقاف المحاولات مؤقتاً لحماية الحساب. انتظر $lockoutRemainingSeconds ثانية."
             AppHaptics.perform(view, AppHapticType.ERROR)
-        } else if (SecurityCryptoHelper.verifyPin(pinInput, expectedPinVerifier)) {
-            failedAttempts = 0
-            lockoutUntilRealtime = 0L
-            lockoutRemainingSeconds = 0
-            AppHaptics.perform(view, AppHapticType.CONFIRM)
-            onUnlocked()
-        } else {
-            failedAttempts++
-            val penaltySec = SecurityCryptoHelper.calculateLockoutDurationSeconds(failedAttempts)
-            if (penaltySec > 0) {
-                lockoutUntilRealtime = SystemClock.elapsedRealtime() + (penaltySec * 1000L)
-                lockoutRemainingSeconds = penaltySec
-                errorMessage = "تجاوزت الحد المسموح للمحاولات ($failedAttempts). يرجى الانتظار $penaltySec ثانية."
-            } else {
-                val remainingTries = (5 - failedAttempts).coerceAtLeast(1)
-                errorMessage = "رمز الحماية غير صحيح (متبقي $remainingTries محاولات قبل الإيقاف المؤقت)"
+        } else if (!isVerifyingPin) {
+            isVerifyingPin = true
+            val candidatePin = pinInput
+            scope.launch {
+                val matched = withContext(Dispatchers.Default) {
+                    SecurityCryptoHelper.verifyPin(candidatePin, expectedPinVerifier)
+                }
+                isVerifyingPin = false
+                if (matched) {
+                    failedAttempts = 0
+                    lockoutUntilRealtime = 0L
+                    lockoutRemainingSeconds = 0
+                    AppHaptics.perform(view, AppHapticType.CONFIRM)
+                    onUnlocked()
+                } else {
+                    failedAttempts++
+                    val penaltySec = SecurityCryptoHelper.calculateLockoutDurationSeconds(failedAttempts)
+                    if (penaltySec > 0) {
+                        lockoutUntilRealtime = SystemClock.elapsedRealtime() + (penaltySec * 1000L)
+                        lockoutRemainingSeconds = penaltySec
+                        errorMessage = "تجاوزت الحد المسموح للمحاولات ($failedAttempts). يرجى الانتظار $penaltySec ثانية."
+                    } else {
+                        val remainingTries = (5 - failedAttempts).coerceAtLeast(1)
+                        errorMessage = "رمز الحماية غير صحيح (متبقي $remainingTries محاولات قبل الإيقاف المؤقت)"
+                    }
+                    AppHaptics.perform(view, AppHapticType.ERROR)
+                }
             }
-            AppHaptics.perform(view, AppHapticType.ERROR)
         }
     }
 
@@ -770,11 +786,14 @@ fun AppSecurityLockScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(SmartLedgerColors.SurfaceWindow)
+            .systemBarsPadding()
+            .imePadding()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
         Card(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().widthIn(max = 460.dp),
             colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
             border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
             shape = RoundedCornerShape(20.dp)

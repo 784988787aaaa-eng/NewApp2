@@ -94,6 +94,21 @@ fun SettingsScreen(
         }
     }
 
+    var pendingBluetoothAction by rememberSaveable { mutableStateOf<String?>(null) }
+    val bluetoothPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            if (pendingBluetoothAction == "PICK_PRINTER") {
+                showPrinterPickerSheet = true
+            }
+        } else {
+            isBannerError = true
+            statusBannerText = "تم رفض إذن البلوتوث (الأجهزة القريبة)؛ يلزم منح الإذن للاتصال بالطابعة الحرارية."
+        }
+        pendingBluetoothAction = null
+    }
+
     val importSafLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { srcUri ->
@@ -633,7 +648,15 @@ fun SettingsScreen(
 
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
-                                onClick = { showPrinterPickerSheet = true },
+                                onClick = {
+                                    val reqPerm = ThermalPrinterHelper.requiredBluetoothRuntimePermission()
+                                    if (reqPerm != null && !ThermalPrinterHelper.hasBluetoothConnectPermission(context)) {
+                                        pendingBluetoothAction = "PICK_PRINTER"
+                                        bluetoothPermissionLauncher.launch(reqPerm)
+                                    } else {
+                                        showPrinterPickerSheet = true
+                                    }
+                                },
                                 modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
@@ -645,6 +668,12 @@ fun SettingsScreen(
 
                             Button(
                                 onClick = {
+                                    val reqPerm = ThermalPrinterHelper.requiredBluetoothRuntimePermission()
+                                    if (reqPerm != null && !ThermalPrinterHelper.hasBluetoothConnectPermission(context)) {
+                                        pendingBluetoothAction = "TEST_PRINTER"
+                                        bluetoothPermissionLauncher.launch(reqPerm)
+                                        return@Button
+                                    }
                                     isTestingPrinter = true
                                     scope.launch {
                                         val testRes = ThermalPrinterHelper.testPrinterConnection(
@@ -1071,7 +1100,8 @@ fun SettingsScreen(
 
         // نافذة أرشيف النسخ الاحتياطية المفهرسة العائمة
         if (showBackupsArchiveSheet) {
-            var recordToDelete by remember { mutableStateOf<BackupRecord?>(null) }
+            var recordIdToDelete by rememberSaveable { mutableStateOf<String?>(null) }
+            val recordToDelete = remember(indexedBackups, recordIdToDelete) { recordIdToDelete?.let { id -> indexedBackups.firstOrNull { it.id == id } } }
 
             FloatingModalDialog(onDismissRequest = { showBackupsArchiveSheet = false }) {
                 FormSheetContainer(
@@ -1134,7 +1164,7 @@ fun SettingsScreen(
                                             horizontalArrangement = Arrangement.End
                                         ) {
                                             TextButton(
-                                                onClick = { recordToDelete = rec },
+                                                onClick = { recordIdToDelete = rec.id },
                                                 contentPadding = PaddingValues(horizontal = 8.dp)
                                             ) {
                                                 Text("حذف", color = SmartLedgerColors.StateDanger, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
@@ -1179,10 +1209,10 @@ fun SettingsScreen(
                     confirmText = "حذف النسخة",
                     onConfirm = {
                         viewModel.deleteIndexedBackup(targetRec.id) {
-                            recordToDelete = null
+                            recordIdToDelete = null
                         }
                     },
-                    onDismiss = { recordToDelete = null }
+                    onDismiss = { recordIdToDelete = null }
                 )
             }
         }

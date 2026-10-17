@@ -1,5 +1,7 @@
 package com.smartledger.pro.util
 
+import android.Manifest
+import android.app.Activity
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -7,6 +9,9 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.OutputStream
@@ -21,9 +26,8 @@ data class PairedPrinterDevice(
 /**
  * محرك الطباعة الحرارية الفعلي (ESC/POS Thermal Printer Helper)
  * - يدعم مقاسي الورق القياسيين: 58mm (32 حرفاً للسطر) و 80mm (48 حرفاً للسطر).
- * - يدعم طباعة عدة نسخ متتالية، وترويسة وتذييل المنشأة، والأرقام الغربية القياسية (123).
- * - يوفر اختبار اتصال حقيقي بالطابعة ولا يعرض نجاحاً إلا بعد فتح مقبس RFCOMM فعلياً.
- * - يوفر توليد نص فاتورة منسق للمشاركة الفورية عند عدم وجود طابعة بلوتوث مقترنة.
+ * - يتحقق صراحةً من إذن `BLUETOOTH_CONNECT` على Android 12+ (API 31+) قبل الوصول إلى `bondedDevices` أو فتح المقبس.
+ * - يضيف `FLAG_ACTIVITY_NEW_TASK` تلقائياً عند إطلاق نافذة المشاركة من سياق غير `Activity`.
  */
 object ThermalPrinterHelper {
     private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -37,10 +41,40 @@ object ThermalPrinterHelper {
     private val ESC_FEED_AND_CUT = byteArrayOf(0x1D, 0x56, 0x41, 0x10)
 
     /**
+     * التحقق من توفر إذن الاتصال بأجهزة البلوتوث المقترنة (`BLUETOOTH_CONNECT` على Android 12+ API 31+)
+     */
+    fun hasBluetoothConnectPermission(context: Context, sdkInt: Int = Build.VERSION.SDK_INT): Boolean {
+        return if (sdkInt >= Build.VERSION_CODES.S) {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
+    /**
+     * اسم الإذن المطلوب طلبه وقت التشغيل على Android 12+ (أو `null` على الإصدارات الأقدم API 26–30)
+     */
+    fun requiredBluetoothRuntimePermission(sdkInt: Int = Build.VERSION.SDK_INT): String? {
+        return if (sdkInt >= Build.VERSION_CODES.S) {
+            Manifest.permission.BLUETOOTH_CONNECT
+        } else {
+            null
+        }
+    }
+
+    /**
      * استرجاع قائمة أجهزة البلوتوث المقترنة لاختيار الطابعة الحرارية
      */
     @SuppressLint("MissingPermission")
     fun getPairedPrinters(context: Context): Result<List<PairedPrinterDevice>> {
+        if (!hasBluetoothConnectPermission(context)) {
+            return Result.failure(
+                SecurityException("يلزم منح إذن «الأجهزة القريبة / البلوتوث» (BLUETOOTH_CONNECT) لعرض الطابعات المقترنة.")
+            )
+        }
         return try {
             val btManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             val adapter: BluetoothAdapter? = btManager?.adapter ?: BluetoothAdapter.getDefaultAdapter()
@@ -74,6 +108,11 @@ object ThermalPrinterHelper {
         paperWidthMm: Int = 80,
         tradeName: String = "الدفتر الذكي Pro"
     ): Result<String> = withContext(Dispatchers.IO) {
+        if (!hasBluetoothConnectPermission(context)) {
+            return@withContext Result.failure(
+                SecurityException("يلزم منح إذن البلوتوث (BLUETOOTH_CONNECT) للاتصال بالطابعة الحرارية.")
+            )
+        }
         if (printerAddress.isBlank()) {
             return@withContext Result.failure(Exception("لم يتم تحديد طابعة بلوتوث بعد. اختر طابعة مقترنة أولاً."))
         }
@@ -85,6 +124,10 @@ object ThermalPrinterHelper {
 
             if (!adapter.isEnabled) {
                 return@withContext Result.failure(Exception("البلوتوث متوقف حالياً. شغّل البلوتوث ثم أعد المحاولة."))
+            }
+
+            if (adapter.isDiscovering) {
+                runCatching { adapter.cancelDiscovery() }
             }
 
             val device: BluetoothDevice = adapter.getRemoteDevice(printerAddress)
@@ -142,6 +185,11 @@ object ThermalPrinterHelper {
         currencySymbol: String,
         footer: String
     ): Result<Boolean> = withContext(Dispatchers.IO) {
+        if (!hasBluetoothConnectPermission(context)) {
+            return@withContext Result.failure(
+                SecurityException("يلزم منح إذن البلوتوث (BLUETOOTH_CONNECT) للطباعة الحرارية.")
+            )
+        }
         if (printerAddress.isBlank()) {
             return@withContext Result.failure(Exception("لم يتم إعداد طابعة بلوتوث في الإعدادات"))
         }
@@ -152,6 +200,10 @@ object ThermalPrinterHelper {
                 ?: return@withContext Result.failure(Exception("البلوتوث غير مدعوم"))
             if (!adapter.isEnabled) {
                 return@withContext Result.failure(Exception("البلوتوث مغلق حالياً"))
+            }
+
+            if (adapter.isDiscovering) {
+                runCatching { adapter.cancelDiscovery() }
             }
 
             val device = adapter.getRemoteDevice(printerAddress)
@@ -278,7 +330,12 @@ object ThermalPrinterHelper {
                 putExtra(Intent.EXTRA_SUBJECT, title)
                 putExtra(Intent.EXTRA_TEXT, text)
             }
-            context.startActivity(Intent.createChooser(intent, title))
+            val chooser = Intent.createChooser(intent, title).apply {
+                if (context !is Activity) {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            }
+            context.startActivity(chooser)
         } catch (_: Exception) {
         }
     }
