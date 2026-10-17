@@ -15,80 +15,73 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 
+/**
+ * تفضيلات الحركات والاهتزازات الحسية المركزية القابلة للتعديل من شاشة الإعدادات
+ */
 object AppSensoryConfig {
     var enableHaptics by mutableStateOf(true)
     var reduceMotion by mutableStateOf(false)
-    var compactDensity by mutableStateOf(false)
-    var currencySymbol by mutableStateOf("ر.ي")
-    var decimalPlaces by mutableStateOf(2)
 }
 
-@Composable
-fun rememberDebouncedClick(
-    debounceMs: Long = 450L,
-    onClick: () -> Unit
-): () -> Unit {
-    var lastClickTimestamp by remember { mutableStateOf(0L) }
-    val haptic = LocalHapticFeedback.current
-    val currentOnClick by rememberUpdatedState(onClick)
-
-    return remember(debounceMs) {
-        {
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastClickTimestamp >= debounceMs) {
-                lastClickTimestamp = now
-                if (AppSensoryConfig.enableHaptics) {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                }
-                currentOnClick()
-            }
-        }
-    }
-}
-
+/**
+ * تأثير ارتداد فيزيائي لمسي (Tactile Bounce Click) مع حماية مدمجة ضد النقر المكرر (Debounce)
+ * - يمنع تكرار تنفيذ الفواتير أو السندات عند الضغط السريع المتتالي (450ms).
+ * - يحترم إعدادات المستخدم (تفعيل/تعطيل الاهتزاز الحسي وتقليل الحركة).
+ */
 fun Modifier.bounceClick(
     scaleDown: Float = 0.97f,
     debounceMs: Long = 450L,
-    onClick: (() -> Unit)? = null
+    enabled: Boolean = true,
+    onClick: () -> Unit
 ) = composed {
     var buttonState by remember { mutableStateOf(ButtonState.Idle) }
     var lastClickTimestamp by remember { mutableStateOf(0L) }
     val haptic = LocalHapticFeedback.current
 
-    val targetScale = if (!AppSensoryConfig.reduceMotion && buttonState == ButtonState.Pressed) scaleDown else 1f
+    val targetScale = if (enabled && !AppSensoryConfig.reduceMotion && buttonState == ButtonState.Pressed) {
+        scaleDown
+    } else {
+        1f
+    }
+
     val scale by animateFloatAsState(
         targetValue = targetScale,
-        animationSpec = spring(dampingRatio = 0.7f, stiffness = 600f),
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = 550f),
         label = "BounceAnimation"
     )
 
-    val baseModifier = this.graphicsLayer { scaleX = scale; scaleY = scale }
-    val clickableModifier = if (onClick != null) {
-        baseModifier.clickable(
+    this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .clickable(
+            enabled = enabled,
             interactionSource = remember { MutableInteractionSource() },
             indication = null,
             onClick = {
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastClickTimestamp >= debounceMs) {
                     lastClickTimestamp = now
-                    if (AppSensoryConfig.enableHaptics) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    if (AppSensoryConfig.enableHaptics) {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
                     onClick()
                 }
             }
         )
-    } else baseModifier
-
-    clickableModifier.pointerInput(buttonState) {
-        awaitPointerEventScope {
-            buttonState = if (buttonState == ButtonState.Pressed) {
-                waitForUpOrCancellation()
-                ButtonState.Idle
-            } else {
-                awaitFirstDown(false)
-                ButtonState.Pressed
+        .pointerInput(buttonState, enabled) {
+            if (!enabled) return@pointerInput
+            awaitPointerEventScope {
+                buttonState = if (buttonState == ButtonState.Pressed) {
+                    waitForUpOrCancellation()
+                    ButtonState.Idle
+                } else {
+                    awaitFirstDown(false)
+                    ButtonState.Pressed
+                }
             }
         }
-    }
 }
 
 enum class ButtonState { Pressed, Idle }

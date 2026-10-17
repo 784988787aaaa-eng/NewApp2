@@ -1,13 +1,22 @@
 package com.smartledger.pro.domain.model
 
-import java.math.BigDecimal
-import java.math.RoundingMode
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.roundToLong
 
+/**
+ * محرك التحويل المحاسبي والمخزني بين الوحدات الكبرى والصغرى (Major & Minor Units Engine)
+ *
+ * القاعدة الهندسية الصارمة:
+ * - التمثيل الداخلي الموحد في قاعدة البيانات (QuantityMinor) يكون دائماً بالوحدة الصغرى الأساسية.
+ * - عند الشراء أو البيع بالوحدة الكبرى (مثل كرتون = 24 قطعة) أو بكمية مركبة (كرتونين و5 قطع)،
+ *   يتم التحويل فوراً إلى إجمالي الوحدات الصغرى (2 * 24 + 5 = 53 قطعة) بدون أي فقد أو تعارض.
+ * - يمنع أي معامل تحويل صفري أو سالب، ويعالج أخطاء الفاصلة العشرية (Floating-Point Precision).
+ */
 object UnitConversionEngine {
+
+    private const val EPSILON = 0.0001
 
     data class StockBreakdown(
         val totalMinor: Double,
@@ -24,72 +33,71 @@ object UnitConversionEngine {
         val grossProfit: Double
     )
 
-    data class UnitValidationResult(
-        val isValid: Boolean,
-        val sanitizedFactor: Double,
-        val errorMessage: String? = null
-    )
-
-    fun validateUnitSetup(
-        smallUnit: String,
-        largeUnit: String?,
-        unitFactor: Double,
-        hasMajorUnit: Boolean = !largeUnit.isNullOrBlank()
-    ): UnitValidationResult {
-        val cleanSmall = smallUnit.trim()
-        if (cleanSmall.isEmpty()) {
-            return UnitValidationResult(false, 1.0, "يرجى إدخال اسم الوحدة الأساسية (مثل: حبة، قطعة، كجم)")
+    /**
+     * التحقق من صلاحية معامل التحويل بين الوحدة الكبرى والصغرى
+     */
+    fun isValidUnitFactor(unitFactor: Double, hasLargeUnit: Boolean): Boolean {
+        return if (!hasLargeUnit) {
+            unitFactor >= 1.0
+        } else {
+            unitFactor > 1.0 && !unitFactor.isNaN() && !unitFactor.isInfinite()
         }
-        if (!hasMajorUnit || largeUnit.isNullOrBlank()) {
-            return UnitValidationResult(true, 1.0, null)
-        }
-        val cleanLarge = largeUnit.trim()
-        if (cleanLarge.equals(cleanSmall, ignoreCase = true)) {
-            return UnitValidationResult(false, 1.0, "اسم الوحدة الكبرى يجب أن يختلف عن الوحدة الصغرى")
-        }
-        if (unitFactor.isNaN() || unitFactor.isInfinite() || unitFactor <= 1.0) {
-            return UnitValidationResult(
-                false,
-                unitFactor,
-                "معامل التحويل للوحدة الكبرى ($cleanLarge) يجب أن يكون أكبر من 1 (مثال: 12 أو 24 $cleanSmall)"
-            )
-        }
-        return UnitValidationResult(true, roundSafe(unitFactor, 4), null)
     }
 
-    fun describeUnitRelation(smallUnit: String, largeUnit: String?, unitFactor: Double): String {
-        val cleanSmall = smallUnit.ifBlank { "قطعة" }
-        if (largeUnit.isNullOrBlank() || unitFactor <= 1.0) {
-            return "يباع ويُجرد بوحدة واحدة: $cleanSmall"
+    /**
+     * توليد شرح نصي واضح للعلاقة بين الوحدة الكبرى والصغرى
+     * مثال: "كل 1 كرتون يحتوي على 24 قطعة"
+     */
+    fun explainUnitRelation(smallUnit: String, largeUnit: String?, unitFactor: Double): String {
+        val cleanSmall = smallUnit.trim().ifBlank { "قطعة" }
+        val cleanLarge = largeUnit?.trim()
+        if (cleanLarge.isNullOrBlank() || unitFactor <= 1.0) {
+            return "يباع ويُجرد هذا الصنف بوحدة أساسية واحدة ($cleanSmall)"
         }
-        return "كل 1 ${largeUnit.trim()} = ${formatQuantity(unitFactor)} $cleanSmall"
+        return "كل 1 $cleanLarge = ${formatQuantity(unitFactor)} $cleanSmall"
     }
 
-    fun toMinorQuantity(majorQty: Double, minorQty: Double, unitFactor: Double): Double {
-        val safeFactor = if (unitFactor <= 0.0 || unitFactor.isNaN() || unitFactor.isInfinite()) 1.0 else unitFactor
+    /**
+     * تحويل الكمية المركبة (وحدات كبرى + وحدات صغرى) إلى إجمالي الوحدات الصغرى الأساسية
+     * مثال: 2 كرتون (معامل 24) + 5 قطع = 53 قطعة
+     */
+    fun toMinorQuantity(
+        majorQty: Double,
+        minorQty: Double,
+        unitFactor: Double
+    ): Double {
+        val safeFactor = if (unitFactor <= 0.0 || unitFactor.isNaN()) 1.0 else unitFactor
         val safeMajor = if (majorQty < 0.0 || majorQty.isNaN()) 0.0 else majorQty
         val safeMinor = if (minorQty < 0.0 || minorQty.isNaN()) 0.0 else minorQty
-        return roundSafe((safeMajor * safeFactor) + safeMinor, 4)
+        return roundClean((safeMajor * safeFactor) + safeMinor)
     }
 
+    /**
+     * تفكيك إجمالي الوحدات الصغرى إلى (عدد الوحدات الكبرى + المتبقي من الوحدة الصغرى) للعرض الواضح
+     */
     fun breakdownStock(
         totalMinorQty: Double,
         smallUnit: String,
         largeUnit: String?,
         unitFactor: Double
     ): StockBreakdown {
-        val cleanSmall = smallUnit.ifBlank { "قطعة" }
+        val cleanSmall = smallUnit.trim().ifBlank { "قطعة" }
         val safeFactor = if (unitFactor <= 1.0 || largeUnit.isNullOrBlank()) 1.0 else unitFactor
 
         if (safeFactor <= 1.0 || largeUnit.isNullOrBlank()) {
             val formatted = "${formatQuantity(totalMinorQty)} $cleanSmall"
-            return StockBreakdown(totalMinorQty, 0L, totalMinorQty, formatted)
+            return StockBreakdown(
+                totalMinor = totalMinorQty,
+                majorUnits = 0L,
+                remainingMinor = totalMinorQty,
+                formattedText = formatted
+            )
         }
 
-        val sign = if (totalMinorQty < 0) "-" else ""
-        val absMinor = roundSafe(abs(totalMinorQty), 4)
-        val majorCount = floor((absMinor + 1e-9) / safeFactor).toLong()
-        val remainderMinor = roundSafe((absMinor - (majorCount * safeFactor)).coerceAtLeast(0.0), 4)
+        val sign = if (totalMinorQty < -EPSILON) "-" else ""
+        val absMinor = roundClean(abs(totalMinorQty))
+        val majorCount = floor((absMinor + EPSILON) / safeFactor).toLong()
+        val remainderMinor = roundClean(absMinor - (majorCount * safeFactor)).coerceAtLeast(0.0)
 
         val formatted = when {
             majorCount > 0 && remainderMinor > 0.001 ->
@@ -100,14 +108,26 @@ object UnitConversionEngine {
                 "$sign${formatQuantity(remainderMinor)} $cleanSmall"
         }
 
-        return StockBreakdown(totalMinorQty, majorCount, remainderMinor, formatted)
+        return StockBreakdown(
+            totalMinor = totalMinorQty,
+            majorUnits = majorCount,
+            remainingMinor = remainderMinor,
+            formattedText = formatted
+        )
     }
 
+    /**
+     * حساب تكلفة الوحدة الصغرى عند الشراء بالوحدة الكبرى
+     * مثال: شراء كرتون (24 قطعة) بسعر 4,800 ر.ي -> تكلفة القطعة الواحدة = 200 ر.ي
+     */
     fun minorCostFromMajorCost(majorPurchaseCost: Double, unitFactor: Double): Double {
         val safeFactor = if (unitFactor <= 0.0 || unitFactor.isNaN()) 1.0 else unitFactor
-        return roundSafe(majorPurchaseCost / safeFactor, 4)
+        return roundClean(majorPurchaseCost / safeFactor)
     }
 
+    /**
+     * حساب إجمالي البند وتكلفته وربحه عند البيع بكمية مركبة (كبرى + صغرى)
+     */
     fun calculateCompositeSale(
         majorQty: Double,
         minorQty: Double,
@@ -120,23 +140,36 @@ object UnitConversionEngine {
         val safeFactor = if (unitFactor <= 0.0 || unitFactor.isNaN()) 1.0 else unitFactor
         val totalMinor = toMinorQuantity(majorQty, minorQty, safeFactor)
 
-        val effectiveMajorPrice = if (majorSalePrice > 0.0) majorSalePrice else roundSafe(minorSalePrice * safeFactor, 2)
-        val grossPrice = roundSafe((majorQty * effectiveMajorPrice) + (minorQty * minorSalePrice), 2)
-        val netPrice = roundSafe((grossPrice - discountAmount).coerceAtLeast(0.0), 2)
-        val totalCost = roundSafe(totalMinor * minorUnitCost, 2)
-        val profit = roundSafe(netPrice - totalCost, 2)
+        val effectiveMajorPrice = if (majorSalePrice > 0.0) majorSalePrice else (minorSalePrice * safeFactor)
+        val grossPrice = (majorQty * effectiveMajorPrice) + (minorQty * minorSalePrice)
+        val netPrice = roundClean((grossPrice - discountAmount).coerceAtLeast(0.0))
+        val totalCost = roundClean(totalMinor * minorUnitCost)
+        val profit = roundClean(netPrice - totalCost)
 
-        return CompositeLineCalculation(totalMinor, netPrice, totalCost, minorUnitCost, profit)
+        return CompositeLineCalculation(
+            totalMinorQuantity = totalMinor,
+            totalLinePrice = netPrice,
+            totalLineCost = totalCost,
+            effectiveMinorUnitCost = minorUnitCost,
+            grossProfit = profit
+        )
     }
 
-    private fun roundSafe(value: Double, scale: Int): Double {
-        if (value.isNaN() || value.isInfinite()) return 0.0
-        return BigDecimal.valueOf(value).setScale(scale, RoundingMode.HALF_UP).toDouble()
+    private fun roundClean(value: Double): Double {
+        val nearestLong = value.roundToLong()
+        return if (abs(value - nearestLong) < EPSILON) {
+            nearestLong.toDouble()
+        } else {
+            kotlin.math.round(value * 10000.0) / 10000.0
+        }
     }
 
-    private fun formatQuantity(qty: Double): String {
+    fun formatQuantity(qty: Double): String {
         val rounded = qty.roundToLong()
-        return if (abs(qty - rounded) < 0.001) String.format(Locale.US, "%d", rounded)
-        else String.format(Locale.US, "%.2f", qty)
+        return if (abs(qty - rounded) < 0.001) {
+            rounded.toString()
+        } else {
+            String.format(Locale.US, "%.2f", qty)
+        }
     }
 }

@@ -1,8 +1,8 @@
 package com.smartledger.pro.ui.components
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
@@ -13,7 +13,10 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,158 +26,226 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
 import com.smartledger.pro.ui.theme.SmartLedgerColors
-import com.smartledger.pro.util.Formatters
+import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * نافذة مسح الباركود الذكية (BarcodeScannerSheet)
+ * - تطلب إذن الكاميرا عند الحاجة فقط مع شرح واضح للسبب.
+ * - تدعم الكاميرا الفعلية عبر CameraX + ML Kit مع زر الإضاءة (Flash/Torch) ومنع المسح المكرر.
+ * - توفر دائماً بديلاً كاملاً للإدخال اليدوي والاختيار السريع عند غياب الكاميرا أو رفض الصلاحية.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BarcodeScannerDialog(
+fun BarcodeScannerSheet(
     title: String = "مسح أو إدخال الباركود",
     subtitle: String = "وجّه الكاميرا نحو الباركود أو أدخل الرمز يدوياً",
-    initialManualValue: String = "",
+    knownBarcodes: List<Pair<String, String>> = emptyList(), // Pair(Barcode, ProductName)
     onBarcodeResult: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
-    val hasCameraHardware = remember { context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY) }
+    val hasCameraHardware = remember {
+        context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)
+    }
+
     var hasCameraPermission by remember {
-        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        )
     }
-    var permissionDeniedExplicitly by remember { mutableStateOf(false) }
-    var manualBarcode by remember { mutableStateOf(initialManualValue) }
+    var permissionDeniedOnce by remember { mutableStateOf(false) }
+    var manualBarcode by remember { mutableStateOf("") }
     var manualError by remember { mutableStateOf<String?>(null) }
-    var cameraError by remember { mutableStateOf<String?>(null) }
-    var torchEnabled by remember { mutableStateOf(false) }
-    var activeCamera by remember { mutableStateOf<Camera?>(null) }
+    var useCameraMode by remember { mutableStateOf(hasCameraHardware && hasCameraPermission) }
 
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
         hasCameraPermission = granted
-        permissionDeniedExplicitly = !granted
-    }
-
-    LaunchedEffect(hasCameraHardware) {
-        if (hasCameraHardware && !hasCameraPermission) {
-            permissionLauncher.launch(Manifest.permission.CAMERA)
+        useCameraMode = granted && hasCameraHardware
+        if (!granted) {
+            permissionDeniedOnce = true
         }
     }
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(0.94f).clip(RoundedCornerShape(24.dp)),
-            color = SmartLedgerColors.SurfaceDialog,
-            tonalElevation = 12.dp
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = SmartLedgerColors.SurfacePanel
+    ) {
+        FormSheetContainer(
+            title = title,
+            subtitle = subtitle,
+            onDismiss = onDismiss,
+            primaryButtonText = "تأكيد الرمز",
+            isPrimaryEnabled = manualBarcode.trim().isNotEmpty(),
+            onPrimaryClick = {
+                val clean = manualBarcode.trim()
+                if (clean.length < 2) {
+                    manualError = "الرجاء إدخال رمز باركود صالح"
+                } else {
+                    if (AppSensoryConfig.enableHaptics) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
+                    onBarcodeResult(clean)
+                }
+            }
         ) {
-            Column(modifier = Modifier.fillMaxWidth().imePadding().padding(16.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                        Text(subtitle, style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        if (hasCameraHardware && hasCameraPermission && activeCamera?.cameraInfo?.hasFlashUnit() == true) {
-                            IconButton(
-                                onClick = { torchEnabled = !torchEnabled; activeCamera?.cameraControl?.enableTorch(torchEnabled) },
-                                modifier = Modifier.size(34.dp).clip(CircleShape).background(if (torchEnabled) SmartLedgerColors.StateWarningSubtle else SmartLedgerColors.SurfaceCardElevated)
-                            ) {
-                                Icon(if (torchEnabled) Icons.Default.FlashOn else Icons.Default.FlashOff, contentDescription = "الفلاش", tint = if (torchEnabled) SmartLedgerColors.StateWarning else SmartLedgerColors.TextMuted, modifier = Modifier.size(18.dp))
-                            }
+            // تبديل بين وضع الكاميرا والإدخال اليدوي
+            SegmentedOptionRow(
+                options = listOf(
+                    true to "المسح بالكاميرا",
+                    false to "الإدخال اليدوي"
+                ),
+                selectedOption = useCameraMode,
+                onOptionSelected = { wantCamera ->
+                    if (wantCamera) {
+                        if (!hasCameraHardware) {
+                            useCameraMode = false
+                        } else if (hasCameraPermission) {
+                            useCameraMode = true
+                        } else {
+                            permissionLauncher.launch(Manifest.permission.CAMERA)
                         }
-                        IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp).clip(CircleShape).background(SmartLedgerColors.SurfaceCardElevated)) {
-                            Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = SmartLedgerColors.TextMuted, modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                when {
-                    !hasCameraHardware -> {
-                        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(SmartLedgerColors.SurfaceCardElevated).padding(14.dp)) {
-                            Text("لا تتوفر كاميرا على هذا الجهاز. يمكنك إدخال رقم الباركود يدوياً في الحقل أدناه.", style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.TextSecondary)
-                        }
-                    }
-                    !hasCameraPermission -> {
-                        Column(
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(SmartLedgerColors.SurfaceCardElevated).padding(14.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text("إذن الكاميرا مطلوب لمسح الباركود ضوئياً", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                            Text("يُستخدم الإذن حصرياً لقراءة رمز الباركود وتوفير الوقت.", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
-                            Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedButton(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
-                                Text(if (permissionDeniedExplicitly) "إعادة طلب الإذن" else "منح إذن الكاميرا", color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                    cameraError != null -> {
-                        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(SmartLedgerColors.StateDangerSubtle).padding(12.dp)) {
-                            Text(cameraError!!, style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.StateDangerText)
-                        }
-                    }
-                    else -> {
-                        Box(
-                            modifier = Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(16.dp)).background(SmartLedgerColors.SurfaceWindow).border(1.5.dp, SmartLedgerColors.AccentPrimary, RoundedCornerShape(16.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CameraBarcodePreview(
-                                onCameraBound = { activeCamera = it },
-                                onCameraError = { cameraError = it },
-                                onBarcodeDetected = { code ->
-                                    if (AppSensoryConfig.enableHaptics) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    onBarcodeResult(code)
-                                }
-                            )
-                            Box(modifier = Modifier.fillMaxWidth(0.75f).height(86.dp).border(1.5.dp, SmartLedgerColors.StateSuccess.copy(alpha = 0.85f), RoundedCornerShape(8.dp)))
-                        }
+                    } else {
+                        useCameraMode = false
                     }
                 }
+            )
 
-                Spacer(modifier = Modifier.height(14.dp))
-                SmartTextField(
-                    value = manualBarcode,
-                    onValueChange = { manualBarcode = Formatters.normalizeDigits(it).trim(); manualError = null },
-                    label = "رقم الباركود أو رمز الصنف (إدخال يدوي)",
-                    placeholder = "مثال: 6281000123456",
-                    errorMessage = manualError,
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Ascii,
-                    imeAction = ImeAction.Done,
-                    onImeDone = {
-                        if (manualBarcode.isNotBlank()) onBarcodeResult(manualBarcode.trim())
-                        else manualError = "يرجى كتابة رقم الباركود أولاً"
+            if (useCameraMode && hasCameraPermission && hasCameraHardware) {
+                CameraBarcodePreviewBox(
+                    onDetected = { code ->
+                        if (AppSensoryConfig.enableHaptics) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                        onBarcodeResult(code)
                     }
                 )
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(
-                        onClick = rememberDebouncedClick {
-                            if (manualBarcode.isBlank()) manualError = "يرجى إدخال رمز الباركود أو مسحه بالكاميرا"
-                            else onBarcodeResult(manualBarcode.trim())
-                        },
-                        modifier = Modifier.weight(1.5f).height(44.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("اعتماد الرمز", fontWeight = FontWeight.Bold)
+            } else if (!hasCameraHardware) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.StateWarningSubtle),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.StateWarningBorder))
+                ) {
+                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.VideocamOff, contentDescription = null, tint = SmartLedgerColors.StateWarning)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "لا تتوفر كاميرا نشطة على هذا الجهاز. يمكنك إدخال الباركود يدوياً أو اختياره من القائمة أدناه.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SmartLedgerColors.TextPrimary
+                        )
                     }
-                    OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(12.dp)) {
-                        Text("إلغاء", color = SmartLedgerColors.TextSecondary)
+                }
+            } else if (!hasCameraPermission) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle))
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CameraAlt,
+                            contentDescription = null,
+                            tint = SmartLedgerColors.AccentLight,
+                            modifier = Modifier.size(32.dp)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "نحتاج إذن الكاميرا لقراءة الباركود",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = SmartLedgerColors.TextPrimary
+                        )
+                        Text(
+                            text = if (permissionDeniedOnce) {
+                                "تم رفض إذن الكاميرا. يمكنك منح الإذن لقراءة الرموز تلقائياً أو المتابعة بالإدخال اليدوي بالأسفل."
+                            } else {
+                                "يُستخدم إذن الكاميرا حصراً لقراءة باركود الأصناف أثناء البيع أو الجرد، ولا يتم التقاط أو حفظ أي صور."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SmartLedgerColors.TextMuted
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Button(
+                            onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                            colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
+                            shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
+                        ) {
+                            Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("منح إذن الكاميرا وبدء المسح", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            // حقل الإدخال اليدوي البديل (متاح دائماً لضمان استمرارية العمل)
+            SmartTextField(
+                value = manualBarcode,
+                onValueChange = {
+                    manualBarcode = it
+                    manualError = null
+                },
+                label = "رقم الباركود أو رمز الصنف",
+                placeholder = "أدخل أرقام الباركود أو امسح بقارئ خارجي...",
+                errorText = manualError,
+                keyboardType = KeyboardType.Text,
+                imeAction = ImeAction.Done,
+                leadingIcon = Icons.Default.QrCode,
+                onDoneAction = {
+                    if (manualBarcode.isNotBlank()) {
+                        onBarcodeResult(manualBarcode.trim())
+                    }
+                }
+            )
+
+            // شرائح اختيار سريع للأصناف المسجلة لها باركود (تسهيل الاختبار والاختيار السريع)
+            if (knownBarcodes.isNotEmpty()) {
+                Text(
+                    text = "رموز مسجلة في المخزن (اضغط للاختيار السريع):",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SmartLedgerColors.TextMuted
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(knownBarcodes) { (code, productName) ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(SmartLedgerColors.SurfaceCardElevated)
+                                .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    manualBarcode = code
+                                    onBarcodeResult(code)
+                                }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = "$productName ($code)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SmartLedgerColors.AccentLight,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
             }
@@ -182,56 +253,138 @@ fun BarcodeScannerDialog(
     }
 }
 
-@SuppressLint("UnsafeOptInUsageError")
 @Composable
-private fun CameraBarcodePreview(
-    onCameraBound: (Camera) -> Unit,
-    onCameraError: (String) -> Unit,
-    onBarcodeDetected: (String) -> Unit
+@androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
+private fun CameraBarcodePreviewBox(
+    onDetected: (String) -> Unit
 ) {
+    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val isScanLocked = remember { AtomicBoolean(false) }
-    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
-    val barcodeScanner = remember { BarcodeScanning.getClient() }
+    var torchEnabled by remember { mutableStateOf(false) }
+    var cameraRef by remember { mutableStateOf<Camera?>(null) }
+    var lastDetectedTime by remember { mutableStateOf(0L) }
+    var lastDetectedCode by remember { mutableStateOf("") }
+    var cameraError by remember { mutableStateOf<String?>(null) }
 
+    val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
     DisposableEffect(Unit) {
         onDispose {
-            try { barcodeScanner.close(); cameraExecutor.shutdown() } catch (_: Exception) {}
+            try {
+                analysisExecutor.shutdown()
+            } catch (_: Exception) {
+            }
         }
     }
 
-    AndroidView(
-        modifier = Modifier.fillMaxSize(),
-        factory = { ctx ->
-            val previewView = PreviewView(ctx).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE }
-            val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-            cameraProviderFuture.addListener({
-                try {
-                    val cameraProvider = cameraProviderFuture.get()
-                    val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
-                    val imageAnalysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
-                    imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                        val mediaImage = imageProxy.image
-                        if (mediaImage != null && !isScanLocked.get()) {
-                            val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-                            barcodeScanner.process(image)
-                                .addOnSuccessListener { barcodes ->
-                                    val validCode = barcodes.mapNotNull { it.rawValue?.trim() }.firstOrNull { it.isNotEmpty() }
-                                    if (validCode != null && isScanLocked.compareAndSet(false, true)) {
-                                        ContextCompat.getMainExecutor(ctx).execute { onBarcodeDetected(Formatters.normalizeDigits(validCode)) }
-                                    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(210.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(SmartLedgerColors.SurfaceInput)
+            .border(1.5.dp, SmartLedgerColors.AccentPrimary, RoundedCornerShape(14.dp))
+    ) {
+        if (cameraError != null) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(16.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = SmartLedgerColors.StateWarning)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = cameraError.orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SmartLedgerColors.TextSecondary
+                )
+            }
+        } else {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    val previewView = PreviewView(ctx)
+                    val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                    cameraProviderFuture.addListener({
+                        try {
+                            val cameraProvider = cameraProviderFuture.get()
+                            val preview = Preview.Builder().build().also {
+                                it.setSurfaceProvider(previewView.surfaceProvider)
+                            }
+                            val scanner = BarcodeScanning.getClient()
+                            val imageAnalysis = ImageAnalysis.Builder()
+                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                .build()
+
+                            imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
+                                val mediaImage = imageProxy.image
+                                if (mediaImage != null) {
+                                    val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+                                    scanner.process(image)
+                                        .addOnSuccessListener { barcodes ->
+                                            val rawValue = barcodes.firstOrNull { !it.rawValue.isNullOrBlank() }?.rawValue
+                                            if (!rawValue.isNullOrBlank()) {
+                                                val now = SystemClock.elapsedRealtime()
+                                                // منع المسح المتكرر غير المقصود لنفس الرمز خلال 1.5 ثانية
+                                                if (rawValue != lastDetectedCode || (now - lastDetectedTime) > 1500L) {
+                                                    lastDetectedCode = rawValue
+                                                    lastDetectedTime = now
+                                                    onDetected(rawValue)
+                                                }
+                                            }
+                                        }
+                                        .addOnCompleteListener {
+                                            imageProxy.close()
+                                        }
+                                } else {
+                                    imageProxy.close()
                                 }
-                                .addOnCompleteListener { imageProxy.close() }
-                        } else imageProxy.close()
-                    }
-                    cameraProvider.unbindAll()
-                    val camera = cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageAnalysis)
-                    onCameraBound(camera)
-                } catch (_: Exception) {
-                    onCameraError("تعذر تشغيل الكاميرا: يمكنك استخدام الإدخال اليدوي أدناه.")
+                            }
+
+                            cameraProvider.unbindAll()
+                            cameraRef = cameraProvider.bindToLifecycle(
+                                lifecycleOwner,
+                                CameraSelector.DEFAULT_BACK_CAMERA,
+                                preview,
+                                imageAnalysis
+                            )
+                        } catch (e: Exception) {
+                            cameraError = "تعذر تشغيل معاينة الكاميرا، يرجى استخدام الإدخال اليدوي بالأسفل."
+                        }
+                    }, ContextCompat.getMainExecutor(ctx))
+                    previewView
                 }
-            }, ContextCompat.getMainExecutor(ctx))
-            previewView
+            )
+
+            // إطار توجيه بصري وسط الكاميرا
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(width = 200.dp, height = 95.dp)
+                    .border(2.dp, SmartLedgerColors.AccentLight.copy(alpha = 0.85f), RoundedCornerShape(10.dp))
+            )
+
+            // زر تشغيل/إيقاف الإضاءة (Flash/Torch)
+            if (cameraRef?.cameraInfo?.hasFlashUnit() == true) {
+                IconButton(
+                    onClick = {
+                        torchEnabled = !torchEnabled
+                        cameraRef?.cameraControl?.enableTorch(torchEnabled)
+                    },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(10.dp)
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(SmartLedgerColors.SurfaceOverlay)
+                ) {
+                    Icon(
+                        imageVector = if (torchEnabled) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                        contentDescription = "إضاءة الفلاش",
+                        tint = if (torchEnabled) SmartLedgerColors.StateWarning else SmartLedgerColors.TextInverse,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
         }
-    )
+    }
 }

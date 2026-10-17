@@ -12,7 +12,6 @@ import com.smartledger.pro.data.local.dao.*
 import com.smartledger.pro.data.local.entity.*
 import com.smartledger.pro.data.repository.*
 import com.smartledger.pro.domain.model.UnitConversionEngine
-import com.smartledger.pro.util.Formatters
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -22,18 +21,25 @@ import java.util.*
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
     private val db = SmartLedgerDatabase.getInstance(application)
     private val reportRepo = ReportRepository(db)
-    private val operationDao = db.operationDao()
-    private val accountRepo = AccountRepository(db)
+    private val voucherRepo = VoucherRepository(db)
+    private val identityDao = db.businessIdentityDao()
+
+    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityDao.getIdentity()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val metrics: StateFlow<DashboardMetrics> = reportRepo.getDashboardMetrics()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0))
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            DashboardMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0)
+        )
 
-    val recentOps: StateFlow<List<OperationEntity>> = operationDao.getRecentOperationsFlow(limit = 15)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val accountsMap: StateFlow<Map<Long, String>> = accountRepo.getAccountSummaries(null)
-        .map { list -> list.associate { it.PersonId to it.PersonName } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+    val recentOps: StateFlow<List<RecentOperationWithPerson>> = voucherRepo.observeRecentOperations(limit = 15)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            emptyList()
+        )
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -48,29 +54,50 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     private val _selectedBookId = MutableStateFlow<Long?>(null)
     val selectedBookId = _selectedBookId.asStateFlow()
 
-    private val _balanceFilter = MutableStateFlow("ALL")
+    private val _balanceFilter = MutableStateFlow("ALL") // ALL, DEBIT (لنا), CREDIT (علينا)
     val balanceFilter = _balanceFilter.asStateFlow()
 
     val books: StateFlow<List<BookEntity>> = accountRepo.getAllBooks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val accounts: StateFlow<List<AccountBalanceSummary>> = combine(_searchQuery, _selectedBookId, _balanceFilter) { q, b, f ->
-        Triple(q, b, f)
+    val accounts: StateFlow<List<AccountBalanceSummary>> = combine(
+        _searchQuery,
+        _selectedBookId,
+        _balanceFilter
+    ) { query, bookId, balFilter ->
+        Triple(query, bookId, balFilter)
     }.flatMapLatest { (query, bookId, balFilter) ->
-        val baseFlow = if (query.isBlank()) accountRepo.getAccountSummaries(bookId) else accountRepo.searchAccounts(query.trim(), bookId)
+        val baseFlow = if (query.isBlank()) {
+            accountRepo.getAccountSummaries(bookId)
+        } else {
+            accountRepo.searchAccounts(query.trim(), bookId)
+        }
         baseFlow.map { list ->
             when (balFilter) {
                 "DEBIT" -> list.filter { it.NetBalance > 0.001 }
                 "CREDIT" -> list.filter { it.NetBalance < -0.001 }
-                "SETTLED" -> list.filter { kotlin.math.abs(it.NetBalance) <= 0.001 }
                 else -> list
             }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun onSearchQueryChanged(q: String) { _searchQuery.value = q }
-    fun onBookSelected(bookId: Long?) { _selectedBookId.value = if (bookId == null || bookId <= 0) null else bookId }
-    fun onBalanceFilterChanged(filter: String) { _balanceFilter.value = filter }
+    fun onSearchQueryChanged(q: String) {
+        _searchQuery.value = q
+    }
+
+    fun onBookSelected(bookId: Long?) {
+        _selectedBookId.value = if (bookId == null || bookId <= 0) null else bookId
+    }
+
+    fun onBalanceFilterChanged(filter: String) {
+        _balanceFilter.value = filter
+    }
+
+    fun clearFilters() {
+        _searchQuery.value = ""
+        _selectedBookId.value = null
+        _balanceFilter.value = "ALL"
+    }
 
     fun saveAccount(
         id: Long = 0,
@@ -81,36 +108,53 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         openingBalance: Double,
         isDebit: Boolean,
         note: String?,
-        updateOpeningIfEdited: Boolean = false
+        onComplete: ((Long) -> Unit)? = null
     ) {
         viewModelScope.launch {
-            val now = Formatters.nowTimestamp()
+            val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
             val person = PersonEntity(
                 Id = id,
                 BookId = bookId,
                 Name = name.trim(),
                 Phone = phone?.trim()?.ifBlank { null },
                 AccountCode = if (id > 0) null else "ACC-" + (System.currentTimeMillis() % 100000),
-                CreditLimit = creditLimit,
+                CreditLimit = creditLimit.coerceAtLeast(0.0),
                 Note = note?.trim()?.ifBlank { null },
                 CreatedAt = now
             )
-            accountRepo.saveAccount(person, openingBalance, isDebit, updateOpeningIfEdited)
+            val savedId = accountRepo.saveAccount(person, openingBalance, isDebit)
+            onComplete?.invoke(savedId)
         }
     }
 
-    fun recordQuickVoucher(personId: Long, type: String, amount: Double, statement: String, refNumber: String? = null) {
-        viewModelScope.launch { voucherRepo.createVoucher(personId, type, amount, statement, refNumber) }
-    }
-
     fun deleteAccount(id: Long, reason: String? = null) {
-        viewModelScope.launch { accountRepo.softDeleteAccount(id, reason) }
+        viewModelScope.launch {
+            accountRepo.softDeleteAccount(id, reason)
+        }
     }
 
-    fun getOperationsForAccount(personId: Long): Flow<List<OperationEntity>> = accountRepo.getAccountOperations(personId)
+    fun getOperationsForAccount(personId: Long): Flow<List<OperationEntity>> {
+        return accountRepo.getAccountOperations(personId)
+    }
 
     fun deleteOperation(operationId: Long, reason: String? = null) {
-        viewModelScope.launch { accountRepo.deleteOperation(operationId, reason) }
+        viewModelScope.launch {
+            accountRepo.deleteOperation(operationId, reason)
+        }
+    }
+
+    fun createQuickVoucher(
+        personId: Long,
+        type: String,
+        amount: Double,
+        statement: String,
+        refNumber: String? = null,
+        onComplete: (() -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            voucherRepo.createVoucher(personId, type, amount, statement, refNumber)
+            onComplete?.invoke()
+        }
     }
 }
 
@@ -122,29 +166,44 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
-    private val _stockFilter = MutableStateFlow("ALL")
+    private val _stockFilter = MutableStateFlow("ALL") // ALL, LOW_STOCK, OUT_OF_STOCK, MULTI_UNIT
     val stockFilter = _stockFilter.asStateFlow()
 
-    val products: StateFlow<List<ProductStockItem>> = combine(_searchQuery, _stockFilter) { q, f -> Pair(q, f) }
-        .flatMapLatest { (q, filter) ->
-            val baseFlow = if (q.isBlank()) inventoryRepo.getProducts() else inventoryRepo.searchProducts(q.trim())
-            baseFlow.map { list ->
-                when (filter) {
-                    "LOW_STOCK" -> list.filter { it.CurrentStockMinor <= it.AlertThreshold }
-                    "IN_STOCK" -> list.filter { it.CurrentStockMinor > it.AlertThreshold }
-                    "OUT_OF_STOCK" -> list.filter { it.CurrentStockMinor <= 0.0 }
-                    "MULTI_UNIT" -> list.filter { !it.LargeUnit.isNullOrBlank() && it.UnitFactor > 1.0 }
-                    else -> list
-                }
+    val products: StateFlow<List<ProductStockItem>> = combine(
+        _searchQuery,
+        _stockFilter
+    ) { q, filter ->
+        Pair(q, filter)
+    }.flatMapLatest { (q, filter) ->
+        val flow = if (q.isBlank()) inventoryRepo.getProducts() else inventoryRepo.searchProducts(q.trim())
+        flow.map { list ->
+            when (filter) {
+                "LOW_STOCK" -> list.filter { it.CurrentStockMinor <= it.AlertThreshold && it.CurrentStockMinor > 0.0 }
+                "OUT_OF_STOCK" -> list.filter { it.CurrentStockMinor <= 0.0 }
+                "MULTI_UNIT" -> list.filter { !it.LargeUnit.isNullOrBlank() && it.UnitFactor > 1.0 }
+                else -> list
             }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun onSearchQueryChanged(q: String) { _searchQuery.value = q }
-    fun onStockFilterChanged(filter: String) { _stockFilter.value = filter }
-    fun getMovementsForProduct(productId: Long): Flow<List<StockMovementEntity>> = inventoryRepo.getMovementsForProduct(productId)
-    suspend fun checkBarcodeConflict(barcode: String?, excludeProductId: Long = 0L): ProductEntity? = inventoryRepo.checkBarcodeConflict(barcode, excludeProductId)
+    fun onSearchQueryChanged(q: String) {
+        _searchQuery.value = q
+    }
 
-    suspend fun saveProductAsync(
+    fun onStockFilterChanged(filter: String) {
+        _stockFilter.value = filter
+    }
+
+    fun clearFilters() {
+        _searchQuery.value = ""
+        _stockFilter.value = "ALL"
+    }
+
+    fun getMovementsForProduct(productId: Long): Flow<List<StockMovementEntity>> {
+        return inventoryRepo.getProductMovements(productId)
+    }
+
+    fun saveProduct(
         id: Long = 0,
         barcode: String?,
         name: String,
@@ -160,41 +219,47 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
         alertThreshold: Double,
         openingMajorQty: Double = 0.0,
         openingMinorQty: Double = 0.0,
-        notes: String? = null
-    ): Result<Long> {
-        val now = Formatters.nowTimestamp()
-        val safeFactor = if (unitFactor <= 1.0 || largeUnit.isNullOrBlank()) 1.0 else unitFactor
-        val totalOpeningMinor = UnitConversionEngine.toMinorQuantity(openingMajorQty, openingMinorQty, safeFactor)
-        val effectiveMajorPrice = if (wholesalePrice > 0.0) wholesalePrice else (retailPrice * safeFactor)
+        onComplete: ((Long) -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+            val safeFactor = if (unitFactor <= 0.0 || largeUnit.isNullOrBlank()) 1.0 else unitFactor
+            val totalOpeningMinor = UnitConversionEngine.toMinorQuantity(openingMajorQty, openingMinorQty, safeFactor)
+            val effectiveMajorPrice = if (wholesalePrice > 0.0) wholesalePrice else (retailPrice * safeFactor)
 
-        val product = ProductEntity(
-            Id = id,
-            Barcode = barcode?.trim()?.ifBlank { null },
-            Name = name.trim(),
-            CategoryId = categoryId,
-            Warehouse = warehouse.trim().ifBlank { "المستودع الرئيسي" },
-            ShelfLocation = shelfLocation?.trim()?.ifBlank { null },
-            SmallUnit = smallUnit.trim().ifBlank { "قطعة" },
-            LargeUnit = if (safeFactor > 1.0) largeUnit?.trim()?.ifBlank { null } else null,
-            UnitFactor = safeFactor,
-            CostPrice = costPrice,
-            RetailPrice = retailPrice,
-            WholesalePrice = effectiveMajorPrice,
-            AlertThreshold = alertThreshold,
-            OpeningQuantityMinor = totalOpeningMinor,
-            OpeningCost = costPrice,
-            Notes = notes?.trim()?.ifBlank { null },
-            CreatedAt = now
-        )
-        return inventoryRepo.saveProduct(product, totalOpeningMinor)
+            val product = ProductEntity(
+                Id = id,
+                Barcode = barcode?.trim()?.ifBlank { null },
+                Name = name.trim(),
+                CategoryId = categoryId,
+                Warehouse = warehouse.trim().ifBlank { "المستودع الرئيسي" },
+                ShelfLocation = shelfLocation?.trim()?.ifBlank { null },
+                SmallUnit = smallUnit.trim().ifBlank { "قطعة" },
+                LargeUnit = largeUnit?.trim()?.ifBlank { null },
+                UnitFactor = safeFactor,
+                CostPrice = costPrice.coerceAtLeast(0.0),
+                RetailPrice = retailPrice.coerceAtLeast(0.0),
+                WholesalePrice = effectiveMajorPrice.coerceAtLeast(0.0),
+                AlertThreshold = alertThreshold.coerceAtLeast(0.0),
+                OpeningQuantityMinor = totalOpeningMinor,
+                OpeningCost = costPrice.coerceAtLeast(0.0),
+                CreatedAt = now
+            )
+            val savedId = inventoryRepo.saveProduct(product, totalOpeningMinor)
+            onComplete?.invoke(savedId)
+        }
     }
 
     fun deleteProduct(id: Long, reason: String? = null) {
-        viewModelScope.launch { inventoryRepo.softDeleteProduct(id, reason) }
+        viewModelScope.launch {
+            inventoryRepo.softDeleteProduct(id, reason)
+        }
     }
 
     fun commitStockAdjustment(productId: Long, actualQty: Double, currentQty: Double, notes: String? = null) {
-        viewModelScope.launch { inventoryRepo.commitStockAdjustment(productId, actualQty, currentQty, notes) }
+        viewModelScope.launch {
+            inventoryRepo.commitStockAdjustment(productId, actualQty, currentQty, notes)
+        }
     }
 }
 
@@ -204,15 +269,19 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     private val productRepo = InventoryRepository(db)
     private val accountRepo = AccountRepository(db)
     private val identityDao = db.businessIdentityDao()
+    private val prefsRepo = AppPreferencesRepository.getInstance(application)
+
+    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityDao.getIdentity()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val products: StateFlow<List<ProductStockItem>> = productRepo.getProducts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val customers: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries(bookId = 1)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val recentInvoices: StateFlow<List<InvoiceEntity>> = invoiceRepo.getRecentInvoices(50)
+
+    val recentInvoices: StateFlow<List<InvoiceEntity>> = invoiceRepo.getRecentInvoices(40)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityDao.getIdentity()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     var selectedCustomer by mutableStateOf<AccountBalanceSummary?>(null)
     val cartLines = mutableStateListOf<CartLineItem>()
@@ -221,10 +290,13 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         val index = cartLines.indexOfFirst { it.productId == product.Id }
         if (index >= 0) {
             val existing = cartLines[index]
-            cartLines[index] = if (asMajorUnit && product.UnitFactor > 1.0) existing.copy(majorQuantity = existing.majorQuantity + 1.0)
-            else existing.copy(minorQuantity = existing.minorQuantity + 1.0)
+            cartLines[index] = if (asMajorUnit && product.UnitFactor > 1.0 && !product.LargeUnit.isNullOrBlank()) {
+                existing.copy(majorQuantity = existing.majorQuantity + 1.0)
+            } else {
+                existing.copy(minorQuantity = existing.minorQuantity + 1.0)
+            }
         } else {
-            val safeFactor = if (product.UnitFactor <= 0.0) 1.0 else product.UnitFactor
+            val safeFactor = if (product.UnitFactor <= 0.0 || product.LargeUnit.isNullOrBlank()) 1.0 else product.UnitFactor
             val majorPrice = if (product.WholesalePrice > 0.0) product.WholesalePrice else (product.RetailPrice * safeFactor)
             cartLines.add(
                 CartLineItem(
@@ -234,10 +306,10 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                     smallUnit = product.SmallUnit,
                     largeUnit = product.LargeUnit,
                     unitFactor = safeFactor,
+                    availableStockMinor = product.CurrentStockMinor,
                     minorUnitPrice = product.RetailPrice,
                     majorUnitPrice = majorPrice,
                     minorUnitCost = product.CostPrice,
-                    availableStockMinor = product.CurrentStockMinor,
                     majorQuantity = if (asMajorUnit && safeFactor > 1.0) 1.0 else 0.0,
                     minorQuantity = if (asMajorUnit && safeFactor > 1.0) 0.0 else 1.0
                 )
@@ -245,45 +317,78 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun findAndAddByBarcode(barcode: String): ProductStockItem? {
-        val clean = barcode.trim()
-        val match = products.value.firstOrNull { it.Barcode?.equals(clean, ignoreCase = true) == true }
-        if (match != null) addItemToCart(match, asMajorUnit = false)
-        return match
-    }
-
     fun updateLineQuantities(productId: Long, majorQty: Double, minorQty: Double) {
         val index = cartLines.indexOfFirst { it.productId == productId }
         if (index >= 0) {
-            if (majorQty <= 0.0 && minorQty <= 0.0) cartLines.removeAt(index)
-            else cartLines[index] = cartLines[index].copy(majorQuantity = majorQty.coerceAtLeast(0.0), minorQuantity = minorQty.coerceAtLeast(0.0))
+            if (majorQty <= 0.0 && minorQty <= 0.0) {
+                cartLines.removeAt(index)
+            } else {
+                cartLines[index] = cartLines[index].copy(
+                    majorQuantity = majorQty.coerceAtLeast(0.0),
+                    minorQuantity = minorQty.coerceAtLeast(0.0)
+                )
+            }
         }
     }
 
-    fun updateLinePricing(productId: Long, newMinorPrice: Double, newMajorPrice: Double, lineDiscount: Double) {
+    fun updateLineUnitPrice(productId: Long, newMinorPrice: Double, newMajorPrice: Double) {
         val index = cartLines.indexOfFirst { it.productId == productId }
         if (index >= 0) {
-            cartLines[index] = cartLines[index].copy(minorUnitPrice = newMinorPrice.coerceAtLeast(0.0), majorUnitPrice = newMajorPrice.coerceAtLeast(0.0), lineDiscount = lineDiscount.coerceAtLeast(0.0))
+            cartLines[index] = cartLines[index].copy(
+                minorUnitPrice = newMinorPrice.coerceAtLeast(0.0),
+                majorUnitPrice = newMajorPrice.coerceAtLeast(0.0)
+            )
         }
     }
 
-    fun removeItemFromCart(productId: Long) { cartLines.removeAll { it.productId == productId } }
-    fun clearCart() { cartLines.clear(); selectedCustomer = null }
-    suspend fun getInvoiceLines(invoiceId: Long): List<InvoiceLineEntity> = invoiceRepo.getInvoiceLines(invoiceId)
-    suspend fun reverseInvoice(invoiceId: Long, reason: String = "مرتجع مبيعات"): Result<Boolean> = invoiceRepo.reverseInvoice(invoiceId, reason)
+    fun removeItemFromCart(productId: Long) {
+        cartLines.removeAll { it.productId == productId }
+    }
 
-    suspend fun checkoutWithDetails(
-        paymentType: String,
+    fun clearCart() {
+        cartLines.clear()
+        selectedCustomer = null
+    }
+
+    suspend fun getInvoiceLines(invoiceId: Long): List<InvoiceLineEntity> {
+        return invoiceRepo.getInvoiceLines(invoiceId)
+    }
+
+    suspend fun reverseInvoice(invoiceId: Long, reason: String = "مرتجع مبيعات"): Result<Boolean> {
+        return invoiceRepo.reverseInvoice(invoiceId, reason)
+    }
+
+    suspend fun checkout(
+        paymentType: String, // Cash, Credit, Partial
         discount: Double = 0.0,
         paidAmount: Double = 0.0,
         notes: String? = null
-    ): Result<Pair<InvoiceEntity, List<InvoiceLineEntity>>> {
-        if (cartLines.isEmpty()) return Result.failure(Exception("سلة الفاتورة فارغة"))
-        val now = Formatters.nowTimestamp()
+    ): Result<InvoiceEntity> {
+        if (cartLines.isEmpty()) return Result.failure(Exception("السلة فارغة"))
+
+        val customer = selectedCustomer
+        if ((paymentType == "Credit" || paymentType == "Partial") && customer == null) {
+            return Result.failure(Exception("لا يمكن إصدار فاتورة آجلة أو جزئية بدون اختيار حساب عميل مسجل."))
+        }
+
+        val settings = prefsRepo.settings.value
+        if (!settings.allowNegativeStock) {
+            val insufficient = cartLines.firstOrNull { it.totalMinorQuantity > it.availableStockMinor }
+            if (insufficient != null) {
+                return Result.failure(
+                    Exception("الكمية المطلوبة للصنف «${insufficient.name}» تتجاوز المتاح في المخزن (${insufficient.availableStockMinor.toInt()} ${insufficient.smallUnit}).")
+                )
+            }
+        }
+
+        val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
         val dateCode = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
-        val invoiceNo = "INV-${dateCode}-${(System.currentTimeMillis() % 10000)}"
+        val prefix = settings.invoicePrefix.ifBlank { "INV" }
+        val invoiceNo = "$prefix-$dateCode-${(System.currentTimeMillis() % 10000)}"
+
         val subtotal = cartLines.sumOf { it.calculatedLineTotal }
-        val finalTotal = kotlin.math.max(0.0, subtotal - discount)
+        val safeDiscount = discount.coerceIn(0.0, subtotal)
+        val finalTotal = kotlin.math.max(0.0, subtotal - safeDiscount)
         val actualPaid = when (paymentType) {
             "Cash" -> finalTotal
             "Credit" -> 0.0
@@ -291,18 +396,14 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         }
         val remaining = kotlin.math.max(0.0, finalTotal - actualPaid)
 
-        if (remaining > 0.001 && (selectedCustomer == null || selectedCustomer!!.PersonId <= 0L)) {
-            return Result.failure(Exception("لا يمكن إصدار فاتورة آجلة أو جزئية لعميل نقدي عام. يرجى اختيار عميل مسجل أولاً."))
-        }
-
         val invoice = InvoiceEntity(
             InvoiceNumber = invoiceNo,
             Type = "Sale",
-            PersonId = selectedCustomer?.PersonId ?: 0L,
-            PersonNameSnapshot = selectedCustomer?.PersonName ?: "عميل نقدي عام",
+            PersonId = customer?.PersonId ?: 0L,
+            PersonNameSnapshot = customer?.PersonName ?: "عميل نقدي عام",
             IssuedAt = now,
             Subtotal = subtotal,
-            DiscountAmount = discount,
+            DiscountAmount = safeDiscount,
             TaxAmount = 0.0,
             FinalTotal = finalTotal,
             PaidAmount = actualPaid,
@@ -325,7 +426,6 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 ConversionFactor = item.unitFactor,
                 QuantityMinor = totalMinorQty,
                 UnitPrice = effectiveUnitPrice,
-                LineDiscount = item.lineDiscount,
                 LineCost = item.minorUnitCost,
                 LineTotal = item.calculatedLineTotal,
                 SortOrder = index + 1
@@ -334,10 +434,12 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
 
         val result = invoiceRepo.createInvoice(invoice, lines)
         return if (result.isSuccess) {
-            val savedInvoice = invoice.copy(Id = result.getOrThrow())
+            val savedId = result.getOrDefault(0L)
             clearCart()
-            Result.success(Pair(savedInvoice, lines))
-        } else Result.failure(result.exceptionOrNull() ?: Exception("تعذر حفظ الفاتورة"))
+            Result.success(invoice.copy(Id = savedId))
+        } else {
+            Result.failure(result.exceptionOrNull() ?: Exception("تعذر حفظ الفاتورة"))
+        }
     }
 }
 
@@ -348,21 +450,36 @@ data class CartLineItem(
     val smallUnit: String,
     val largeUnit: String?,
     val unitFactor: Double,
+    val availableStockMinor: Double = 0.0,
     val minorUnitPrice: Double,
     val majorUnitPrice: Double,
     val minorUnitCost: Double,
-    val availableStockMinor: Double = 0.0,
     val majorQuantity: Double = 0.0,
-    val minorQuantity: Double = 1.0,
-    val lineDiscount: Double = 0.0
+    val minorQuantity: Double = 1.0
 ) {
     private val calc
-        get() = UnitConversionEngine.calculateCompositeSale(majorQuantity, minorQuantity, unitFactor, minorUnitPrice, majorUnitPrice, minorUnitCost, lineDiscount)
-    val totalMinorQuantity: Double get() = calc.totalMinorQuantity
-    val calculatedLineTotal: Double get() = calc.totalLinePrice
-    val isExceedingStock: Boolean get() = totalMinorQuantity > availableStockMinor
+        get() = UnitConversionEngine.calculateCompositeSale(
+            majorQty = majorQuantity,
+            minorQty = minorQuantity,
+            unitFactor = unitFactor,
+            minorSalePrice = minorUnitPrice,
+            majorSalePrice = majorUnitPrice,
+            minorUnitCost = minorUnitCost
+        )
+
+    val totalMinorQuantity: Double
+        get() = calc.totalMinorQuantity
+
+    val calculatedLineTotal: Double
+        get() = calc.totalLinePrice
+
     val formattedBreakdown: String
-        get() = UnitConversionEngine.breakdownStock(totalMinorQuantity, smallUnit, largeUnit, unitFactor).formattedText
+        get() = UnitConversionEngine.breakdownStock(
+            totalMinorQty = totalMinorQuantity,
+            smallUnit = smallUnit,
+            largeUnit = largeUnit,
+            unitFactor = unitFactor
+        ).formattedText
 }
 
 class VouchersViewModel(application: Application) : AndroidViewModel(application) {
@@ -372,12 +489,24 @@ class VouchersViewModel(application: Application) : AndroidViewModel(application
 
     val accounts: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val recentVouchers: StateFlow<List<OperationEntity>> = voucherRepo.getRecentVouchers(50)
+
+    val recentVouchers: StateFlow<List<RecentOperationWithPerson>> = voucherRepo.observeRecentOperations(limit = 30)
+        .map { list -> list.filter { it.Type == "Receive" || it.Type == "Payment" } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    suspend fun createVoucher(personId: Long, type: String, amount: Double, statement: String, refNumber: String? = null): Result<Long> {
-        return try { Result.success(voucherRepo.createVoucher(personId, type, amount, statement, refNumber)) }
-        catch (e: Exception) { Result.failure(e) }
+    suspend fun createVoucher(
+        personId: Long,
+        type: String, // Receive, Payment
+        amount: Double,
+        statement: String,
+        refNumber: String? = null
+    ): Result<Long> {
+        return try {
+            val id = voucherRepo.createVoucher(personId, type, amount, statement, refNumber)
+            Result.success(id)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 }
 
@@ -390,14 +519,28 @@ class ExpensesViewModel(application: Application) : AndroidViewModel(application
 
     fun saveExpense(amount: Double, statement: String, category: String, source: String, photoUri: String? = null) {
         viewModelScope.launch {
-            val now = Formatters.nowTimestamp()
-            val fullStatement = if (category.isNotBlank() && !statement.startsWith("[$category]")) "[$category] ${statement.trim()}" else statement.trim()
-            expenseRepo.saveExpense(ExpenseEntity(ExpenseDate = now, Amount = amount, Statement = fullStatement, PaymentSource = source.trim().ifBlank { "الخزينة الرئيسية" }, ReceiptPhotoUri = photoUri, CreatedAt = now))
+            val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+            val fullStatement = if (category.isNotBlank() && !statement.startsWith("[$category]")) {
+                "[$category] ${statement.trim()}"
+            } else {
+                statement.trim()
+            }
+            val entity = ExpenseEntity(
+                ExpenseDate = now,
+                Amount = amount,
+                Statement = fullStatement,
+                PaymentSource = source.trim().ifBlank { "الخزينة الرئيسية" },
+                ReceiptPhotoUri = photoUri,
+                CreatedAt = now
+            )
+            expenseRepo.saveExpense(entity)
         }
     }
 
     fun deleteExpense(id: Long, reason: String? = null) {
-        viewModelScope.launch { expenseRepo.deleteExpense(id, reason) }
+        viewModelScope.launch {
+            expenseRepo.deleteExpense(id, reason)
+        }
     }
 }
 
@@ -405,28 +548,51 @@ class ExpensesViewModel(application: Application) : AndroidViewModel(application
 class ReportsViewModel(application: Application) : AndroidViewModel(application) {
     private val db = SmartLedgerDatabase.getInstance(application)
     private val reportRepo = ReportRepository(db)
-    private val inventoryRepo = InventoryRepository(db)
-    private val accountRepo = AccountRepository(db)
+    private val identityDao = db.businessIdentityDao()
 
-    private val _selectedPeriod = MutableStateFlow("ALL")
+    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityDao.getIdentity()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    private val _selectedPeriod = MutableStateFlow("ALL") // ALL, TODAY, WEEK, MONTH, YEAR
     val selectedPeriod = _selectedPeriod.asStateFlow()
 
     val summary: StateFlow<FinancialReportSummary> = _selectedPeriod
         .flatMapLatest { period ->
-            val today = Formatters.todayDate()
-            when (period) {
-                "TODAY" -> reportRepo.getFinancialReportSummaryByPeriod(today, today)
-                "WEEK" -> reportRepo.getFinancialReportSummaryByPeriod(Formatters.startOfCurrentWeekDate(), today)
-                "MONTH" -> reportRepo.getFinancialReportSummaryByPeriod(Formatters.startOfCurrentMonthDate(), today)
-                "YEAR" -> reportRepo.getFinancialReportSummaryByPeriod(Formatters.startOfCurrentYearDate(), today)
-                else -> reportRepo.getFinancialReportSummary()
+            val fromDate = calculateFromDate(period)
+            if (fromDate == null) {
+                reportRepo.getFinancialReportSummary()
+            } else {
+                reportRepo.getFinancialReportFromDate(fromDate)
             }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), FinancialReportSummary(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+        }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            FinancialReportSummary(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        )
 
-    val products: StateFlow<List<ProductStockItem>> = inventoryRepo.getProducts()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val accounts: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    fun setPeriod(period: String) {
+        _selectedPeriod.value = period
+    }
 
-    fun onPeriodSelected(period: String) { _selectedPeriod.value = period }
+    private fun calculateFromDate(period: String): String? {
+        val cal = Calendar.getInstance()
+        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        return when (period) {
+            "TODAY" -> fmt.format(cal.time)
+            "WEEK" -> {
+                cal.add(Calendar.DAY_OF_YEAR, -7)
+                fmt.format(cal.time)
+            }
+            "MONTH" -> {
+                cal.set(Calendar.DAY_OF_MONTH, 1)
+                fmt.format(cal.time)
+            }
+            "YEAR" -> {
+                cal.set(Calendar.DAY_OF_YEAR, 1)
+                fmt.format(cal.time)
+            }
+            else -> null
+        }
+    }
 }

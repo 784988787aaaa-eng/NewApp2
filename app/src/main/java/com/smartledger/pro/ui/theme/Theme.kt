@@ -1,34 +1,24 @@
 package com.smartledger.pro.ui.theme
 
 import android.app.Activity
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.core.view.WindowCompat
-import com.smartledger.pro.util.AppSettingsManager
 
 @Composable
-fun SmartLedgerTheme(content: @Composable () -> Unit) {
-    val settings by AppSettingsManager.settings.collectAsState()
-    val systemDark = isSystemInDarkTheme()
-    val useLight = when (settings.themeMode) {
-        "LIGHT" -> true
-        "SYSTEM" -> !systemDark
-        else -> false
-    }
-    SmartLedgerColors.isLightMode = useLight
-
-    val colorScheme = if (useLight) {
+fun SmartLedgerTheme(
+    content: @Composable () -> Unit
+) {
+    val isLight = SmartLedgerColors.isLight
+    val colorScheme = if (isLight) {
         lightColorScheme(
             primary = SmartLedgerColors.AccentPrimary,
             onPrimary = SmartLedgerColors.TextInverse,
@@ -73,28 +63,23 @@ fun SmartLedgerTheme(content: @Composable () -> Unit) {
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as? Activity)?.window ?: return@SideEffect
-            window.statusBarColor = SmartLedgerColors.SurfaceWindow.toArgb()
-            window.navigationBarColor = SmartLedgerColors.SurfacePanel.toArgb()
-            val controller = WindowCompat.getInsetsController(window, view)
-            controller.isAppearanceLightStatusBars = useLight
-            controller.isAppearanceLightNavigationBars = useLight
+            val activity = view.context as? Activity
+            if (activity != null) {
+                val window = activity.window
+                window.statusBarColor = SmartLedgerColors.SurfacePanel.toArgb()
+                window.navigationBarColor = SmartLedgerColors.SurfacePanel.toArgb()
+                val controller = WindowCompat.getInsetsController(window, view)
+                controller.isAppearanceLightStatusBars = isLight
+                controller.isAppearanceLightNavigationBars = isLight
+            }
         }
     }
 
-    val currentDensity = LocalDensity.current
-    val scaledDensity = Density(
-        density = currentDensity.density,
-        fontScale = currentDensity.fontScale * settings.fontScale
-    )
-
-    CompositionLocalProvider(
-        LocalLayoutDirection provides LayoutDirection.Rtl,
-        LocalDensity provides scaledDensity
-    ) {
+    // فرض اتجاه RTL الصحيح لجميع شاشات ونوافذ التطبيق بغض النظر عن لغة جهاز المستخدم
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = buildSmartLedgerTypography(),
+            typography = buildSmartLedgerTypography(AppDesignState.fontScale),
             content = content
         )
     }

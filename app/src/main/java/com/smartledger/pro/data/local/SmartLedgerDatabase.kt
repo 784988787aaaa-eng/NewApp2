@@ -2,7 +2,6 @@ package com.smartledger.pro.data.local
 
 import android.content.Context
 import androidx.room.*
-import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.smartledger.pro.data.local.dao.*
 import com.smartledger.pro.data.local.entity.*
@@ -24,7 +23,7 @@ import kotlinx.coroutines.launch
         BusinessIdentityEntity::class,
         AppPreferenceEntity::class
     ],
-    version = 2,
+    version = 1,
     exportSchema = false
 )
 abstract class SmartLedgerDatabase : RoomDatabase() {
@@ -41,28 +40,22 @@ abstract class SmartLedgerDatabase : RoomDatabase() {
     abstract fun dashboardDao(): DashboardDao
     abstract fun reportDao(): ReportDao
 
+    /**
+     * تفريغ معاملات WAL إلى ملف قاعدة البيانات الأساسي لضمان لقطة نسخ احتياطي متماسكة 100%
+     */
     fun checkpointWal() {
         try {
             val db = openHelper.writableDatabase
             db.query("PRAGMA wal_checkpoint(FULL)").use { cursor ->
-                cursor.moveToFirst()
+                if (cursor.moveToFirst()) {
+                    // WAL checkpoint executed
+                }
             }
         } catch (_: Exception) {
         }
     }
 
     companion object {
-        const val SCHEMA_VERSION = 2
-
-        val MIGRATION_1_2 = object : Migration(1, 2) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                try {
-                    db.execSQL("ALTER TABLE Products ADD COLUMN Notes TEXT")
-                } catch (_: Exception) {
-                }
-            }
-        }
-
         @Volatile
         private var INSTANCE: SmartLedgerDatabase? = null
 
@@ -74,8 +67,7 @@ abstract class SmartLedgerDatabase : RoomDatabase() {
                     "smartledger.db"
                 )
                     .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
-                    .addMigrations(MIGRATION_1_2)
-                    .fallbackToDestructiveMigrationOnDowngrade()
+                    .fallbackToDestructiveMigration()
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -91,11 +83,18 @@ abstract class SmartLedgerDatabase : RoomDatabase() {
             }
         }
 
-        fun reopenAfterRestore(context: Context): SmartLedgerDatabase {
+        /**
+         * إغلاق الاتصال الحالي بقاعدة البيانات بأمان قبل استبدال ملف القاعدة أثناء الاستعادة
+         */
+        fun closeAndResetInstance() {
             synchronized(this) {
-                try { INSTANCE?.close() } catch (_: Exception) {}
-                INSTANCE = null
-                return getInstance(context)
+                try {
+                    INSTANCE?.checkpointWal()
+                    INSTANCE?.close()
+                } catch (_: Exception) {
+                } finally {
+                    INSTANCE = null
+                }
             }
         }
 
@@ -107,14 +106,19 @@ abstract class SmartLedgerDatabase : RoomDatabase() {
                 BookEntity(Id = 4, Name = "حسابات عامة", IsSystem = true, SortOrder = 4),
                 BookEntity(Id = 5, Name = "أخرى", IsSystem = true, SortOrder = 5)
             )
-            for (b in books) db.bookDao().insertBook(b)
+            for (b in books) {
+                db.bookDao().insertBook(b)
+            }
 
             db.businessIdentityDao().saveIdentity(
                 BusinessIdentityEntity(
                     Id = 1,
                     TradeName = "الدفتر الذكي للتجارة العامة",
                     LegalName = "الدفتر الذكي",
+                    TaxNumber = null,
+                    CommercialRegistration = null,
                     Phone1 = "777000000",
+                    Phone2 = null,
                     Address = "صنعاء - شارع الزبيري",
                     ReceiptHeader = "أهلاً وسهلاً بكم في متجرنا",
                     ReceiptFooter = "البضاعة المباعة ترد وتستبدل خلال 3 أيام بفاتورة الشراء"

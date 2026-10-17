@@ -1,11 +1,9 @@
 package com.smartledger.pro.ui.screens.reports
 
-import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
@@ -26,13 +24,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.smartledger.pro.ui.components.FilterTabItem
-import com.smartledger.pro.ui.components.ScrollableFilterTabs
-import com.smartledger.pro.ui.components.rememberDebouncedClick
+import com.smartledger.pro.data.local.dao.FinancialReportSummary
+import com.smartledger.pro.ui.components.FilterChipRow
+import com.smartledger.pro.ui.components.StatusFeedbackBanner
+import com.smartledger.pro.ui.components.bounceClick
+import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
+import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.ui.viewmodels.ReportsViewModel
-import com.smartledger.pro.util.AppSettingsManager
-import com.smartledger.pro.util.Formatters
+import com.smartledger.pro.util.NumberFormatter
+import com.smartledger.pro.util.ThermalPrinterHelper
+import java.util.Locale
 
 @Composable
 fun ReportsScreen(
@@ -41,88 +43,70 @@ fun ReportsScreen(
 ) {
     val summary by viewModel.summary.collectAsState()
     val selectedPeriod by viewModel.selectedPeriod.collectAsState()
-    val products by viewModel.products.collectAsState()
-    val accounts by viewModel.accounts.collectAsState()
-    val settings by AppSettingsManager.settings.collectAsState()
+    val identity by viewModel.businessIdentity.collectAsState()
     val context = LocalContext.current
 
-    var selectedReportSection by remember { mutableStateOf("INCOME") }
-    var exportStatusBanner by remember { mutableStateOf<String?>(null) }
-
-    val periodTabs = remember {
-        listOf(
-            FilterTabItem("ALL", "كل الفترات"),
-            FilterTabItem("TODAY", "اليوم"),
-            FilterTabItem("WEEK", "هذا الأسبوع"),
-            FilterTabItem("MONTH", "هذا الشهر"),
-            FilterTabItem("YEAR", "هذه السنة")
-        )
-    }
-
-    val sectionTabs = remember {
-        listOf(
-            FilterTabItem("INCOME", "قائمة الدخل والأرباح"),
-            FilterTabItem("INVENTORY", "تقييم المخزون والنواقص"),
-            FilterTabItem("DEBTS", "الذمم والديون (لنا/علينا)")
-        )
-    }
+    var statusBanner by remember { mutableStateOf<String?>(null) }
+    var isErrorBanner by remember { mutableStateOf(false) }
 
     val periodLabel = when (selectedPeriod) {
-        "TODAY" -> "تقرير اليوم (${Formatters.todayDate()})"
-        "WEEK" -> "منذ ${Formatters.startOfCurrentWeekDate()} حتى اليوم"
-        "MONTH" -> "منذ بداية الشهر (${Formatters.startOfCurrentMonthDate()})"
-        "YEAR" -> "منذ بداية السنة (${Formatters.startOfCurrentYearDate()})"
-        else -> "تراكمي شامل لكل الفترات"
+        "TODAY" -> "اليوم (${NumberFormatter.todayDate()})"
+        "WEEK" -> "آخر 7 أيام"
+        "MONTH" -> "هذا الشهر"
+        "YEAR" -> "هذا العام"
+        else -> "تراكمي (كل الفترات)"
     }
 
-    val buildReportPlainText: () -> String = {
-        buildString {
-            append("تقرير مالي وإداري — الدفتر الذكي Pro\n")
-            append("تاريخ إصدار التقرير: ${Formatters.nowTimestamp()}\n")
-            append("النطاق الزمني: $periodLabel\n")
-            append("العملة المعتمدة: ${settings.currencySymbol}\n")
-            append("====================================\n")
-            append("1. قائمة الدخل والأرباح:\n")
-            append("- إجمالي المبيعات المحققة: ${Formatters.formatCurrency(summary.TotalSales, settings.currencySymbol, settings.decimalPlaces)}\n")
-            append("- تكلفة البضاعة المباعة (COGS): ${Formatters.formatCurrency(summary.CostOfGoodsSold, settings.currencySymbol, settings.decimalPlaces)}\n")
-            append("- مجمل الربح التجاري: ${Formatters.formatCurrency(summary.GrossProfit, settings.currencySymbol, settings.decimalPlaces)}\n")
-            append("- إجمالي المصروفات التشغيلية: ${Formatters.formatCurrency(summary.TotalExpenses, settings.currencySymbol, settings.decimalPlaces)}\n")
-            append("- صافي الربح الفعلي: ${Formatters.formatCurrency(summary.NetProfit, settings.currencySymbol, settings.decimalPlaces)}\n")
-            append("====================================\n")
-            append("2. المركز المالي والمخزون:\n")
-            append("- تقييم بضاعة المخزن بسعر التكلفة: ${Formatters.formatCurrency(summary.InventoryValuation, settings.currencySymbol, settings.decimalPlaces)}\n")
-            append("- إجمالي ديون المنشأة على العملاء (لنا): ${Formatters.formatCurrency(summary.TotalDebtsToUs, settings.currencySymbol, settings.decimalPlaces)}\n")
-            append("- إجمالي التزامات المنشأة للموردين (علينا): ${Formatters.formatCurrency(summary.TotalDebtsOnUs, settings.currencySymbol, settings.decimalPlaces)}\n")
-            append("- صافي المركز المالي: ${Formatters.formatCurrency(summary.TotalDebtsToUs - summary.TotalDebtsOnUs, settings.currencySymbol, settings.decimalPlaces)}\n")
+    val grossMarginPct = if (summary.TotalSales > 0.0) {
+        ((summary.GrossProfit / summary.TotalSales) * 100.0)
+    } else 0.0
+
+    // مصدّر تقرير HTML قابل للطباعة والتحويل إلى PDF عبر Storage Access Framework
+    val htmlReportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/html")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val htmlContent = buildPrintableHtmlReport(
+                    tradeName = identity?.TradeName ?: "الدفتر الذكي Pro",
+                    periodLabel = periodLabel,
+                    currency = AppDesignState.currencySymbol,
+                    summary = summary
+                )
+                context.contentResolver.openOutputStream(uri)?.use { os ->
+                    os.write(htmlContent.toByteArray(Charsets.UTF_8))
+                }
+                isErrorBanner = false
+                statusBanner = "تم تصدير التقرير المالي القابل للطباعة بنجاح."
+            } catch (e: Exception) {
+                isErrorBanner = true
+                statusBanner = "تعذر حفظ ملف التقرير: ${e.localizedMessage}"
+            }
         }
     }
 
-    val buildCsvText: () -> String = {
-        buildString {
-            append("البند,القيمة,العملة,الفترة\n")
-            append("\"إجمالي المبيعات\",${Formatters.formatAmountOnly(summary.TotalSales, settings.decimalPlaces)},\"${settings.currencySymbol}\",\"$periodLabel\"\n")
-            append("\"تكلفة البضاعة المباعة (COGS)\",${Formatters.formatAmountOnly(summary.CostOfGoodsSold, settings.decimalPlaces)},\"${settings.currencySymbol}\",\"$periodLabel\"\n")
-            append("\"مجمل الربح التجاري\",${Formatters.formatAmountOnly(summary.GrossProfit, settings.decimalPlaces)},\"${settings.currencySymbol}\",\"$periodLabel\"\n")
-            append("\"إجمالي المصروفات\",${Formatters.formatAmountOnly(summary.TotalExpenses, settings.decimalPlaces)},\"${settings.currencySymbol}\",\"$periodLabel\"\n")
-            append("\"صافي الربح الفعلي\",${Formatters.formatAmountOnly(summary.NetProfit, settings.decimalPlaces)},\"${settings.currencySymbol}\",\"$periodLabel\"\n")
-            append("\"تقييم المخزون بالتكلفة\",${Formatters.formatAmountOnly(summary.InventoryValuation, settings.decimalPlaces)},\"${settings.currencySymbol}\",\"$periodLabel\"\n")
-            append("\"إجمالي لنا (مدين)\",${Formatters.formatAmountOnly(summary.TotalDebtsToUs, settings.decimalPlaces)},\"${settings.currencySymbol}\",\"$periodLabel\"\n")
-            append("\"إجمالي علينا (دائن)\",${Formatters.formatAmountOnly(summary.TotalDebtsOnUs, settings.decimalPlaces)},\"${settings.currencySymbol}\",\"$periodLabel\"\n")
-        }
-    }
-
-    val csvExportLauncher = rememberLauncherForActivityResult(
+    // مصدّر جدول CSV متوافق مع Excel عبر Storage Access Framework
+    val csvReportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/csv")
     ) { uri ->
         if (uri != null) {
             try {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
-                    out.write(buildCsvText().toByteArray(Charsets.UTF_8))
+                val csvContent = buildCsvFinancialReport(
+                    tradeName = identity?.TradeName ?: "الدفتر الذكي Pro",
+                    periodLabel = periodLabel,
+                    currency = AppDesignState.currencySymbol,
+                    summary = summary
+                )
+                context.contentResolver.openOutputStream(uri)?.use { os ->
+                    // إضافة UTF-8 BOM لضمان فتح الحروف العربية بشكل سليم في Microsoft Excel
+                    os.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
+                    os.write(csvContent.toByteArray(Charsets.UTF_8))
                 }
-                exportStatusBanner = "تم تصدير وحفظ ملف جدول التقرير (CSV) بنجاح."
+                isErrorBanner = false
+                statusBanner = "تم تصدير جدول البيانات المالي (CSV / Excel) بنجاح."
             } catch (e: Exception) {
-                exportStatusBanner = "تعذر حفظ ملف التقرير: ${e.message}"
+                isErrorBanner = true
+                statusBanner = "تعذر تصدير جدول البيانات: ${e.localizedMessage}"
             }
         }
     }
@@ -133,7 +117,8 @@ fun ReportsScreen(
             Column(
                 modifier = Modifier
                     .background(SmartLedgerColors.SurfacePanel)
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .padding(horizontal = SmartLedgerTokens.screenHorizontalPadding, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -148,38 +133,52 @@ fun ReportsScreen(
                             ) {
                                 Icon(Icons.Default.ArrowForward, contentDescription = "رجوع", tint = SmartLedgerColors.TextPrimary, modifier = Modifier.size(18.dp))
                             }
-                            Spacer(modifier = Modifier.width(10.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                         }
                         Column {
                             Text(
-                                "التقارير والمؤشرات المالية",
+                                text = "التقارير والقوائم المالية",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = SmartLedgerColors.TextPrimary
                             )
                             Text(
-                                "تاريخ التقرير: ${Formatters.todayDate()} • العملة: ${settings.currencySymbol}",
+                                text = "الفترة: $periodLabel • العملة: ${AppDesignState.currencySymbol}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = SmartLedgerColors.TextMuted
+                                color = SmartLedgerColors.AccentLight
                             )
                         }
                     }
+
+                    IconButton(
+                        onClick = {
+                            val textSummary = buildPlainTextReport(
+                                tradeName = identity?.TradeName ?: "الدفتر الذكي Pro",
+                                periodLabel = periodLabel,
+                                currency = AppDesignState.currencySymbol,
+                                summary = summary
+                            )
+                            ThermalPrinterHelper.shareTextSafely(context, "تقرير مالي — $periodLabel", textSummary)
+                        },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(SmartLedgerColors.SurfaceCardElevated)
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = "مشاركة ملخص التقرير", tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(18.dp))
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                ScrollableFilterTabs(
-                    tabs = periodTabs,
-                    selectedTabId = selectedPeriod,
-                    onTabSelected = { viewModel.onPeriodSelected(it) }
-                )
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                ScrollableFilterTabs(
-                    tabs = sectionTabs,
-                    selectedTabId = selectedReportSection,
-                    onTabSelected = { selectedReportSection = it }
+                FilterChipRow(
+                    items = listOf(
+                        "ALL" to "كل الفترات",
+                        "TODAY" to "اليوم",
+                        "WEEK" to "آخر 7 أيام",
+                        "MONTH" to "هذا الشهر",
+                        "YEAR" to "هذا العام"
+                    ),
+                    selectedItem = selectedPeriod,
+                    onItemSelected = { viewModel.setPeriod(it) }
                 )
             }
         }
@@ -188,274 +187,214 @@ fun ReportsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = SmartLedgerTokens.screenHorizontalPadding),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            item { Spacer(modifier = Modifier.height(4.dp)) }
+            item {
+                Spacer(modifier = Modifier.height(4.dp))
+                StatusFeedbackBanner(
+                    message = statusBanner,
+                    isError = isErrorBanner,
+                    onDismiss = { statusBanner = null }
+                )
+            }
 
-            if (!exportStatusBanner.isNullOrBlank()) {
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(SmartLedgerColors.StateSuccessSubtle)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(exportStatusBanner!!, color = SmartLedgerColors.StateSuccessText, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                        IconButton(onClick = { exportStatusBanner = null }, modifier = Modifier.size(22.dp)) {
-                            Icon(Icons.Default.Close, contentDescription = null, tint = SmartLedgerColors.StateSuccessText, modifier = Modifier.size(14.dp))
+            // 1. بطاقة قائمة الدخل والأرباح الصافية
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
+                    shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "قائمة الدخل والأرباح الصافية",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = SmartLedgerColors.AccentLight
+                            )
+                            Text(
+                                text = String.format(Locale.US, "هامش الربح: %.1f%%", grossMarginPct),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SmartLedgerColors.StateSuccess,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
+
+                        ReportMetricRow("إجمالي المبيعات المحققة", summary.TotalSales, SmartLedgerColors.TextPrimary)
+                        ReportMetricRow("تكلفة البضاعة المباعة (COGS)", summary.CostOfGoodsSold, SmartLedgerColors.TextMuted)
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        ReportMetricRow("مجمل الربح التجاري", summary.GrossProfit, SmartLedgerColors.AccentLight, isBold = true)
+                        ReportMetricRow("إجمالي المصروفات التشغيلية", summary.TotalExpenses, SmartLedgerColors.StateDanger)
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        ReportMetricRow(
+                            title = "صافي الربح الفعلي",
+                            amount = summary.NetProfit,
+                            color = if (summary.NetProfit >= 0) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger,
+                            isBold = true
+                        )
                     }
                 }
             }
 
+            // 2. بطاقة تقييم المخزون والذمم المدينة والدائنة
             item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SmartLedgerColors.SurfaceCardElevated)
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
+                    shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
                 ) {
-                    Text("النطاق الزمني: $periodLabel", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
-                    Text("العملة: ${settings.currencySymbol}", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary)
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "المركز المالي والأصول والمخزون",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = SmartLedgerColors.AccentLight
+                        )
+
+                        ReportMetricRow("قيمة بضاعة المخزن (بسعر التكلفة)", summary.InventoryValuation, SmartLedgerColors.AccentLight)
+                        ReportMetricRow("إجمالي الديون لنا لدى العملاء (مدين)", summary.TotalDebtsToUs, SmartLedgerColors.StateSuccess)
+                        ReportMetricRow("إجمالي الالتزامات علينا للموردين (دائن)", summary.TotalDebtsOnUs, SmartLedgerColors.StateDanger)
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        val netReceivables = summary.TotalDebtsToUs - summary.TotalDebtsOnUs
+                        ReportMetricRow(
+                            title = "صافي الذمم المالية (لنا - علينا)",
+                            amount = netReceivables,
+                            color = if (netReceivables >= 0) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger,
+                            isBold = true
+                        )
+                    }
                 }
             }
 
-            when (selectedReportSection) {
-                "INCOME" -> {
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
-                            border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text("قائمة الدخل والأرباح الصافية", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.AccentLight)
-                                Spacer(modifier = Modifier.height(10.dp))
+            // 3. مؤشر بصري واضح لتوازن المبيعات والتكاليف والمصروفات مع بديل نصي مقروء
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
+                    shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = "توزيع الإيرادات مقابل التكلفة والمصروفات",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = SmartLedgerColors.TextPrimary
+                        )
 
-                                ReportMetricRow("إجمالي المبيعات المحققة", summary.TotalSales, settings.currencySymbol, settings.decimalPlaces, SmartLedgerColors.TextPrimary)
-                                ReportMetricRow("تكلفة البضاعة المباعة (COGS)", summary.CostOfGoodsSold, settings.currencySymbol, settings.decimalPlaces, SmartLedgerColors.TextMuted)
-                                Divider(color = SmartLedgerColors.BorderGridLine, modifier = Modifier.padding(vertical = 4.dp))
-                                ReportMetricRow("مجمل الربح التجاري", summary.GrossProfit, settings.currencySymbol, settings.decimalPlaces, SmartLedgerColors.AccentLight, isBold = true)
-                                ReportMetricRow("إجمالي المصروفات التشغيلية", summary.TotalExpenses, settings.currencySymbol, settings.decimalPlaces, SmartLedgerColors.StateDanger)
-                                Divider(color = SmartLedgerColors.BorderGridLine, modifier = Modifier.padding(vertical = 4.dp))
-                                ReportMetricRow(
-                                    "صافي الربح الفعلي",
-                                    summary.NetProfit,
-                                    settings.currencySymbol,
-                                    settings.decimalPlaces,
-                                    if (summary.NetProfit >= 0) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger,
-                                    isBold = true
+                        val totalVolume = (summary.TotalSales + summary.TotalExpenses).coerceAtLeast(1.0)
+                        val salesRatio = (summary.TotalSales / totalVolume).toFloat().coerceIn(0.08f, 0.92f)
+                        val expRatio = (1f - salesRatio).coerceIn(0.08f, 0.92f)
+
+                        val successColor = SmartLedgerColors.StateSuccess
+                        val dangerColor = SmartLedgerColors.StateDanger
+
+                        Canvas(modifier = Modifier.fillMaxWidth().height(34.dp)) {
+                            val w = size.width
+                            val h = size.height
+                            drawRoundRect(
+                                color = successColor,
+                                topLeft = Offset(0f, 0f),
+                                size = Size(w * salesRatio - 3.dp.toPx(), h),
+                                cornerRadius = CornerRadius(12f, 12f)
+                            )
+                            drawRoundRect(
+                                color = dangerColor,
+                                topLeft = Offset(w * salesRatio + 3.dp.toPx(), 0f),
+                                size = Size(w * expRatio - 3.dp.toPx(), h),
+                                cornerRadius = CornerRadius(12f, 12f)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(2.dp)).background(SmartLedgerColors.StateSuccess))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "المبيعات (${NumberFormatter.formatCurrency(summary.TotalSales, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)})",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SmartLedgerColors.TextSecondary
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(2.dp)).background(SmartLedgerColors.StateDanger))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "المصروفات (${NumberFormatter.formatCurrency(summary.TotalExpenses, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)})",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SmartLedgerColors.TextSecondary
                                 )
                             }
                         }
                     }
-
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
-                            border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text("مؤشر توازن الإيرادات والمصروفات", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                                Spacer(modifier = Modifier.height(12.dp))
-
-                                val totalVolume = (summary.TotalSales + summary.TotalExpenses).coerceAtLeast(1.0)
-                                val salesRatio = (summary.TotalSales / totalVolume).toFloat().coerceIn(0.05f, 0.95f)
-                                val expRatio = 1f - salesRatio
-
-                                Canvas(modifier = Modifier.fillMaxWidth().height(42.dp)) {
-                                    val w = size.width
-                                    val h = size.height
-                                    drawRoundRect(
-                                        color = SmartLedgerColors.StateSuccess,
-                                        topLeft = Offset(0f, 0f),
-                                        size = Size(w * salesRatio, h),
-                                        cornerRadius = CornerRadius(10f, 10f)
-                                    )
-                                    drawRoundRect(
-                                        color = SmartLedgerColors.StateDanger,
-                                        topLeft = Offset(w * salesRatio + 4.dp.toPx(), 0f),
-                                        size = Size((w * expRatio - 4.dp.toPx()).coerceAtLeast(8f), h),
-                                        cornerRadius = CornerRadius(10f, 10f)
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(2.dp)).background(SmartLedgerColors.StateSuccess))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            "المبيعات: ${Formatters.formatCurrency(summary.TotalSales, settings.currencySymbol, settings.decimalPlaces)}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = SmartLedgerColors.TextSecondary
-                                        )
-                                    }
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(2.dp)).background(SmartLedgerColors.StateDanger))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            "المصروفات: ${Formatters.formatCurrency(summary.TotalExpenses, settings.currencySymbol, settings.decimalPlaces)}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = SmartLedgerColors.TextSecondary
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                "INVENTORY" -> {
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
-                            border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            val totalRetailValue = products.sumOf { it.CurrentStockMinor.coerceAtLeast(0.0) * it.RetailPrice }
-                            val expectedStockProfit = totalRetailValue - summary.InventoryValuation
-                            val lowStockItems = products.filter { it.CurrentStockMinor <= it.AlertThreshold }
-
-                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("تقييم بضاعة المخزن الحالية", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.AccentLight)
-                                ReportMetricRow("عدد الأصناف المسجلة", products.size.toDouble(), "صنف", 0, SmartLedgerColors.TextPrimary)
-                                ReportMetricRow("قيمة المخزون بسعر التكلفة", summary.InventoryValuation, settings.currencySymbol, settings.decimalPlaces, SmartLedgerColors.AccentLight, isBold = true)
-                                ReportMetricRow("القيمة البيعية المتوقعة للمخزون", totalRetailValue, settings.currencySymbol, settings.decimalPlaces, SmartLedgerColors.StateSuccess)
-                                ReportMetricRow("الأرباح الكامنة في المخزون", expectedStockProfit, settings.currencySymbol, settings.decimalPlaces, SmartLedgerColors.StateSuccessText)
-                                Divider(color = SmartLedgerColors.BorderGridLine)
-                                Text("الأصناف التي وصلت لحد النفاد (${lowStockItems.size}):", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.StateWarning)
-                                if (lowStockItems.isEmpty()) {
-                                    Text("جميع الأصناف فوق حد التنبيه الأدنى.", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.StateSuccess)
-                                } else {
-                                    lowStockItems.take(10).forEach { item ->
-                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                            Text("• ${item.Name}", style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.TextPrimary)
-                                            Text(
-                                                "${Formatters.formatQuantity(item.CurrentStockMinor)} ${item.SmallUnit} (الحد: ${Formatters.formatQuantity(item.AlertThreshold)})",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = SmartLedgerColors.StateDanger,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                "DEBTS" -> {
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
-                            border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            val topDebtors = accounts.filter { it.NetBalance > 0.001 }.sortedByDescending { it.NetBalance }.take(8)
-                            val topCreditors = accounts.filter { it.NetBalance < -0.001 }.sortedBy { it.NetBalance }.take(8)
-
-                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("ملخص الذمم المدينة والدائنة", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.AccentLight)
-                                ReportMetricRow("إجمالي لنا عند العملاء (مدين)", summary.TotalDebtsToUs, settings.currencySymbol, settings.decimalPlaces, SmartLedgerColors.StateDanger, isBold = true)
-                                ReportMetricRow("إجمالي علينا للموردين (دائن)", summary.TotalDebtsOnUs, settings.currencySymbol, settings.decimalPlaces, SmartLedgerColors.StateSuccess, isBold = true)
-                                ReportMetricRow("صافي المركز المالي", summary.TotalDebtsToUs - summary.TotalDebtsOnUs, settings.currencySymbol, settings.decimalPlaces, SmartLedgerColors.AccentLight, isBold = true)
-
-                                Divider(color = SmartLedgerColors.BorderGridLine)
-                                Text("أعلى الحسابات المدينة (لنا عليهم):", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.StateDanger)
-                                if (topDebtors.isEmpty()) {
-                                    Text("لا توجد ديون قائمة على العملاء.", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
-                                } else {
-                                    topDebtors.forEach { acc ->
-                                        ReportMetricRow(acc.PersonName, acc.NetBalance, settings.currencySymbol, settings.decimalPlaces, SmartLedgerColors.StateDanger)
-                                    }
-                                }
-
-                                Divider(color = SmartLedgerColors.BorderGridLine)
-                                Text("أعلى الحسابات الدائنة (لهم علينا):", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.StateSuccess)
-                                if (topCreditors.isEmpty()) {
-                                    Text("لا توجد التزامات قائمة للموردين.", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
-                                } else {
-                                    topCreditors.forEach { acc ->
-                                        ReportMetricRow(acc.PersonName, kotlin.math.abs(acc.NetBalance), settings.currencySymbol, settings.decimalPlaces, SmartLedgerColors.StateSuccess)
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
+            // 4. أزرار التصدير الفعلي (بدون أي أزرار شكلية)
             item {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
-                        onClick = rememberDebouncedClick {
-                            try {
-                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_SUBJECT, "التقرير المالي — الدفتر الذكي Pro")
-                                    putExtra(Intent.EXTRA_TEXT, buildReportPlainText())
-                                }
-                                context.startActivity(Intent.createChooser(sendIntent, "مشاركة التقرير المالي"))
-                            } catch (e: Exception) {
-                                exportStatusBanner = "تعذر فتح نافذة المشاركة على الجهاز."
-                            }
+                        onClick = {
+                            val fileName = "SmartLedger_Report_${NumberFormatter.todayDate()}.html"
+                            htmlReportLauncher.launch(fileName)
                         },
-                        modifier = Modifier.weight(1f).height(44.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .bounceClick {
+                                val fileName = "SmartLedger_Report_${NumberFormatter.todayDate()}.html"
+                                htmlReportLauncher.launch(fileName)
+                            },
                         colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("مشاركة التقرير", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                        Text("حفظ تقرير للطباعة", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                     }
 
                     OutlinedButton(
-                        onClick = rememberDebouncedClick {
-                            csvExportLauncher.launch("SmartLedgerPro_Report_${Formatters.todayDate()}.csv")
+                        onClick = {
+                            val fileName = "SmartLedger_Report_${NumberFormatter.todayDate()}.csv"
+                            csvReportLauncher.launch(fileName)
                         },
-                        modifier = Modifier.weight(1f).height(44.dp),
-                        shape = RoundedCornerShape(8.dp)
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .bounceClick {
+                                val fileName = "SmartLedger_Report_${NumberFormatter.todayDate()}.csv"
+                                csvReportLauncher.launch(fileName)
+                            },
+                        border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateSuccess)),
+                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                     ) {
                         Icon(Icons.Default.TableChart, contentDescription = null, tint = SmartLedgerColors.StateSuccess, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("حفظ جدول CSV / Excel", color = SmartLedgerColors.StateSuccess, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                        Text("تصدير جدول Excel/CSV", color = SmartLedgerColors.StateSuccess, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
 
-            item { Spacer(modifier = Modifier.height(16.dp)) }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
         }
     }
 }
 
 @Composable
-fun ReportMetricRow(
-    title: String,
-    amount: Double,
-    currencySymbol: String,
-    decimals: Int,
-    color: Color,
-    isBold: Boolean = false
-) {
+fun ReportMetricRow(title: String, amount: Double, color: Color, isBold: Boolean = false) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -466,10 +405,100 @@ fun ReportMetricRow(
             fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal
         )
         Text(
-            text = Formatters.formatCurrency(amount, currencySymbol, decimals),
+            text = NumberFormatter.formatCurrency(amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces),
             style = MaterialTheme.typography.bodyLarge,
             color = color,
             fontWeight = if (isBold) FontWeight.Bold else FontWeight.SemiBold
         )
     }
+}
+
+private fun buildPlainTextReport(
+    tradeName: String,
+    periodLabel: String,
+    currency: String,
+    summary: FinancialReportSummary
+): String {
+    return """
+📊 التقرير المالي — $tradeName
+الفترة: $periodLabel
+تاريخ الإصدار: ${NumberFormatter.nowTimestamp()}
+────────────────────────
+• إجمالي المبيعات: ${NumberFormatter.formatCurrency(summary.TotalSales, currency)}
+• تكلفة البضاعة المباعة (COGS): ${NumberFormatter.formatCurrency(summary.CostOfGoodsSold, currency)}
+• مجمل الربح التجاري: ${NumberFormatter.formatCurrency(summary.GrossProfit, currency)}
+• إجمالي المصروفات التشغيلية: ${NumberFormatter.formatCurrency(summary.TotalExpenses, currency)}
+• صافي الربح الفعلي: ${NumberFormatter.formatCurrency(summary.NetProfit, currency)}
+────────────────────────
+• قيمة المخزون (بالتكلفة): ${NumberFormatter.formatCurrency(summary.InventoryValuation, currency)}
+• إجمالي الديون لنا (مدين): ${NumberFormatter.formatCurrency(summary.TotalDebtsToUs, currency)}
+• إجمالي الالتزامات علينا (دائن): ${NumberFormatter.formatCurrency(summary.TotalDebtsOnUs, currency)}
+    """.trimIndent()
+}
+
+private fun buildCsvFinancialReport(
+    tradeName: String,
+    periodLabel: String,
+    currency: String,
+    summary: FinancialReportSummary
+): String {
+    val sb = StringBuilder()
+    sb.appendLine("المنشأة,$tradeName")
+    sb.appendLine("الفترة,$periodLabel")
+    sb.appendLine("تاريخ التقرير,${NumberFormatter.nowTimestamp()}")
+    sb.appendLine("البند المالي,المبلغ,العملة")
+    sb.appendLine("إجمالي المبيعات المحققة,${NumberFormatter.formatAmount(summary.TotalSales)},$currency")
+    sb.appendLine("تكلفة البضاعة المباعة (COGS),${NumberFormatter.formatAmount(summary.CostOfGoodsSold)},$currency")
+    sb.appendLine("مجمل الربح التجاري,${NumberFormatter.formatAmount(summary.GrossProfit)},$currency")
+    sb.appendLine("إجمالي المصروفات التشغيلية,${NumberFormatter.formatAmount(summary.TotalExpenses)},$currency")
+    sb.appendLine("صافي الربح الفعلي,${NumberFormatter.formatAmount(summary.NetProfit)},$currency")
+    sb.appendLine("قيمة بضاعة المخزن بالتكلفة,${NumberFormatter.formatAmount(summary.InventoryValuation)},$currency")
+    sb.appendLine("إجمالي الديون لنا لدى العملاء,${NumberFormatter.formatAmount(summary.TotalDebtsToUs)},$currency")
+    sb.appendLine("إجمالي الالتزامات علينا للموردين,${NumberFormatter.formatAmount(summary.TotalDebtsOnUs)},$currency")
+    return sb.toString()
+}
+
+private fun buildPrintableHtmlReport(
+    tradeName: String,
+    periodLabel: String,
+    currency: String,
+    summary: FinancialReportSummary
+): String {
+    return """
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>التقرير المالي — $tradeName</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; color: #0f172a; background: #ffffff; }
+  h1 { margin-bottom: 4px; color: #0284c7; }
+  .meta { color: #64748b; font-size: 13px; margin-bottom: 20px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+  th, td { border: 1px solid #cbd5e1; padding: 10px 12px; text-align: right; }
+  th { background-color: #f1f5f9; font-weight: bold; }
+  .total-row { background-color: #ecfdf5; font-weight: bold; }
+</style>
+</head>
+<body>
+  <h1>$tradeName — التقرير المالي</h1>
+  <div class="meta">الفترة: $periodLabel | تاريخ الإصدار: ${NumberFormatter.nowTimestamp()} | العملة: $currency</div>
+  <table>
+    <thead>
+      <tr><th>البند المالي</th><th>القيمة ($currency)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>إجمالي المبيعات المحققة</td><td>${NumberFormatter.formatAmount(summary.TotalSales)}</td></tr>
+      <tr><td>تكلفة البضاعة المباعة (COGS)</td><td>${NumberFormatter.formatAmount(summary.CostOfGoodsSold)}</td></tr>
+      <tr><td>مجمل الربح التجاري</td><td>${NumberFormatter.formatAmount(summary.GrossProfit)}</td></tr>
+      <tr><td>إجمالي المصروفات التشغيلية</td><td>${NumberFormatter.formatAmount(summary.TotalExpenses)}</td></tr>
+      <tr class="total-row"><td>صافي الربح الفعلي</td><td>${NumberFormatter.formatAmount(summary.NetProfit)}</td></tr>
+      <tr><td>قيمة بضاعة المخزن بالتكلفة</td><td>${NumberFormatter.formatAmount(summary.InventoryValuation)}</td></tr>
+      <tr><td>إجمالي الديون لنا لدى العملاء (مدين)</td><td>${NumberFormatter.formatAmount(summary.TotalDebtsToUs)}</td></tr>
+      <tr><td>إجمالي الالتزامات علينا للموردين (دائن)</td><td>${NumberFormatter.formatAmount(summary.TotalDebtsOnUs)}</td></tr>
+    </tbody>
+  </table>
+</body>
+</html>
+    """.trimIndent()
 }

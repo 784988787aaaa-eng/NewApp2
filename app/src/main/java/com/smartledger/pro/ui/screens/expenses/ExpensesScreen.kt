@@ -2,10 +2,8 @@ package com.smartledger.pro.ui.screens.expenses
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,15 +18,16 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smartledger.pro.data.local.entity.ExpenseEntity
 import com.smartledger.pro.ui.components.*
+import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
+import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.ui.viewmodels.ExpensesViewModel
-import com.smartledger.pro.util.AppSettingsManager
-import com.smartledger.pro.util.Formatters
+import com.smartledger.pro.util.NumberFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -36,30 +35,24 @@ fun ExpensesScreen(
     onBack: (() -> Unit)? = null,
     viewModel: ExpensesViewModel = viewModel()
 ) {
-    val expenses by viewModel.expenses.collectAsState()
-    val settings by AppSettingsManager.settings.collectAsState()
-
+    val allExpenses by viewModel.expenses.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
-    var selectedCategoryFilter by remember { mutableStateOf("ALL") }
+    var selectedCategory by remember { mutableStateOf("ALL") }
     var showAddExpenseDialog by remember { mutableStateOf(false) }
-    var expensePendingDelete by remember { mutableStateOf<ExpenseEntity?>(null) }
+    var expenseToDelete by remember { mutableStateOf<ExpenseEntity?>(null) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
 
-    val categories = remember {
-        listOf("الكل" to "ALL", "إيجار" to "إيجار", "كهرباء ومياه" to "كهرباء ومياه", "رواتب وأجور" to "رواتب وأجور", "نقل ومواصلات" to "نقل ومواصلات", "صيانة" to "صيانة", "نثريات" to "نثريات")
-    }
-
-    val filteredExpenses = remember(expenses, searchQuery, selectedCategoryFilter) {
-        expenses.filter { exp ->
+    val filteredExpenses = remember(allExpenses, searchQuery, selectedCategory) {
+        allExpenses.filter { exp ->
             val matchesQuery = searchQuery.isBlank() ||
                 exp.Statement.contains(searchQuery, ignoreCase = true) ||
                 exp.PaymentSource.contains(searchQuery, ignoreCase = true)
-            val matchesCat = selectedCategoryFilter == "ALL" ||
-                exp.Statement.contains(selectedCategoryFilter, ignoreCase = true)
+            val matchesCat = selectedCategory == "ALL" || exp.Statement.contains(selectedCategory)
             matchesQuery && matchesCat
         }
     }
 
-    val totalFilteredExpenses = filteredExpenses.sumOf { it.Amount }
+    val totalExpenses = remember(filteredExpenses) { filteredExpenses.sumOf { it.Amount } }
 
     Scaffold(
         containerColor = SmartLedgerColors.SurfaceWindow,
@@ -67,7 +60,8 @@ fun ExpensesScreen(
             Column(
                 modifier = Modifier
                     .background(SmartLedgerColors.SurfacePanel)
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .padding(horizontal = SmartLedgerTokens.screenHorizontalPadding, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -82,51 +76,55 @@ fun ExpensesScreen(
                             ) {
                                 Icon(Icons.Default.ArrowForward, contentDescription = "رجوع", tint = SmartLedgerColors.TextPrimary, modifier = Modifier.size(18.dp))
                             }
-                            Spacer(modifier = Modifier.width(10.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                         }
                         Column {
                             Text(
-                                "المصروفات والنفقات التشغيلية",
+                                text = "المصروفات والنفقات التشغيلية",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = SmartLedgerColors.TextPrimary
                             )
                             Text(
-                                "إجمالي المعروض: ${Formatters.formatCurrency(totalFilteredExpenses, settings.currencySymbol, settings.decimalPlaces)}",
+                                text = "إجمالي النفقات المعروضة: ${NumberFormatter.formatCurrency(totalExpenses, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = SmartLedgerColors.StateDanger,
-                                fontWeight = FontWeight.Bold
+                                color = SmartLedgerColors.StateDangerText
                             )
                         }
                     }
 
                     Button(
-                        onClick = rememberDebouncedClick { showAddExpenseDialog = true },
+                        onClick = { showAddExpenseDialog = true },
                         colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.StateDanger),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.height(36.dp)
+                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
+                        modifier = Modifier
+                            .height(38.dp)
+                            .bounceClick { showAddExpenseDialog = true }
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = SmartLedgerColors.TextInverse)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("تسجيل نفقة", color = SmartLedgerColors.TextInverse, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                        Text("تسجيل نفقة", color = SmartLedgerColors.TextInverse, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                     }
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
 
                 CompactSearchBar(
                     query = searchQuery,
                     onQueryChange = { searchQuery = it },
-                    placeholder = "ابحث في بيان النفقة أو مصدر الصرف..."
+                    placeholder = "ابحث في بيان المصروف أو مصدر الدفع...",
+                    resultCount = filteredExpenses.size
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                ScrollableFilterTabs(
-                    tabs = categories.map { (label, id) -> FilterTabItem(id, label) },
-                    selectedTabId = selectedCategoryFilter,
-                    onTabSelected = { selectedCategoryFilter = it }
+                FilterChipRow(
+                    items = listOf(
+                        "ALL" to "كل التصنيفات",
+                        "إيجار ومرافق" to "إيجار ومرافق",
+                        "رواتب وأجور" to "رواتب وأجور",
+                        "نقل وشحن" to "نقل وشحن",
+                        "ضيافة ونثريات" to "ضيافة ونثريات",
+                        "صيانة" to "صيانة"
+                    ),
+                    selectedItem = selectedCategory,
+                    onItemSelected = { selectedCategory = it }
                 )
             }
         }
@@ -135,19 +133,31 @@ fun ExpensesScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = SmartLedgerTokens.screenHorizontalPadding),
+            verticalArrangement = Arrangement.spacedBy(SmartLedgerTokens.itemSpacing)
         ) {
-            item { Spacer(modifier = Modifier.height(4.dp)) }
+            item {
+                Spacer(modifier = Modifier.height(4.dp))
+                StatusFeedbackBanner(
+                    message = statusMessage,
+                    onDismiss = { statusMessage = null }
+                )
+            }
 
             if (filteredExpenses.isEmpty()) {
                 item {
+                    val isFiltered = searchQuery.isNotBlank() || selectedCategory != "ALL"
                     SmartEmptyState(
-                        icon = Icons.Default.ReceiptLong,
-                        title = "لا توجد مصروفات مسجلة في هذا العرض",
-                        description = "اضغط على «تسجيل نفقة» لتوثيق الإيجار، الكهرباء، الرواتب، أو المصروفات اليومية.",
-                        actionText = "تسجيل نفقة جديدة",
-                        onActionClick = { showAddExpenseDialog = true }
+                        icon = Icons.Default.TrendingDown,
+                        title = "لا توجد مصروفات مسجلة",
+                        subtitle = "سجّل الإيجار، الكهرباء، أجور النقل، والنثريات لحساب صافي الربح الحقيقي في قائمة الدخل.",
+                        actionText = "تسجيل أول نفقة",
+                        onActionClick = { showAddExpenseDialog = true },
+                        isFiltered = isFiltered,
+                        onClearFilters = {
+                            searchQuery = ""
+                            selectedCategory = "ALL"
+                        }
                     )
                 }
             } else {
@@ -155,10 +165,10 @@ fun ExpensesScreen(
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
-                        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderGridLine)),
-                        shape = RoundedCornerShape(10.dp)
+                        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
+                        shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
                     ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
+                        Column(modifier = Modifier.padding(SmartLedgerTokens.cardInternalPadding)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -172,14 +182,14 @@ fun ExpensesScreen(
                                     modifier = Modifier.weight(1f)
                                 )
                                 Text(
-                                    text = Formatters.formatCurrency(expense.Amount, settings.currencySymbol, settings.decimalPlaces),
+                                    text = NumberFormatter.formatCurrency(expense.Amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = SmartLedgerColors.StateDanger
                                 )
                             }
 
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -188,15 +198,14 @@ fun ExpensesScreen(
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
+                                        .clip(RoundedCornerShape(6.dp))
                                         .background(SmartLedgerColors.SurfaceCardElevated)
-                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
                                 ) {
                                     Text(
                                         text = expense.PaymentSource,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = SmartLedgerColors.AccentLight,
-                                        fontSize = 10.sp
+                                        color = SmartLedgerColors.AccentLight
                                     )
                                 }
 
@@ -206,17 +215,12 @@ fun ExpensesScreen(
                                         style = MaterialTheme.typography.labelSmall,
                                         color = SmartLedgerColors.TextMuted
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
                                     IconButton(
-                                        onClick = { expensePendingDelete = expense },
+                                        onClick = { expenseToDelete = expense },
                                         modifier = Modifier.size(26.dp)
                                     ) {
-                                        Icon(
-                                            Icons.Default.DeleteOutline,
-                                            contentDescription = "حذف النفقة",
-                                            tint = SmartLedgerColors.StateDanger,
-                                            modifier = Modifier.size(16.dp)
-                                        )
+                                        Icon(Icons.Default.DeleteOutline, contentDescription = "حذف النفقة", tint = SmartLedgerColors.StateDanger, modifier = Modifier.size(16.dp))
                                     }
                                 }
                             }
@@ -225,30 +229,38 @@ fun ExpensesScreen(
                 }
             }
 
-            item { Spacer(modifier = Modifier.height(16.dp)) }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
         if (showAddExpenseDialog) {
-            AddExpenseDialog(
-                currencySymbol = settings.currencySymbol,
-                onDismiss = { showAddExpenseDialog = false },
-                onSave = { amount, statement, category, source ->
-                    viewModel.saveExpense(amount, statement, category, source)
-                    showAddExpenseDialog = false
-                }
-            )
+            ModalBottomSheet(
+                onDismissRequest = { showAddExpenseDialog = false },
+                containerColor = SmartLedgerColors.SurfacePanel
+            ) {
+                AddExpenseDialog(
+                    onDismiss = { showAddExpenseDialog = false },
+                    onSave = { amount, statement, category, source ->
+                        viewModel.saveExpense(amount, statement, category, source)
+                        showAddExpenseDialog = false
+                        statusMessage = "تم تسجيل النفقة التشغيلية وخصمها من قائمة الدخل."
+                    }
+                )
+            }
         }
 
-        if (expensePendingDelete != null) {
+        if (expenseToDelete != null) {
+            val target = expenseToDelete!!
             ConfirmActionDialog(
-                title = "حذف نفقة تشغيلية",
-                message = "هل أنت متأكد من حذف النفقة «${expensePendingDelete!!.Statement}» بقيمة ${Formatters.formatCurrency(expensePendingDelete!!.Amount, settings.currencySymbol, settings.decimalPlaces)}؟ سيتم حفظها في سلة المحذوفات.",
-                confirmText = "تأكيد الحذف",
-                onConfirm = {
-                    viewModel.deleteExpense(expensePendingDelete!!.Id, "حذف من شاشة المصروفات")
-                    expensePendingDelete = null
+                title = "حذف النفقة التشغيلية؟",
+                message = "سيتم حذف المصروف «${target.Statement}» بقيمة ${NumberFormatter.formatCurrency(target.Amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} ونقله إلى سجل المحذوفات.",
+                confirmText = "حذف النفقة",
+                requireReason = true,
+                onConfirm = { reason ->
+                    viewModel.deleteExpense(target.Id, reason)
+                    expenseToDelete = null
+                    statusMessage = "تم حذف النفقة التشغيلية."
                 },
-                onDismiss = { expensePendingDelete = null }
+                onDismiss = { expenseToDelete = null }
             )
         }
     }
@@ -256,25 +268,21 @@ fun ExpensesScreen(
 
 @Composable
 fun AddExpenseDialog(
-    currencySymbol: String,
     onDismiss: () -> Unit,
     onSave: (amount: Double, statement: String, category: String, source: String) -> Unit
 ) {
     var amountText by remember { mutableStateOf("") }
     var statement by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("نثريات") }
+    var category by remember { mutableStateOf("إيجار ومرافق") }
     var source by remember { mutableStateOf("الخزينة الرئيسية") }
 
-    val amountFocus = remember { FocusRequester() }
-    val statementFocus = remember { FocusRequester() }
-
-    val amount = Formatters.parseDoubleSafe(amountText, 0.0)
+    val focusStatement = remember { FocusRequester() }
+    val amount = NumberFormatter.parseDouble(amountText, 0.0)
     val isFormValid = amount > 0.0 && statement.trim().isNotEmpty()
 
-    AdaptiveFormHost(
-        mode = FormWindowMode.BOTTOM_SHEET,
+    FormSheetContainer(
         title = "تسجيل نفقة تشغيلية",
-        subtitle = "يُخصم المصروف من مجمل الربح لحساب صافي الدخل الحقيقي",
+        subtitle = "توثيق المصروفات التشغيلية لحساب صافي الربح بدقة",
         onDismiss = onDismiss,
         primaryButtonText = "تأكيد وقيد المصروف",
         primaryButtonColor = SmartLedgerColors.StateDanger,
@@ -282,71 +290,52 @@ fun AddExpenseDialog(
         hasUnsavedChanges = amountText.isNotBlank() || statement.isNotBlank(),
         onPrimaryClick = {
             if (isFormValid) {
-                onSave(amount, statement, category, source)
+                onSave(amount, statement.trim(), category, source)
             }
         }
     ) {
-        Text("تصنيف النفقة", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary, fontWeight = FontWeight.SemiBold)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(listOf("إيجار", "كهرباء ومياه", "رواتب وأجور", "نقل ومواصلات", "صيانة", "نثريات")) { cat ->
-                val selected = category == cat
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (selected) SmartLedgerColors.StateDanger else SmartLedgerColors.SurfaceCardElevated)
-                        .clickable { category = cat }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = cat,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (selected) SmartLedgerColors.TextInverse else SmartLedgerColors.TextSecondary
-                    )
-                }
-            }
-        }
+        Text("تصنيف النفقة *", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
+        FilterChipRow(
+            items = listOf(
+                "إيجار ومرافق" to "إيجار ومرافق",
+                "رواتب وأجور" to "رواتب وأجور",
+                "نقل وشحن" to "نقل وشحن",
+                "ضيافة ونثريات" to "ضيافة ونثريات",
+                "صيانة" to "صيانة"
+            ),
+            selectedItem = category,
+            onItemSelected = { category = it }
+        )
 
-        SmartNumberField(
+        SmartTextField(
             value = amountText,
             onValueChange = { amountText = it },
-            label = "مبلغ النفقة",
-            suffixText = currencySymbol,
+            label = "مبلغ النفقة (${AppDesignState.currencySymbol})",
+            placeholder = "مثال: 15000",
             isRequired = true,
-            focusRequester = amountFocus,
-            nextFocusRequester = statementFocus
+            keyboardType = KeyboardType.Decimal,
+            nextFocusRequester = focusStatement
         )
 
         SmartTextField(
             value = statement,
             onValueChange = { statement = it },
-            label = "بيان سبب الصرف",
-            placeholder = "مثال: سداد فاتورة كهرباء المعرض",
+            label = "بيان سبب الصرف ومبرره",
+            placeholder = "مثال: سداد فاتورة كهرباء شهر أكتوبر...",
             isRequired = true,
-            focusRequester = statementFocus,
+            focusRequester = focusStatement,
             imeAction = ImeAction.Done
         )
 
-        Text("مصدر الدفع", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary, fontWeight = FontWeight.SemiBold)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(listOf("الخزينة الرئيسية", "الحساب البنكي", "عهدة موظف")) { src ->
-                val selected = source == src
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (selected) SmartLedgerColors.AccentSubtle else SmartLedgerColors.SurfaceCardElevated)
-                        .border(1.dp, if (selected) SmartLedgerColors.AccentPrimary else SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
-                        .clickable { source = src }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = src,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (selected) SmartLedgerColors.AccentLight else SmartLedgerColors.TextSecondary
-                    )
-                }
-            }
-        }
+        Text("مصدر الدفع", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
+        SegmentedOptionRow(
+            options = listOf(
+                "الخزينة الرئيسية" to "الخزينة الرئيسية",
+                "الحساب البنكي" to "الحساب البنكي",
+                "عهدة نقدية" to "عهدة نقدية"
+            ),
+            selectedOption = source,
+            onOptionSelected = { source = it }
+        )
     }
 }

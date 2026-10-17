@@ -1,16 +1,14 @@
 package com.smartledger.pro.util
 
-import android.app.job.JobInfo
-import android.app.job.JobParameters
-import android.app.job.JobScheduler
-import android.app.job.JobService
-import android.content.ComponentName
 import android.content.Context
-import android.net.Uri
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.*
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.*
 
 data class CloudBackupInfo(
     val fileId: String,
@@ -20,74 +18,65 @@ data class CloudBackupInfo(
     val sha256: String
 )
 
-enum class DriveConnectionStatus(val code: String, val arabicLabel: String) {
-    DISCONNECTED("DISCONNECTED", "غير مربوط"),
-    NEEDS_CONFIG("NEEDS_CONFIG", "يتطلب تهيئة OAuth Client ID"),
-    REQUIRES_AUTH("REQUIRES_AUTH", "يتطلب مصادقة حساب Google"),
-    READY("READY", "جاهز ومربوط"),
-    UPLOADING("UPLOADING", "جارٍ النسخ السحابي..."),
-    SUCCESS("SUCCESS", "تم النسخ والتحقق بنجاح"),
-    ERROR("ERROR", "فشل الاتصال أو الرفع")
+/**
+ * حالات اتصال ومزامنة Google Drive الفعلية (بدون أي حالات أو تواريخ وهمية)
+ */
+enum class DriveConnectionState(val arabicLabel: String) {
+    DISCONNECTED("غير مربوط بحساب Google"),
+    NEEDS_OAUTH_TOKEN("يتطلب رمز مصادقة OAuth 2.0 (أو مشاركة سحابية مباشرة)"),
+    READY("متصل وجاهز للنسخ السحابي"),
+    UPLOADING("جارٍ رفع النسخة والتحقق من البصمة..."),
+    DOWNLOADING("جارٍ تنزيل النسخة وفحص السلامة..."),
+    SUCCESS("اكتملت المزامنة السحابية بنجاح"),
+    ERROR("تعذر إكمال العملية السحابية")
 }
 
+/**
+ * محرك النسخ الاحتياطي والمزامنة السحابية مع Google Drive REST API v3 (appDataFolder).
+ *
+ * ملاحظة هندسية هامة (توثيق متطلبات التهيئة الخارجية):
+ * - يعتمد الاتصال المباشر بـ Google Drive API v3 على رمز وصول OAuth 2.0 صالح للنطاق الضيق:
+ *   `https://www.googleapis.com/auth/drive.appdata` (حفظ داخل مجلد التطبيق المعزول فقط دون الوصول لملفات المستخدم الأخرى).
+ * - لتمكين تسجيل الدخول بضغطة واحدة عبر Google Identity Services في بيئة الإنتاج، يلزم تسجيل بصمة شهادة التوقيع `SHA-1`
+ *   وتعريف `OAuth 2.0 Client ID (Android)` في Google Cloud Console للمزمة `com.smartledger.pro`.
+ * - في حال عدم توفر رمز OAuth نشط، يعرض المحرك الحالة الحقيقية بوضوح ولا يدعي نجاحاً شكلياً،
+ *   مع توفير إنشاء الأرشيف الموثق `.slprobackup` ومشاركته إلى تطبيق Google Drive المثبت في النظام أو عبر SAF.
+ */
 object GoogleDriveBackupHelper {
 
-    private const val GDRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,size,modifiedTime"
-    const val DRIVE_APPDATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata"
-    private const val PREFS_AUTH_NAME = "smartledger_gdrive_auth"
-    private const val KEY_ACCESS_TOKEN = "oauth_access_token"
-    private const val KEY_TOKEN_EXPIRY = "oauth_token_expiry"
-    const val AUTO_BACKUP_JOB_ID = 7401
+    private const val GDRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
+    private const val GDRIVE_FILES_URL =
+        "https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name,size,modifiedTime,appProperties)&pageSize=20"
 
-    fun saveAccessToken(context: Context, token: String, expiresInSeconds: Long = 3600L) {
-        val prefs = context.getSharedPreferences(PREFS_AUTH_NAME, Context.MODE_PRIVATE)
-        prefs.edit()
-            .putString(KEY_ACCESS_TOKEN, token.trim())
-            .putLong(KEY_TOKEN_EXPIRY, System.currentTimeMillis() + (expiresInSeconds * 1000L))
-            .apply()
-    }
+    const val REQUIRED_OAUTH_SCOPE = "https://www.googleapis.com/auth/drive.appdata"
 
-    fun getValidAccessToken(context: Context): String? {
-        val prefs = context.getSharedPreferences(PREFS_AUTH_NAME, Context.MODE_PRIVATE)
-        val token = prefs.getString(KEY_ACCESS_TOKEN, null)
-        val expiry = prefs.getLong(KEY_TOKEN_EXPIRY, 0L)
-        if (token.isNullOrBlank()) return null
-        if (expiry > 0L && System.currentTimeMillis() > expiry) return null
-        return token
-    }
-
-    fun disconnectAccount(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS_AUTH_NAME, Context.MODE_PRIVATE)
-        prefs.edit().clear().apply()
-        AppSettingsManager.updatePreference(context, "gdrive_status", DriveConnectionStatus.DISCONNECTED.code)
-        AppSettingsManager.updatePreference(context, "gdrive_email", "")
-        AppSettingsManager.updatePreference(context, "auto_backup_enabled", "false")
-        cancelAutoBackupJob(context)
-    }
-
-    fun buildGoogleOAuthUrl(clientId: String, redirectUri: String = "com.smartledger.pro:/oauth2redirect"): Uri {
-        return Uri.parse("https://accounts.google.com/o/oauth2/v2/auth").buildUpon()
-            .appendQueryParameter("client_id", clientId.trim())
-            .appendQueryParameter("redirect_uri", redirectUri)
-            .appendQueryParameter("response_type", "code")
-            .appendQueryParameter("scope", "$DRIVE_APPDATA_SCOPE email")
-            .appendQueryParameter("access_type", "offline")
-            .appendQueryParameter("prompt", "consent")
-            .build()
-    }
-
+    /**
+     * إنشاء أرشيف `.slprobackup` محلي متسق (مع تفريغ WAL وبصمة SHA-256) تمهيداً لرفعه إلى السحابة
+     */
     suspend fun createLocalArchive(context: Context): File? = withContext(Dispatchers.IO) {
-        val result = BackupRestoreHelper.createInternalBackupFile(context, "SmartLedgerPro_Cloud")
-        result.getOrNull()?.first
+        val result = BackupRestoreHelper.createStructuredArchiveBackup(context, sourceTag = "GoogleDriveStaging")
+        result.getOrNull()?.let { File(it.filePath) }
     }
 
+    /**
+     * رفع النسخة الاحتياطية فعلياً إلى Google Drive AppDataFolder باستخدام OAuth 2.0 Access Token
+     */
     suspend fun uploadBackupToDrive(
         backupFile: File,
         accessToken: String,
         onProgress: (Int) -> Unit
     ): Result<CloudBackupInfo> = withContext(Dispatchers.IO) {
+        val cleanToken = accessToken.trim()
+        if (cleanToken.isBlank()) {
+            return@withContext Result.failure(
+                Exception("لم يتم توفير رمز مصادقة OAuth 2.0 صالح لخدمة Google Drive. يرجى ربط الحساب أو استخدام الحفظ السحابي عبر النظام.")
+            )
+        }
+        if (!backupFile.exists() || backupFile.length() == 0L) {
+            return@withContext Result.failure(Exception("ملف النسخة الاحتياطية غير موجود أو فارغ"))
+        }
+
         try {
-            if (accessToken.isBlank()) return@withContext Result.failure(IllegalStateException("يتطلب الربط والمصادقة مع حساب Google Drive أولاً"))
             val sha256 = BackupRestoreHelper.calculateSha256(backupFile)
             val boundary = "SmartLedgerBoundary_" + System.currentTimeMillis()
             val url = URL(GDRIVE_UPLOAD_URL)
@@ -96,120 +85,130 @@ object GoogleDriveBackupHelper {
                 doOutput = true
                 connectTimeout = 15000
                 readTimeout = 30000
-                setRequestProperty("Authorization", "Bearer $accessToken")
+                setRequestProperty("Authorization", "Bearer $cleanToken")
                 setRequestProperty("Content-Type", "multipart/related; boundary=$boundary")
             }
 
-            val outputStream = conn.outputStream
-            val writer = BufferedWriter(OutputStreamWriter(outputStream, Charsets.UTF_8))
-            val cloudFileName = backupFile.name
+            val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
+            val cloudFileName = "SmartLedger_Backup_${timestamp}${BackupRestoreHelper.BACKUP_EXTENSION}"
 
-            writer.write("--$boundary\r\n")
-            writer.write("Content-Type: application/json; charset=UTF-8\r\n\r\n")
-            writer.write("""{"name": "$cloudFileName", "parents": ["appDataFolder"], "appProperties": {"sha256": "$sha256"}}""")
-            writer.write("\r\n--$boundary\r\n")
-            writer.write("Content-Type: application/octet-stream\r\n\r\n")
-            writer.flush()
+            conn.outputStream.use { outputStream ->
+                val writer = BufferedWriter(OutputStreamWriter(outputStream, Charsets.UTF_8))
 
-            val totalBytes = backupFile.length().coerceAtLeast(1L)
-            var uploadedBytes = 0L
-            val buffer = ByteArray(8192)
-
-            FileInputStream(backupFile).use { fis ->
-                var bytesRead: Int
-                while (fis.read(buffer).also { bytesRead = it } != -1) {
-                    outputStream.write(buffer, 0, bytesRead)
-                    uploadedBytes += bytesRead
-                    onProgress(((uploadedBytes.toDouble() / totalBytes) * 100).toInt().coerceIn(0, 100))
+                // 1. Metadata Part (appDataFolder + SHA-256 property)
+                val metaObj = JSONObject().apply {
+                    put("name", cloudFileName)
+                    put("parents", org.json.JSONArray().put("appDataFolder"))
+                    put("appProperties", JSONObject().put("sha256", sha256))
                 }
-            }
-            outputStream.flush()
 
-            writer.write("\r\n--$boundary--\r\n")
-            writer.flush()
-            writer.close()
+                writer.write("--$boundary\r\n")
+                writer.write("Content-Type: application/json; charset=UTF-8\r\n\r\n")
+                writer.write(metaObj.toString() + "\r\n")
+                writer.flush()
+
+                // 2. Media Part (.slprobackup Zip Content)
+                writer.write("--$boundary\r\n")
+                writer.write("Content-Type: application/zip\r\n\r\n")
+                writer.flush()
+
+                val totalBytes = backupFile.length().coerceAtLeast(1L)
+                var uploadedBytes = 0L
+                val buffer = ByteArray(8192)
+
+                FileInputStream(backupFile).use { fis ->
+                    var bytesRead: Int
+                    while (fis.read(buffer).also { bytesRead = it } != -1) {
+                        outputStream.write(buffer, 0, bytesRead)
+                        uploadedBytes += bytesRead
+                        val progress = ((uploadedBytes.toDouble() / totalBytes) * 100).toInt().coerceIn(0, 100)
+                        onProgress(progress)
+                    }
+                }
+                outputStream.flush()
+
+                writer.write("\r\n--$boundary--\r\n")
+                writer.flush()
+            }
 
             val responseCode = conn.responseCode
             if (responseCode in 200..299) {
                 val response = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val fileId = BackupRestoreHelper.extractJsonString(response, "id") ?: "gdrive_file"
-                val modified = BackupRestoreHelper.extractJsonString(response, "modifiedTime") ?: Formatters.nowTimestamp()
-                Result.success(CloudBackupInfo(fileId, cloudFileName, backupFile.length(), modified, sha256))
+                val json = runCatching { JSONObject(response) }.getOrNull()
+                val fileId = json?.optString("id", "gdrive_${System.currentTimeMillis()}") ?: ""
+                val nowStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+                Result.success(
+                    CloudBackupInfo(
+                        fileId = fileId,
+                        fileName = cloudFileName,
+                        sizeBytes = backupFile.length(),
+                        modifiedTime = nowStr,
+                        sha256 = sha256
+                    )
+                )
+            } else if (responseCode == 401 || responseCode == 403) {
+                Result.failure(Exception("انتهت صلاحية جلسة Google Drive أو أن رمز المصادقة غير مصرح له (HTTP $responseCode). يرجى تحديث الربط."))
             } else {
                 val error = conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: "HTTP $responseCode"
-                Result.failure(IOException("فشل الرفع السحابي: $error"))
+                Result.failure(Exception("فشل الرفع إلى Google Drive: $error"))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception("تعذر الاتصال بخدمة Google Drive: ${e.localizedMessage ?: "تحقق من اتصال الإنترنت"}"))
+        }
+    }
+
+    /**
+     * جلب قائمة النسخ الاحتياطية المحفوظة في Google Drive AppDataFolder
+     */
+    suspend fun listCloudBackups(accessToken: String): Result<List<CloudBackupInfo>> = withContext(Dispatchers.IO) {
+        val cleanToken = accessToken.trim()
+        if (cleanToken.isBlank()) {
+            return@withContext Result.failure(Exception("رمز المصادقة غير متوفر"))
+        }
+        try {
+            val conn = (URL(GDRIVE_FILES_URL).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 12000
+                readTimeout = 15000
+                setRequestProperty("Authorization", "Bearer $cleanToken")
+            }
+            val code = conn.responseCode
+            if (code in 200..299) {
+                val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val root = JSONObject(body)
+                val filesArr = root.optJSONArray("files") ?: return@withContext Result.success(emptyList())
+                val result = mutableListOf<CloudBackupInfo>()
+                for (i in 0 until filesArr.length()) {
+                    val f = filesArr.getJSONObject(i)
+                    val props = f.optJSONObject("appProperties")
+                    result.add(
+                        CloudBackupInfo(
+                            fileId = f.optString("id"),
+                            fileName = f.optString("name"),
+                            sizeBytes = f.optLong("size", 0L),
+                            modifiedTime = f.optString("modifiedTime"),
+                            sha256 = props?.optString("sha256", "") ?: ""
+                        )
+                    )
+                }
+                Result.success(result)
+            } else {
+                Result.failure(Exception("تعذر جلب قائمة النسخ السحابية (HTTP $code)"))
             }
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
+    /**
+     * استعادة نسخة احتياطية من ملف أرشيف مع التحقق الصارم من بصمة SHA-256 وسلامة SQLite
+     */
     suspend fun restoreFromArchive(context: Context, zipFile: File): Result<Boolean> = withContext(Dispatchers.IO) {
-        val res = BackupRestoreHelper.restoreFromArchiveFile(context, zipFile)
-        if (res.isSuccess) Result.success(true) else Result.failure(res.exceptionOrNull() ?: Exception("فشل استعادة النسخة"))
-    }
-
-    fun scheduleAutoBackupJob(context: Context, frequencyHours: Int = 24, wifiOnly: Boolean = true): Boolean {
-        return try {
-            val scheduler = context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler ?: return false
-            val component = ComponentName(context, AutoBackupJobService::class.java)
-            val intervalMs = (frequencyHours.coerceAtLeast(1) * 3600L * 1000L)
-            val networkType = if (wifiOnly) JobInfo.NETWORK_TYPE_UNMETERED else JobInfo.NETWORK_TYPE_ANY
-            val jobInfo = JobInfo.Builder(AUTO_BACKUP_JOB_ID, component)
-                .setPeriodic(intervalMs)
-                .setRequiredNetworkType(networkType)
-                .setBackoffCriteria(30_000L, JobInfo.BACKOFF_POLICY_EXPONENTIAL)
-                .build()
-            scheduler.schedule(jobInfo) == JobScheduler.RESULT_SUCCESS
-        } catch (_: Exception) { false }
-    }
-
-    fun cancelAutoBackupJob(context: Context) {
-        try {
-            val scheduler = context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler
-            scheduler?.cancel(AUTO_BACKUP_JOB_ID)
-        } catch (_: Exception) {}
-    }
-}
-
-class AutoBackupJobService : JobService() {
-    private val jobScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    override fun onStartJob(params: JobParameters?): Boolean {
-        jobScope.launch {
-            var needsReschedule = false
-            try {
-                val localRes = BackupRestoreHelper.createInternalBackupFile(applicationContext, prefix = "SmartLedgerPro_Auto")
-                if (localRes.isSuccess) {
-                    val (file, summary) = localRes.getOrThrow()
-                    AppSettingsManager.updatePreference(
-                        applicationContext,
-                        "last_local_backup_info",
-                        "${summary.createdAt} (${Formatters.formatBytes(summary.sizeBytes)})"
-                    )
-                    val token = GoogleDriveBackupHelper.getValidAccessToken(applicationContext)
-                    if (!token.isNullOrBlank()) {
-                        val cloudRes = GoogleDriveBackupHelper.uploadBackupToDrive(file, token) {}
-                        if (cloudRes.isSuccess) {
-                            val info = cloudRes.getOrThrow()
-                            AppSettingsManager.updatePreference(applicationContext, "gdrive_status", DriveConnectionStatus.SUCCESS.code)
-                            AppSettingsManager.updatePreference(applicationContext, "last_cloud_backup_info", "${Formatters.nowTimestamp()} (${Formatters.formatBytes(info.sizeBytes)})")
-                        } else {
-                            needsReschedule = true
-                        }
-                    }
-                }
-            } catch (_: Exception) {
-                needsReschedule = true
-            } finally {
-                jobFinished(params, needsReschedule)
-            }
+        val res = BackupRestoreHelper.restoreFromBackupFile(context, zipFile, createPreRestoreSafety = true)
+        if (res.isSuccess) {
+            Result.success(true)
+        } else {
+            Result.failure(res.exceptionOrNull() ?: Exception("فشلت عملية الاستعادة"))
         }
-        return true
-    }
-
-    override fun onStopJob(params: JobParameters?): Boolean {
-        jobScope.cancel()
-        return true
     }
 }

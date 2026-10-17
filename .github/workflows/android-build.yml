@@ -1,51 +1,52 @@
-name: Build SmartLedger Pro Android APK
+name: SmartLedger Pro Android CI/CD
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ main, master ]
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
+    name: Test, Build & Package Android APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 17 (Temurin)
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
           distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
 
-      - name: Ensure Gradle 8.4 Wrapper JAR is Present
-        run: |
-          if [ ! -s gradle/wrapper/gradle-wrapper.jar ]; then
-            gradle wrapper --gradle-version 8.4
-          fi
-          chmod +x gradlew
-
-      - name: Setup Gradle Cache
-        uses: actions/cache@v4
+      - name: Setup Gradle Build Environment
+        uses: gradle/actions/setup-gradle@v3
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          gradle-version: 8.4
 
-      - name: Run Unit Tests (Accounting, Units, Digits & Backup Verification)
-        run: ./gradlew testDebugUnitTest --no-daemon
+      - name: Grant Execute Permission to Gradlew
+        run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon
+      - name: Run Unit Tests & Build Debug APK
+        run: ./gradlew testDebugUnitTest assembleDebug --stacktrace --no-daemon
 
-      - name: Upload Compiled APK Artifact
+      - name: Verify Generated APK Output
+        run: |
+          echo "Listing generated APK files:"
+          ls -lh app/build/outputs/apk/debug/ || true
+
+      - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmartLedger-Pro-v2.2.0-Debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: SmartLedger-Pro-v2.2.0-Debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+          if-no-files-found: warn

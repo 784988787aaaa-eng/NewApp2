@@ -1,11 +1,11 @@
 package com.smartledger.pro.ui.screens.purchases
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,10 +16,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -34,9 +34,10 @@ import com.smartledger.pro.data.repository.InventoryRepository
 import com.smartledger.pro.data.repository.InvoiceRepository
 import com.smartledger.pro.domain.model.UnitConversionEngine
 import com.smartledger.pro.ui.components.*
+import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
-import com.smartledger.pro.util.AppSettingsManager
-import com.smartledger.pro.util.Formatters
+import com.smartledger.pro.ui.theme.SmartLedgerTokens
+import com.smartledger.pro.util.NumberFormatter
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -50,66 +51,46 @@ class PurchasesViewModel(application: android.app.Application) : AndroidViewMode
     private val accountRepo = AccountRepository(db)
     private val inventoryRepo = InventoryRepository(db)
 
-    val suppliers: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries(bookId = null)
+    val suppliers: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries(bookId = 2)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val products: StateFlow<List<ProductStockItem>> = inventoryRepo.getProducts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val recentPurchases: StateFlow<List<InvoiceEntity>> = invoiceRepo.getRecentInvoices(100)
+    val recentPurchases: StateFlow<List<InvoiceEntity>> = invoiceRepo.getRecentInvoices()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    suspend fun getInvoiceLines(invoiceId: Long): List<InvoiceLineEntity> {
-        return invoiceRepo.getInvoiceLines(invoiceId)
-    }
-
-    suspend fun reversePurchaseInvoice(invoiceId: Long, reason: String): Result<Boolean> {
-        return invoiceRepo.reverseInvoice(invoiceId, reason)
-    }
 
     suspend fun createPurchase(
         supplier: AccountBalanceSummary?,
         product: ProductStockItem,
-        purchaseAsMajorUnit: Boolean,
-        enteredQuantity: Double,
-        enteredUnitCost: Double,
+        useMajorUnit: Boolean,
+        quantity: Double,
+        unitPurchaseCost: Double,
         paidCash: Double,
-        referenceNo: String?,
         notes: String?
     ): Result<Long> {
-        val factor = if (purchaseAsMajorUnit && !product.LargeUnit.isNullOrBlank() && product.UnitFactor > 1.0) {
-            product.UnitFactor
-        } else 1.0
-
-        val totalMinorQty = if (purchaseAsMajorUnit && factor > 1.0) {
-            UnitConversionEngine.toMinorQuantity(enteredQuantity, 0.0, factor)
+        val safeFactor = if (product.UnitFactor <= 0.0 || product.LargeUnit.isNullOrBlank()) 1.0 else product.UnitFactor
+        val totalMinorQty = if (useMajorUnit && safeFactor > 1.0) quantity * safeFactor else quantity
+        val minorCost = if (useMajorUnit && safeFactor > 1.0) {
+            UnitConversionEngine.minorCostFromMajorCost(unitPurchaseCost, safeFactor)
         } else {
-            enteredQuantity
+            unitPurchaseCost
+        }
+        val total = quantity * unitPurchaseCost
+        val safePaid = paidCash.coerceIn(0.0, total)
+        val remaining = kotlin.math.max(0.0, total - safePaid)
+
+        if (remaining > 0.0 && supplier == null) {
+            return Result.failure(Exception("المشتريات الآجلة أو الجزئية تتطلب اختيار مورد مسجل لقيد الالتزام له."))
         }
 
-        val minorUnitCost = if (purchaseAsMajorUnit && factor > 1.0) {
-            UnitConversionEngine.minorCostFromMajorCost(enteredUnitCost, factor)
-        } else {
-            enteredUnitCost
-        }
-
-        val total = Formatters.roundAmount(enteredQuantity * enteredUnitCost)
-        val actualPaid = paidCash.coerceIn(0.0, total)
-        val remaining = kotlin.math.max(0.0, total - actualPaid)
-
-        if (remaining > 0.001 && (supplier == null || supplier.PersonId <= 0L)) {
-            return Result.failure(IllegalArgumentException("الشراء الآجل أو الجزئي يتطلب اختيار حساب مورد مسجل."))
-        }
-
-        val now = Formatters.nowTimestamp()
+        val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
         val dateCode = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
-        val invoiceNo = referenceNo?.trim()?.ifBlank { null }
-            ?: "PUR-$dateCode-${(System.currentTimeMillis() % 10000)}"
-
-        val unitDisplay = if (purchaseAsMajorUnit && factor > 1.0) {
-            "${Formatters.formatQuantity(enteredQuantity)} ${product.LargeUnit} (${Formatters.formatQuantity(totalMinorQty)} ${product.SmallUnit})"
+        val invoiceNo = "PUR-$dateCode-${(System.currentTimeMillis() % 10000)}"
+        val unitLabel = if (useMajorUnit && !product.LargeUnit.isNullOrBlank()) {
+            "${NumberFormatter.formatQuantity(quantity)} ${product.LargeUnit}"
         } else {
-            "${Formatters.formatQuantity(enteredQuantity)} ${product.SmallUnit}"
+            "${NumberFormatter.formatQuantity(quantity)} ${product.SmallUnit}"
         }
 
         val invoice = InvoiceEntity(
@@ -122,9 +103,9 @@ class PurchasesViewModel(application: android.app.Application) : AndroidViewMode
             DiscountAmount = 0.0,
             TaxAmount = 0.0,
             FinalTotal = total,
-            PaidAmount = actualPaid,
+            PaidAmount = safePaid,
             RemainingAmount = remaining,
-            PaymentType = if (remaining == 0.0) "Cash" else if (actualPaid == 0.0) "Credit" else "Partial",
+            PaymentType = if (remaining == 0.0) "Cash" else if (safePaid == 0.0) "Credit" else "Partial",
             Notes = notes?.trim()?.ifBlank { null },
             CreatedAt = now
         )
@@ -134,17 +115,21 @@ class PurchasesViewModel(application: android.app.Application) : AndroidViewMode
             ProductId = product.Id,
             ProductNameSnapshot = product.Name,
             BarcodeSnapshot = product.Barcode,
-            UnitName = unitDisplay,
-            IsMajorUnit = purchaseAsMajorUnit && factor > 1.0,
-            ConversionFactor = factor,
+            UnitName = unitLabel,
+            IsMajorUnit = useMajorUnit,
+            ConversionFactor = safeFactor,
             QuantityMinor = totalMinorQty,
-            UnitPrice = minorUnitCost,
-            LineCost = minorUnitCost,
+            UnitPrice = minorCost,
+            LineCost = minorCost,
             LineTotal = total,
             SortOrder = 1
         )
 
         return invoiceRepo.createInvoice(invoice, listOf(line))
+    }
+
+    suspend fun reversePurchaseInvoice(invoiceId: Long, reason: String?): Result<Boolean> {
+        return invoiceRepo.reverseInvoice(invoiceId, reason)
     }
 }
 
@@ -157,22 +142,26 @@ fun PurchasesScreen(
     val allInvoices by viewModel.recentPurchases.collectAsState()
     val suppliers by viewModel.suppliers.collectAsState()
     val products by viewModel.products.collectAsState()
-    val settings by AppSettingsManager.settings.collectAsState()
     val scope = rememberCoroutineScope()
 
     var searchQuery by remember { mutableStateOf("") }
     var showAddPurchaseSheet by remember { mutableStateOf(false) }
-    var invoicePendingReverse by remember { mutableStateOf<InvoiceEntity?>(null) }
-    var bannerText by remember { mutableStateOf<String?>(null) }
+    var purchaseToReverse by remember { mutableStateOf<InvoiceEntity?>(null) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+    var isStatusError by remember { mutableStateOf(false) }
 
     val purchaseList = remember(allInvoices, searchQuery) {
-        val base = allInvoices.filter { it.Type == "Purchase" }
-        if (searchQuery.isBlank()) base
-        else base.filter {
-            it.InvoiceNumber.contains(searchQuery, ignoreCase = true) ||
-                it.PersonNameSnapshot.contains(searchQuery, ignoreCase = true) ||
-                (it.Notes?.contains(searchQuery, ignoreCase = true) == true)
-        }
+        allInvoices
+            .filter { it.Type == "Purchase" }
+            .filter {
+                searchQuery.isBlank() ||
+                    it.InvoiceNumber.contains(searchQuery, ignoreCase = true) ||
+                    it.PersonNameSnapshot.contains(searchQuery, ignoreCase = true)
+            }
+    }
+
+    val totalPurchasesAmount = remember(purchaseList) {
+        purchaseList.filter { it.Status != "Reversed" }.sumOf { it.FinalTotal }
     }
 
     Scaffold(
@@ -181,7 +170,8 @@ fun PurchasesScreen(
             Column(
                 modifier = Modifier
                     .background(SmartLedgerColors.SurfacePanel)
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .padding(horizontal = SmartLedgerTokens.screenHorizontalPadding, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -196,7 +186,7 @@ fun PurchasesScreen(
                             ) {
                                 Icon(Icons.Default.ArrowForward, contentDescription = "رجوع", tint = SmartLedgerColors.TextPrimary, modifier = Modifier.size(18.dp))
                             }
-                            Spacer(modifier = Modifier.width(10.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                         }
                         Column {
                             Text(
@@ -206,32 +196,32 @@ fun PurchasesScreen(
                                 color = SmartLedgerColors.TextPrimary
                             )
                             Text(
-                                text = "إدخال البضائع بالوحدة الصغرى أو الكبرى وقيد التزام المورد",
+                                text = "إجمالي التوريد المعتمد: ${NumberFormatter.formatCurrency(totalPurchasesAmount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = SmartLedgerColors.TextMuted
+                                color = SmartLedgerColors.AccentLight
                             )
                         }
                     }
 
                     Button(
-                        onClick = rememberDebouncedClick { showAddPurchaseSheet = true },
+                        onClick = { showAddPurchaseSheet = true },
                         colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.height(36.dp)
+                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
+                        modifier = Modifier
+                            .height(38.dp)
+                            .bounceClick { showAddPurchaseSheet = true }
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("فاتورة شراء", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                        Text("فاتورة شراء", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                     }
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
 
                 CompactSearchBar(
                     query = searchQuery,
                     onQueryChange = { searchQuery = it },
-                    placeholder = "ابحث برقم فاتورة الشراء أو اسم المورد..."
+                    placeholder = "ابحث برقم الفاتورة أو اسم المورد...",
+                    resultCount = purchaseList.size
                 )
             }
         }
@@ -240,28 +230,16 @@ fun PurchasesScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = SmartLedgerTokens.screenHorizontalPadding),
+            verticalArrangement = Arrangement.spacedBy(SmartLedgerTokens.itemSpacing)
         ) {
-            item { Spacer(modifier = Modifier.height(4.dp)) }
-
-            if (!bannerText.isNullOrBlank()) {
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(SmartLedgerColors.StateSuccessSubtle)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(bannerText!!, style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.StateSuccessText, fontWeight = FontWeight.Bold)
-                        IconButton(onClick = { bannerText = null }, modifier = Modifier.size(22.dp)) {
-                            Icon(Icons.Default.Close, contentDescription = null, tint = SmartLedgerColors.StateSuccessText, modifier = Modifier.size(14.dp))
-                        }
-                    }
-                }
+            item {
+                Spacer(modifier = Modifier.height(4.dp))
+                StatusFeedbackBanner(
+                    message = statusMessage,
+                    isError = isStatusError,
+                    onDismiss = { statusMessage = null }
+                )
             }
 
             if (purchaseList.isEmpty()) {
@@ -269,9 +247,11 @@ fun PurchasesScreen(
                     SmartEmptyState(
                         icon = Icons.Default.LocalShipping,
                         title = "لا توجد فواتير مشتريات مسجلة",
-                        description = "سجّل فواتير الشراء لزيادة كميات المخزن وتحديث أرصدة الموردين تلقائياً.",
-                        actionText = "تسجيل فاتورة شراء جديدة",
-                        onActionClick = { showAddPurchaseSheet = true }
+                        subtitle = "سجّل فواتير التوريد لزيادة كميات المخزن تلقائياً وتحديث حسابات الموردين.",
+                        actionText = "تسجيل أول فاتورة شراء",
+                        onActionClick = { showAddPurchaseSheet = true },
+                        isFiltered = searchQuery.isNotBlank(),
+                        onClearFilters = { searchQuery = "" }
                     )
                 }
             } else {
@@ -281,33 +261,43 @@ fun PurchasesScreen(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
                         border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
                     ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
+                        Column(modifier = Modifier.padding(SmartLedgerTokens.cardInternalPadding)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column {
                                     Text(
-                                        text = "المورد: ${invoice.PersonNameSnapshot}",
+                                        text = invoice.InvoiceNumber,
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
-                                        color = SmartLedgerColors.TextPrimary
+                                        color = SmartLedgerColors.AccentLight
                                     )
                                     Text(
-                                        text = "مرجع: ${invoice.InvoiceNumber} • ${invoice.IssuedAt.take(16)}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = SmartLedgerColors.TextMuted
+                                        text = "المورد: ${invoice.PersonNameSnapshot}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = SmartLedgerColors.TextPrimary
                                     )
                                 }
-                                Text(
-                                    text = Formatters.formatCurrency(invoice.FinalTotal, settings.currencySymbol, settings.decimalPlaces),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = SmartLedgerColors.AccentLight
-                                )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = NumberFormatter.formatCurrency(invoice.FinalTotal, AppDesignState.currencySymbol, AppDesignState.decimalPlaces),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isReversed) SmartLedgerColors.TextMuted else SmartLedgerColors.StateSuccess
+                                    )
+                                    if (invoice.RemainingAmount > 0.0 && !isReversed) {
+                                        Text(
+                                            text = "متبقي للمورد: ${NumberFormatter.formatCurrency(invoice.RemainingAmount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SmartLedgerColors.StateDanger
+                                        )
+                                    }
+                                }
                             }
 
                             Spacer(modifier = Modifier.height(8.dp))
@@ -317,28 +307,20 @@ fun PurchasesScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
-                                    Text(
-                                        text = "المدفوع: ${Formatters.formatCurrency(invoice.PaidAmount, settings.currencySymbol, settings.decimalPlaces)} • المتبقي للمورد: ${Formatters.formatCurrency(invoice.RemainingAmount, settings.currencySymbol, settings.decimalPlaces)}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = SmartLedgerColors.TextSecondary
-                                    )
-                                    Text(
-                                        text = if (isReversed) "الحالة: مرتجع مشتريات (معكوسة)" else "الحالة: مرحلة للمخزن والحساب",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isReversed) SmartLedgerColors.StateDanger else SmartLedgerColors.StateSuccess
-                                    )
-                                }
+                                Text(
+                                    text = "${invoice.IssuedAt.take(16)}" + if (!invoice.Notes.isNullOrBlank()) " • ${invoice.Notes}" else "",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SmartLedgerColors.TextMuted
+                                )
 
-                                if (!isReversed) {
-                                    OutlinedButton(
-                                        onClick = { invoicePendingReverse = invoice },
-                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SmartLedgerColors.StateDanger),
-                                        shape = RoundedCornerShape(6.dp),
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                if (isReversed) {
+                                    Text("مرتجعة / ملغاة", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.StateDanger, fontWeight = FontWeight.Bold)
+                                } else {
+                                    TextButton(
+                                        onClick = { purchaseToReverse = invoice },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                                     ) {
-                                        Text("مرتجع شراء", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                        Text("مرتجع شراء", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.StateDanger, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -347,394 +329,247 @@ fun PurchasesScreen(
                 }
             }
 
-            item { Spacer(modifier = Modifier.height(16.dp)) }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
+        // نافذة إضافة فاتورة مشتريات وتوريد مخزني
         if (showAddPurchaseSheet) {
-            AddPurchaseSheetContent(
-                suppliers = suppliers,
-                products = products,
-                currencySymbol = settings.currencySymbol,
-                decimals = settings.decimalPlaces,
-                onCommit = { supplier, product, asMajor, qty, cost, paid, refNo, notes, onError ->
-                    scope.launch {
-                        val res = viewModel.createPurchase(supplier, product, asMajor, qty, cost, paid, refNo, notes)
-                        if (res.isSuccess) {
-                            showAddPurchaseSheet = false
-                            bannerText = "تم حفظ فاتورة المشتريات وتوريد الكمية للمخزن بنجاح."
-                        } else {
-                            onError(res.exceptionOrNull()?.message ?: "تعذر حفظ فاتورة الشراء")
+            ModalBottomSheet(
+                onDismissRequest = { showAddPurchaseSheet = false },
+                containerColor = SmartLedgerColors.SurfacePanel
+            ) {
+                var formError by remember { mutableStateOf<String?>(null) }
+                AddPurchaseSheetContent(
+                    suppliers = suppliers,
+                    products = products,
+                    errorMessage = formError,
+                    onCommit = { supplier, product, useMajor, qty, cost, paid, notes ->
+                        scope.launch {
+                            val res = viewModel.createPurchase(supplier, product, useMajor, qty, cost, paid, notes)
+                            if (res.isSuccess) {
+                                showAddPurchaseSheet = false
+                                isStatusError = false
+                                statusMessage = "تم حفظ فاتورة الشراء وتوريد البضاعة إلى المخزن بنجاح."
+                            } else {
+                                formError = res.exceptionOrNull()?.message
+                            }
                         }
-                    }
-                },
-                onDismiss = { showAddPurchaseSheet = false }
-            )
+                    },
+                    onDismiss = { showAddPurchaseSheet = false }
+                )
+            }
         }
 
-        if (invoicePendingReverse != null) {
+        // تأكيد مرتجع المشتريات
+        if (purchaseToReverse != null) {
+            val target = purchaseToReverse!!
             ConfirmActionDialog(
-                title = "تأكيد مرتجع وعكس فاتورة المشتريات",
-                message = "سيتم عكس فاتورة الشراء رقم (${invoicePendingReverse!!.InvoiceNumber}):\n• خصم الكميات الموردة من المخزن.\n• تخفيض مديونية المورد بنفس القيمة.\nهل تريد المتابعة؟",
-                confirmText = "تأكيد مرتجع الشراء",
-                onConfirm = {
-                    val targetId = invoicePendingReverse!!.Id
-                    invoicePendingReverse = null
+                title = "إرجاع فاتورة الشراء ${target.InvoiceNumber}؟",
+                message = "سيتم خصم الكمية الموردة من المخزن وعكس المبلغ الآجل من حساب المورد بموجب إشعار مرتجع مشتريات.",
+                confirmText = "تأكيد المرتجع",
+                requireReason = true,
+                onConfirm = { reason ->
                     scope.launch {
-                        viewModel.reversePurchaseInvoice(targetId, "مرتجع مشتريات معتمد")
-                        bannerText = "تم عكس فاتورة الشراء وتحديث المخزن وحساب المورد."
+                        viewModel.reversePurchaseInvoice(target.Id, reason)
+                        purchaseToReverse = null
+                        isStatusError = false
+                        statusMessage = "تم عكس فاتورة المشتريات ${target.InvoiceNumber}."
                     }
                 },
-                onDismiss = { invoicePendingReverse = null }
+                onDismiss = { purchaseToReverse = null }
             )
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddPurchaseSheetContent(
     suppliers: List<AccountBalanceSummary>,
     products: List<ProductStockItem>,
-    currencySymbol: String,
-    decimals: Int,
+    errorMessage: String?,
     onCommit: (
         supplier: AccountBalanceSummary?,
         product: ProductStockItem,
-        purchaseAsMajorUnit: Boolean,
+        useMajorUnit: Boolean,
         quantity: Double,
-        unitCost: Double,
+        costPrice: Double,
         paidCash: Double,
-        referenceNo: String?,
-        notes: String?,
-        onError: (String) -> Unit
+        notes: String?
     ) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sortedSuppliers = remember(suppliers) {
-        suppliers.sortedBy { if (it.BookId == 2L) 0 else 1 }
-    }
-
-    var selectedSupplier by remember { mutableStateOf(sortedSuppliers.firstOrNull { it.BookId == 2L }) }
+    var selectedSupplier by remember { mutableStateOf<AccountBalanceSummary?>(suppliers.firstOrNull()) }
     var selectedProduct by remember { mutableStateOf(products.firstOrNull()) }
-    var purchaseAsMajorUnit by remember(selectedProduct) {
+    var useMajorUnit by remember(selectedProduct) {
         mutableStateOf(selectedProduct != null && !selectedProduct!!.LargeUnit.isNullOrBlank() && selectedProduct!!.UnitFactor > 1.0)
     }
     var quantityText by remember { mutableStateOf("1") }
-    var costPriceText by remember(selectedProduct, purchaseAsMajorUnit) {
+    var costPriceText by remember(selectedProduct, useMajorUnit) {
         val p = selectedProduct
-        val defaultCost = if (p == null) 0.0
-        else if (purchaseAsMajorUnit && p.UnitFactor > 1.0) (p.CostPrice * p.UnitFactor)
-        else p.CostPrice
-        mutableStateOf(Formatters.formatQuantity(defaultCost))
+        val initialCost = if (p == null) 0.0 else if (useMajorUnit && p.UnitFactor > 1.0) (p.CostPrice * p.UnitFactor) else p.CostPrice
+        mutableStateOf(if (initialCost > 0.0) NumberFormatter.formatQuantity(initialCost) else "")
     }
-    var paidCashText by remember { mutableStateOf("0") }
-    var showOptionalSection by remember { mutableStateOf(false) }
-    var referenceNo by remember { mutableStateOf("") }
+    var paymentType by remember { mutableStateOf("Cash") } // Cash, Credit, Partial
+    var paidCashText by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
-    var errorMsg by remember { mutableStateOf<String?>(null) }
 
-    var showProductPicker by remember { mutableStateOf(false) }
-    var showSupplierPicker by remember { mutableStateOf(false) }
+    val qty = NumberFormatter.parseDouble(quantityText, 0.0)
+    val unitCost = NumberFormatter.parseDouble(costPriceText, 0.0)
+    val total = qty * unitCost
+    val paid = when (paymentType) {
+        "Cash" -> total
+        "Credit" -> 0.0
+        else -> NumberFormatter.parseDouble(paidCashText, 0.0).coerceIn(0.0, total)
+    }
+    val remaining = (total - paid).coerceAtLeast(0.0)
 
-    val qty = Formatters.parseDoubleSafe(quantityText, 0.0)
-    val cost = Formatters.parseDoubleSafe(costPriceText, 0.0)
-    val total = Formatters.roundAmount(qty * cost)
-    val paid = Formatters.parseDoubleSafe(paidCashText, 0.0).coerceIn(0.0, total)
-    val remaining = kotlin.math.max(0.0, total - paid)
+    val requiresSupplier = remaining > 0.0 && selectedSupplier == null
+    val isFormValid = selectedProduct != null && qty > 0.0 && unitCost > 0.0 && !requiresSupplier
 
-    val hasMajorOption = selectedProduct != null && !selectedProduct!!.LargeUnit.isNullOrBlank() && selectedProduct!!.UnitFactor > 1.0
-    val addedMinorQty = if (selectedProduct != null && purchaseAsMajorUnit && hasMajorOption) {
-        UnitConversionEngine.toMinorQuantity(qty, 0.0, selectedProduct!!.UnitFactor)
-    } else qty
-
-    val isFormValid = selectedProduct != null && qty > 0.0 && cost > 0.0 && !(remaining > 0.001 && selectedSupplier == null)
-
-    AdaptiveFormHost(
-        mode = FormWindowMode.BOTTOM_SHEET,
+    FormSheetContainer(
         title = "تسجيل فاتورة مشتريات وتوريد",
-        subtitle = "اختر المورد والصنف والوحدة، وسيتم تحديث المخزن وكشف الحساب ذرياً",
+        subtitle = "إدخال البضاعة للمخزن بالوحدة الصغرى أو الكبرى وتحديث حساب المورد",
         onDismiss = onDismiss,
-        primaryButtonText = "تأكيد وترحيل فاتورة الشراء",
+        primaryButtonText = "تأكيد وتوريد الفاتورة",
         isPrimaryEnabled = isFormValid,
-        hasUnsavedChanges = qty > 1.0 || referenceNo.isNotBlank() || notes.isNotBlank(),
-        errorMessage = errorMsg ?: if (remaining > 0.001 && selectedSupplier == null) {
-            "الفاتورة الآجلة تتطلب اختيار مورد مسجل بدلاً من «مورد نقدي عام»."
-        } else null,
+        errorMessage = errorMessage,
         onPrimaryClick = {
-            if (isFormValid && selectedProduct != null) {
-                onCommit(
-                    selectedSupplier,
-                    selectedProduct!!,
-                    purchaseAsMajorUnit && hasMajorOption,
-                    qty,
-                    cost,
-                    paid,
-                    referenceNo,
-                    notes
-                ) { err -> errorMsg = err }
+            val prod = selectedProduct
+            if (isFormValid && prod != null) {
+                onCommit(selectedSupplier, prod, useMajorUnit, qty, unitCost, paid, notes)
             }
         }
     ) {
-        Text("المورد (الطرف المقابل) *", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary, fontWeight = FontWeight.SemiBold)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(SmartLedgerColors.SurfaceInput)
-                .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
-                .clickable { showSupplierPicker = true }
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = selectedSupplier?.PersonName ?: "مورد نقدي عام (سداد نقدي فوري)",
-                fontWeight = FontWeight.Bold,
-                color = SmartLedgerColors.TextPrimary
-            )
-            Text("تغيير المورد ▾", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
-        }
-
-        Text("الصنف المراد توريده للمخزن *", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary, fontWeight = FontWeight.SemiBold)
+        // 1. اختيار الصنف المراد توريده (شرائح تفاعلية قابلة للاختيار)
+        Text("الصنف المراد توريده *", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
         if (products.isEmpty()) {
-            Text("لا توجد أصناف معرفة في المخزن بعد. يرجى تعريف الصنف من شاشة المخزون أولاً.", color = SmartLedgerColors.StateDanger, style = MaterialTheme.typography.bodyMedium)
+            Text("لا توجد أصناف معرفة بعد. أضف الصنف أولاً من شاشة المخزون.", color = SmartLedgerColors.StateDanger, style = MaterialTheme.typography.bodyMedium)
         } else {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(SmartLedgerColors.SurfaceInput)
-                    .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
-                    .clickable { showProductPicker = true }
-                    .padding(12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(selectedProduct?.Name ?: "اختر الصنف", fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                    if (selectedProduct != null) {
-                        Text(
-                            text = "الرصيد الحالي: ${Formatters.formatQuantity(selectedProduct!!.CurrentStockMinor)} ${selectedProduct!!.SmallUnit}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SmartLedgerColors.AccentLight
-                        )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(products, key = { it.Id }) { p ->
+                    val isSel = selectedProduct?.Id == p.Id
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSel) SmartLedgerColors.AccentSubtle else SmartLedgerColors.SurfaceCardElevated)
+                            .border(1.dp, if (isSel) SmartLedgerColors.AccentPrimary else SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
+                            .clickable { selectedProduct = p }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Column {
+                            Text(p.Name, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = if (isSel) SmartLedgerColors.AccentLight else SmartLedgerColors.TextPrimary)
+                            Text("المتاح: ${NumberFormatter.formatQuantity(p.CurrentStockMinor)} ${p.SmallUnit}", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
+                        }
                     }
                 }
-                Text("تغيير الصنف ▾", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
             }
         }
 
-        if (hasMajorOption && selectedProduct != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(SmartLedgerColors.SurfaceCardElevated)
-                    .padding(4.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (purchaseAsMajorUnit) SmartLedgerColors.AccentPrimary else Color.Transparent)
-                        .clickable { purchaseAsMajorUnit = true }
-                        .padding(vertical = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "شراء بالـ ${selectedProduct!!.LargeUnit} (${Formatters.formatQuantity(selectedProduct!!.UnitFactor)} ${selectedProduct!!.SmallUnit})",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (purchaseAsMajorUnit) SmartLedgerColors.TextInverse else SmartLedgerColors.TextSecondary
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (!purchaseAsMajorUnit) SmartLedgerColors.AccentPrimary else Color.Transparent)
-                        .clickable { purchaseAsMajorUnit = false }
-                        .padding(vertical = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "شراء بالـ ${selectedProduct!!.SmallUnit} (الوحدة الصغرى)",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (!purchaseAsMajorUnit) SmartLedgerColors.TextInverse else SmartLedgerColors.TextSecondary
-                    )
-                }
-            }
+        // اختيار وحدة الشراء (الوحدة الصغرى أو الكبرى)
+        val prod = selectedProduct
+        if (prod != null && !prod.LargeUnit.isNullOrBlank() && prod.UnitFactor > 1.0) {
+            SegmentedOptionRow(
+                options = listOf(
+                    true to "شراء بالـ ${prod.LargeUnit} (${NumberFormatter.formatQuantity(prod.UnitFactor)} ${prod.SmallUnit})",
+                    false to "شراء بالـ ${prod.SmallUnit} المفرد"
+                ),
+                selectedOption = useMajorUnit,
+                onOptionSelected = { useMajorUnit = it }
+            )
         }
 
-        val activeUnitLabel = if (purchaseAsMajorUnit && hasMajorOption) selectedProduct?.LargeUnit ?: "كرتون" else selectedProduct?.SmallUnit ?: "قطعة"
+        // 2. اختيار المورد
+        Text("المورد *", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
+        val supplierOptions = remember(suppliers) {
+            listOf<Pair<AccountBalanceSummary?, String>>(null to "مورد نقدي عام") +
+                suppliers.map { it to it.PersonName }
+        }
+        FilterChipRow(
+            items = supplierOptions,
+            selectedItem = selectedSupplier,
+            onItemSelected = { selectedSupplier = it }
+        )
 
+        val unitName = if (useMajorUnit && !prod?.LargeUnit.isNullOrBlank()) prod!!.LargeUnit!! else (prod?.SmallUnit ?: "وحدة")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SmartNumberField(
+            SmartTextField(
                 value = quantityText,
                 onValueChange = { quantityText = it },
-                label = "الكمية ($activeUnitLabel)",
+                label = "الكمية ($unitName)",
                 isRequired = true,
+                keyboardType = KeyboardType.Decimal,
                 modifier = Modifier.weight(1f)
             )
-            SmartNumberField(
+            SmartTextField(
                 value = costPriceText,
                 onValueChange = { costPriceText = it },
-                label = "تكلفة الـ $activeUnitLabel",
-                suffixText = currencySymbol,
+                label = "سعر شراء الـ $unitName",
                 isRequired = true,
+                keyboardType = KeyboardType.Decimal,
                 modifier = Modifier.weight(1f)
             )
         }
 
-        SmartNumberField(
-            value = paidCashText,
-            onValueChange = { paidCashText = it },
-            label = "المبلغ المسدد نقداً للمورد الآن",
-            suffixText = currencySymbol,
-            imeAction = ImeAction.Done
+        // 3. طريقة سداد الفاتورة للمورد
+        SegmentedOptionRow(
+            options = listOf(
+                "Cash" to "نقدي كامل",
+                "Credit" to "آجل للمورد",
+                "Partial" to "دفعة جزئية"
+            ),
+            selectedOption = paymentType,
+            onOptionSelected = { paymentType = it }
         )
+
+        if (paymentType == "Partial") {
+            SmartTextField(
+                value = paidCashText,
+                onValueChange = { paidCashText = it },
+                label = "المبلغ المسدد نقداً للمورد الآن",
+                keyboardType = KeyboardType.Decimal
+            )
+        }
+
+        if (requiresSupplier) {
+            Text(
+                text = "تنبيه: يرجى اختيار مورد مسجل من الشريط أعلاه لتسجيل المبلغ الآجل له.",
+                style = MaterialTheme.typography.labelSmall,
+                color = SmartLedgerColors.StateWarning,
+                fontWeight = FontWeight.Bold
+            )
+        }
 
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
-            shape = RoundedCornerShape(8.dp)
+            shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
         ) {
-            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (selectedProduct != null) {
-                    Text(
-                        text = "الأثر المخزني: +${Formatters.formatQuantity(addedMinorQty)} ${selectedProduct!!.SmallUnit} تضاف للمخزن",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = SmartLedgerColors.AccentLight,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("إجمالي فاتورة الشراء:", style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.TextSecondary)
-                    Text(Formatters.formatCurrency(total, currencySymbol, decimals), fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
+                    Text(NumberFormatter.formatCurrency(total, AppDesignState.currencySymbol, AppDesignState.decimalPlaces), fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("المتبقي آجل للمورد (له):", style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.StateSuccessText)
-                    Text(Formatters.formatCurrency(remaining, currencySymbol, decimals), fontWeight = FontWeight.Bold, color = SmartLedgerColors.StateSuccess)
+                    Text("المسدد نقداً:", style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.StateSuccessText)
+                    Text(NumberFormatter.formatCurrency(paid, AppDesignState.currencySymbol, AppDesignState.decimalPlaces), fontWeight = FontWeight.Bold, color = SmartLedgerColors.StateSuccess)
+                }
+                if (remaining > 0.0) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("المتبقي آجل للمورد (له):", style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.StateDangerText)
+                        Text(NumberFormatter.formatCurrency(remaining, AppDesignState.currencySymbol, AppDesignState.decimalPlaces), fontWeight = FontWeight.Bold, color = SmartLedgerColors.StateDanger)
+                    }
                 }
             }
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(SmartLedgerColors.SurfaceCardElevated)
-                .clickable { showOptionalSection = !showOptionalSection }
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("رقم الفاتورة المرجعي والملاحظات (اختياري)", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
-            Icon(if (showOptionalSection) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null, tint = SmartLedgerColors.AccentLight)
+        ExpandableAdvancedSection(title = "رقم مرجع المورد أو ملاحظات الشحن") {
+            SmartTextField(
+                value = notes,
+                onValueChange = { notes = it },
+                label = "ملاحظات التوريد / رقم فاتورة المورد",
+                placeholder = "مثال: فاتورة المورد رقم 450...",
+                imeAction = ImeAction.Done
+            )
         }
-
-        AnimatedVisibility(visible = showOptionalSection) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SmartTextField(
-                    value = referenceNo,
-                    onValueChange = { referenceNo = it },
-                    label = "رقم فاتورة المورد الورقية (اختياري)"
-                )
-                SmartTextField(
-                    value = notes,
-                    onValueChange = { notes = it },
-                    label = "ملاحظات التوريد",
-                    imeAction = ImeAction.Done
-                )
-            }
-        }
-    }
-
-    if (showSupplierPicker) {
-        AlertDialog(
-            onDismissRequest = { showSupplierPicker = false },
-            containerColor = SmartLedgerColors.SurfaceDialog,
-            title = { Text("اختر المورد", fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary) },
-            text = {
-                LazyColumn(modifier = Modifier.heightIn(max = 300.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SmartLedgerColors.SurfaceCardElevated)
-                                .clickable {
-                                    selectedSupplier = null
-                                    paidCashText = Formatters.formatQuantity(total)
-                                    showSupplierPicker = false
-                                }
-                                .padding(10.dp)
-                        ) {
-                            Text("مورد نقدي عام (سداد نقدي كامل)", fontWeight = FontWeight.Bold, color = SmartLedgerColors.AccentLight)
-                        }
-                    }
-                    items(sortedSuppliers, key = { it.PersonId }) { sup ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SmartLedgerColors.SurfaceCard)
-                                .clickable {
-                                    selectedSupplier = sup
-                                    showSupplierPicker = false
-                                }
-                                .padding(10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(sup.PersonName, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                            Text(Formatters.formatCurrency(sup.NetBalance, currencySymbol, decimals), color = SmartLedgerColors.TextSecondary, style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showSupplierPicker = false }) {
-                    Text("إغلاق", color = SmartLedgerColors.TextMuted)
-                }
-            }
-        )
-    }
-
-    if (showProductPicker) {
-        AlertDialog(
-            onDismissRequest = { showProductPicker = false },
-            containerColor = SmartLedgerColors.SurfaceDialog,
-            title = { Text("اختر الصنف المراد توريده", fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary) },
-            text = {
-                LazyColumn(modifier = Modifier.heightIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(products, key = { it.Id }) { prod ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SmartLedgerColors.SurfaceCard)
-                                .clickable {
-                                    selectedProduct = prod
-                                    showProductPicker = false
-                                }
-                                .padding(10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column {
-                                Text(prod.Name, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                                Text("المتاح: ${Formatters.formatQuantity(prod.CurrentStockMinor)} ${prod.SmallUnit}", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
-                            }
-                            Text(Formatters.formatCurrency(prod.CostPrice, currencySymbol, decimals), style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showProductPicker = false }) {
-                    Text("إغلاق", color = SmartLedgerColors.TextMuted)
-                }
-            }
-        )
     }
 }

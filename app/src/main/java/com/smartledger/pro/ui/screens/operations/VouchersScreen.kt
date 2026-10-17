@@ -1,6 +1,5 @@
 package com.smartledger.pro.ui.screens.operations
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,20 +16,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smartledger.pro.data.local.dao.AccountBalanceSummary
 import com.smartledger.pro.ui.components.*
-import com.smartledger.pro.ui.navigation.NavigationIntentHolder
+import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
+import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.ui.viewmodels.VouchersViewModel
-import com.smartledger.pro.util.AppSettingsManager
-import com.smartledger.pro.util.Formatters
+import com.smartledger.pro.util.NumberFormatter
+import com.smartledger.pro.util.ThermalPrinterHelper
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,42 +42,26 @@ fun VouchersScreen(
 ) {
     val accounts by viewModel.accounts.collectAsState()
     val recentVouchers by viewModel.recentVouchers.collectAsState()
-    val settings by AppSettingsManager.settings.collectAsState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
-    var isReceiptMode by remember { mutableStateOf(true) }
+    var isReceiptMode by remember { mutableStateOf(true) } // true: قبض (له), false: صرف (عليه)
     var amountText by remember { mutableStateOf("") }
     var selectedAccount by remember { mutableStateOf<AccountBalanceSummary?>(null) }
     var statementText by remember { mutableStateOf("") }
-    var referenceNo by remember { mutableStateOf("") }
-    var showOptionalRef by remember { mutableStateOf(false) }
+    var refNumberText by remember { mutableStateOf("") }
+
     var showAccountPickerSheet by remember { mutableStateOf(false) }
-    var showConfirmDialog by remember { mutableStateOf(false) }
-    var successMessage by remember { mutableStateOf<String?>(null) }
+    var showConfirmPostDialog by remember { mutableStateOf(false) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
 
-    val amountFocus = remember { FocusRequester() }
-    val statementFocus = remember { FocusRequester() }
+    val focusStatement = remember { FocusRequester() }
+    val amountVal = NumberFormatter.parseDouble(amountText, 0.0)
+    val isFormValid = amountVal > 0.0 && selectedAccount != null
 
-    LaunchedEffect(accounts, NavigationIntentHolder.voucherInitialAccountId, NavigationIntentHolder.voucherInitialIsReceipt) {
-        NavigationIntentHolder.voucherInitialIsReceipt?.let {
-            isReceiptMode = it
-            NavigationIntentHolder.voucherInitialIsReceipt = null
-        }
-        val targetId = NavigationIntentHolder.voucherInitialAccountId
-        if (targetId != null && accounts.isNotEmpty()) {
-            selectedAccount = accounts.firstOrNull { it.PersonId == targetId }
-            NavigationIntentHolder.voucherInitialAccountId = null
-        }
-    }
-
-    val accountsMap = remember(accounts) { accounts.associate { it.PersonId to it.PersonName } }
-    val parsedAmount = Formatters.parseDoubleSafe(amountText, 0.0)
-    val isFormValid = parsedAmount > 0.0 && selectedAccount != null
-
-    val projectedBalance = remember(selectedAccount, parsedAmount, isReceiptMode) {
-        val current = selectedAccount?.NetBalance ?: 0.0
-        if (isReceiptMode) current - parsedAmount else current + parsedAmount
-    }
+    // حساب الأثر المحاسبي المتوقع على رصيد الحساب المختار قبل الحفظ
+    val currentNet = selectedAccount?.NetBalance ?: 0.0
+    val projectedNet = if (isReceiptMode) (currentNet - amountVal) else (currentNet + amountVal)
 
     Scaffold(
         containerColor = SmartLedgerColors.SurfaceWindow,
@@ -83,7 +69,8 @@ fun VouchersScreen(
             Column(
                 modifier = Modifier
                     .background(SmartLedgerColors.SurfacePanel)
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .padding(horizontal = SmartLedgerTokens.screenHorizontalPadding, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -98,96 +85,48 @@ fun VouchersScreen(
                             ) {
                                 Icon(Icons.Default.ArrowForward, contentDescription = "رجوع", tint = SmartLedgerColors.TextPrimary, modifier = Modifier.size(18.dp))
                             }
-                            Spacer(modifier = Modifier.width(10.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                         }
                         Column {
                             Text(
-                                text = "السندات والقيود المالية",
+                                text = "سندات القبض والصرف",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = SmartLedgerColors.TextPrimary
                             )
                             Text(
-                                text = "إصدار سندات القبض والصرف مع معاينة الأثر على الرصيد",
+                                text = "توثيق الدفعات النقدية وتحديث أرصدة العملاء والموردين",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SmartLedgerColors.TextMuted
                             )
                         }
                     }
 
-                    Badge(
-                        containerColor = if (isReceiptMode) SmartLedgerColors.StateSuccessSubtle else SmartLedgerColors.StateDangerSubtle,
-                        contentColor = if (isReceiptMode) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isReceiptMode) SmartLedgerColors.StateSuccessSubtle else SmartLedgerColors.StateDangerSubtle)
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Text(
                             text = if (isReceiptMode) "سند قبض (له)" else "سند صرف (عليه)",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                            fontWeight = FontWeight.Bold
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isReceiptMode) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(SmartLedgerColors.SurfaceCardElevated)
-                        .padding(4.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (isReceiptMode) SmartLedgerColors.StateSuccess else Color.Transparent)
-                            .clickable { isReceiptMode = true; successMessage = null }
-                            .padding(vertical = 9.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.ArrowDownward,
-                                contentDescription = null,
-                                tint = if (isReceiptMode) SmartLedgerColors.TextInverse else SmartLedgerColors.TextMuted,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                "سند قبض / استلام (له)",
-                                fontWeight = FontWeight.Bold,
-                                color = if (isReceiptMode) SmartLedgerColors.TextInverse else SmartLedgerColors.TextSecondary,
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (!isReceiptMode) SmartLedgerColors.StateDanger else Color.Transparent)
-                            .clickable { isReceiptMode = false; successMessage = null }
-                            .padding(vertical = 9.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.ArrowUpward,
-                                contentDescription = null,
-                                tint = if (!isReceiptMode) SmartLedgerColors.TextInverse else SmartLedgerColors.TextMuted,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                "سند صرف / سداد (عليه)",
-                                fontWeight = FontWeight.Bold,
-                                color = if (!isReceiptMode) SmartLedgerColors.TextInverse else SmartLedgerColors.TextSecondary,
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
-                    }
-                }
+                // تبديل نوع السند (قبض له vs صرف عليه)
+                SegmentedOptionRow(
+                    options = listOf(
+                        true to "سند قبض / استلام (له)",
+                        false to "سند صرف / سداد (عليه)"
+                    ),
+                    selectedOption = isReceiptMode,
+                    onOptionSelected = { isReceiptMode = it },
+                    activeColor = if (isReceiptMode) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger
+                )
             }
         }
     ) { innerPadding ->
@@ -195,102 +134,130 @@ fun VouchersScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = SmartLedgerTokens.screenHorizontalPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item { Spacer(modifier = Modifier.height(4.dp)) }
-
-            if (!successMessage.isNullOrBlank()) {
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(SmartLedgerColors.StateSuccessSubtle)
-                            .border(1.dp, SmartLedgerColors.StateSuccessBorder, RoundedCornerShape(8.dp))
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(successMessage!!, color = SmartLedgerColors.StateSuccessText, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                        IconButton(onClick = { successMessage = null }, modifier = Modifier.size(22.dp)) {
-                            Icon(Icons.Default.Close, contentDescription = null, tint = SmartLedgerColors.StateSuccessText, modifier = Modifier.size(14.dp))
-                        }
-                    }
-                }
+            item {
+                Spacer(modifier = Modifier.height(4.dp))
+                StatusFeedbackBanner(
+                    message = statusMessage,
+                    onDismiss = { statusMessage = null }
+                )
             }
 
+            // 1. بطاقة إدخال المبلغ المالي والاختيار السريع
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
-                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
-                    shape = RoundedCornerShape(10.dp)
+                    border = CardDefaults.outlinedCardBorder().copy(
+                        brush = SolidColor(
+                            if (isReceiptMode) SmartLedgerColors.StateSuccessBorder else SmartLedgerColors.StateDangerBorder
+                        )
+                    ),
+                    shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
                 ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("الطرف الحسابي (العميل / المورد) *", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary, fontWeight = FontWeight.Bold)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SmartLedgerColors.SurfaceInput)
-                                .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
-                                .clickable { showAccountPickerSheet = true }
-                                .padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = selectedAccount?.PersonName ?: "اضغط لاختيار الحساب من الدفتر ▾",
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = if (selectedAccount != null) SmartLedgerColors.TextPrimary else SmartLedgerColors.TextMuted
-                            )
-                            if (selectedAccount != null) {
-                                val bal = selectedAccount!!.NetBalance
-                                val stateLabel = if (bal > 0.001) "عليه" else if (bal < -0.001) "له" else "متزن"
-                                Text(
-                                    text = "الرصيد: ${Formatters.formatCurrency(kotlin.math.abs(bal), settings.currencySymbol, settings.decimalPlaces)} ($stateLabel)",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (bal > 0.001) SmartLedgerColors.StateDanger else if (bal < -0.001) SmartLedgerColors.StateSuccess else SmartLedgerColors.TextMuted
-                                )
-                            }
-                        }
-
-                        SmartNumberField(
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        SmartTextField(
                             value = amountText,
-                            onValueChange = { amountText = it; successMessage = null },
-                            label = if (isReceiptMode) "المبلغ المقبوض نقداً" else "المبلغ المنصرف نقداً",
-                            placeholder = "أدخل المبلغ بالأرقام...",
-                            suffixText = settings.currencySymbol,
+                            onValueChange = { amountText = it },
+                            label = if (isReceiptMode) "المبلغ المقبوض نقداً (${AppDesignState.currencySymbol})" else "المبلغ المنصرف نقداً (${AppDesignState.currencySymbol})",
+                            placeholder = "أدخل قيمة السند...",
                             isRequired = true,
-                            focusRequester = amountFocus,
-                            nextFocusRequester = statementFocus
+                            keyboardType = KeyboardType.Decimal,
+                            imeAction = ImeAction.Next,
+                            nextFocusRequester = focusStatement,
+                            leadingIcon = Icons.Default.Payments
                         )
 
+                        // شرائح مبالغ سريعة للتسهيل
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            listOf("1000", "5000", "10000", "25000", "50000").forEach { preset ->
+                            listOf("5000" to "5,000", "10000" to "10,000", "25000" to "25,000", "50000" to "50,000", "100000" to "100,000").forEach { (raw, label) ->
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(6.dp))
                                         .background(SmartLedgerColors.SurfaceCardElevated)
                                         .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(6.dp))
-                                        .clickable { amountText = preset }
-                                        .padding(vertical = 6.dp),
+                                        .bounceClick { amountText = raw }
+                                        .padding(vertical = 7.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        text = Formatters.formatAmountOnly(preset.toDouble(), 0),
-                                        color = SmartLedgerColors.AccentLight,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    Text(label, color = SmartLedgerColors.AccentLight, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. اختيار الطرف الحسابي وعرض أثر السند على الرصيد
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
+                    shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("الطرف الحسابي (العميل / المورد) *", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(SmartLedgerTokens.inputCorner))
+                                .background(SmartLedgerColors.SurfaceInput)
+                                .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(SmartLedgerTokens.inputCorner))
+                                .clickable { showAccountPickerSheet = true }
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Person, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = selectedAccount?.PersonName ?: "اضغط لاختيار الحساب من الدفتر ▾",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (selectedAccount != null) SmartLedgerColors.TextPrimary else SmartLedgerColors.TextMuted
+                                )
+                            }
+                            if (selectedAccount != null) {
+                                Text(
+                                    text = "الحالي: ${NumberFormatter.formatCurrency(abs(currentNet), AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} ${if (currentNet >= 0) "عليه" else "له"}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (currentNet >= 0) SmartLedgerColors.StateDanger else SmartLedgerColors.StateSuccess,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        if (selectedAccount != null && amountVal > 0.0) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(SmartLedgerColors.SurfaceCardElevated)
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("الرصيد المتوقع بعد ترحيل السند:", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary)
+                                Text(
+                                    text = "${NumberFormatter.formatCurrency(abs(projectedNet), AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} ${when { projectedNet > 0.001 -> "عليه (لنا)"; projectedNet < -0.001 -> "له (علينا)"; else -> "متزن" }}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (projectedNet >= 0) SmartLedgerColors.StateDanger else SmartLedgerColors.StateSuccess
+                                )
                             }
                         }
 
@@ -298,71 +265,34 @@ fun VouchersScreen(
                             value = statementText,
                             onValueChange = { statementText = it },
                             label = "البيان والشرح المحاسبي",
-                            placeholder = if (isReceiptMode) "مثال: دفعة من الحساب نقداً" else "مثال: سداد دفعة للمورد نقداً",
-                            focusRequester = statementFocus,
+                            placeholder = if (isReceiptMode) "مثال: دفعة نقدية من الحساب..." else "مثال: سداد دفعة نقدية للمورد...",
+                            focusRequester = focusStatement,
                             imeAction = ImeAction.Done
                         )
 
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showOptionalRef = !showOptionalRef }
-                                .padding(vertical = 2.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("إضافة رقم سند ورقي / مرجعي (اختياري)", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
-                            Icon(if (showOptionalRef) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
-                        }
-
-                        AnimatedVisibility(visible = showOptionalRef) {
+                        ExpandableAdvancedSection(title = "رقم السند الورقي أو المرجع (اختياري)") {
                             SmartTextField(
-                                value = referenceNo,
-                                onValueChange = { referenceNo = it },
-                                label = "رقم السند المرجعي",
-                                placeholder = "مثال: RV-1042",
+                                value = refNumberText,
+                                onValueChange = { refNumberText = it },
+                                label = "رقم المرجع / السند الورقي",
+                                placeholder = "يُولّد تلقائياً إن تُرك فارغاً",
                                 imeAction = ImeAction.Done
                             )
                         }
 
-                        if (selectedAccount != null && parsedAmount > 0.0) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(SmartLedgerColors.SurfaceCardElevated)
-                                    .padding(10.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("رصيد الحساب بعد ترحيل السند:", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary)
-                                    val projState = when {
-                                        projectedBalance > 0.001 -> "لنا عليه (${Formatters.formatCurrency(projectedBalance, settings.currencySymbol, settings.decimalPlaces)})"
-                                        projectedBalance < -0.001 -> "له علينا (${Formatters.formatCurrency(kotlin.math.abs(projectedBalance), settings.currencySymbol, settings.decimalPlaces)})"
-                                        else -> "متزن تماماً (0)"
-                                    }
-                                    Text(projState, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.AccentLight)
-                                }
-                            }
-                        }
-
                         Button(
-                            onClick = rememberDebouncedClick {
-                                if (isFormValid) showConfirmDialog = true
-                            },
+                            onClick = { if (isFormValid) showConfirmPostDialog = true },
                             enabled = isFormValid,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(46.dp),
+                                .height(46.dp)
+                                .bounceClick(enabled = isFormValid) { showConfirmPostDialog = true },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isReceiptMode) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger
+                                containerColor = if (isReceiptMode) SmartLedgerColors.StateSuccess else SmartLedgerColors.AccentPrimary
                             ),
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                         ) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SmartLedgerColors.TextInverse)
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SmartLedgerColors.TextInverse, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (isReceiptMode) "اعتماد وترحيل سند القبض (له)" else "اعتماد وترحيل سند الصرف (عليه)",
@@ -375,95 +305,115 @@ fun VouchersScreen(
                 }
             }
 
-            if (recentVouchers.isNotEmpty()) {
-                item {
-                    Text(
-                        text = "أحدث السندات المرحلة (${Formatters.formatQuantity(recentVouchers.size.toDouble())})",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = SmartLedgerColors.TextPrimary
-                    )
-                }
+            // 3. سجل أحدث السندات المرحلة
+            item {
+                Text(
+                    text = "أحدث السندات المرحلة (${recentVouchers.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = SmartLedgerColors.TextPrimary
+                )
+            }
 
-                items(recentVouchers.take(20), key = { it.Id }) { v ->
+            if (recentVouchers.isEmpty()) {
+                item {
+                    Text("لا توجد سندات مرحلة بعد.", style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.TextMuted)
+                }
+            } else {
+                items(recentVouchers, key = { it.Id }) { v ->
                     val isRec = v.Type == "Receive"
-                    val accName = accountsMap[v.PersonId] ?: "حساب #${v.PersonId}"
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(SmartLedgerColors.SurfaceCard)
-                            .border(1.dp, SmartLedgerColors.BorderGridLine, RoundedCornerShape(8.dp))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
+                        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
+                        shape = RoundedCornerShape(10.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(accName, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary, style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                text = "${v.Note ?: if (isRec) "سند قبض" else "سند صرف"} • ${v.OccurredAt.take(16)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SmartLedgerColors.TextMuted
-                            )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${v.PersonName ?: "حساب"} • ${if (isRec) "سند قبض" else "سند صرف"}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SmartLedgerColors.TextPrimary
+                                )
+                                Text(
+                                    text = "${v.Note ?: ""} • ${v.OccurredAt.take(16)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SmartLedgerColors.TextMuted
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = NumberFormatter.formatCurrency(v.Amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isRec) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger
+                                )
+                                IconButton(
+                                    onClick = {
+                                        val shareMsg = "${if (isRec) "إيصال سند قبض" else "إيصال سند صرف"}\nالحساب: ${v.PersonName ?: ""}\nالمبلغ: ${NumberFormatter.formatCurrency(v.Amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}\nالبيان: ${v.Note ?: ""}\nالتاريخ: ${v.OccurredAt.take(16)}"
+                                        ThermalPrinterHelper.shareTextSafely(context, "إيصال سند", shareMsg)
+                                    },
+                                    modifier = Modifier.size(30.dp)
+                                ) {
+                                    Icon(Icons.Default.Share, contentDescription = "مشاركة السند", tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
+                                }
+                            }
                         }
-                        Text(
-                            text = "${if (isRec) "قبض: " else "صرف: "}${Formatters.formatCurrency(v.Amount, settings.currencySymbol, settings.decimalPlaces)}",
-                            fontWeight = FontWeight.Bold,
-                            color = if (isRec) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
                     }
                 }
             }
 
-            item { Spacer(modifier = Modifier.height(16.dp)) }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
+        // نافذة اختيار الحساب مع البحث
         if (showAccountPickerSheet) {
-            var accountSearch by remember { mutableStateOf("") }
-            val filteredAccs = remember(accounts, accountSearch) {
-                if (accountSearch.isBlank()) accounts
-                else accounts.filter {
-                    it.PersonName.contains(accountSearch, ignoreCase = true) ||
-                        (it.Phone?.contains(accountSearch, ignoreCase = true) == true)
-                }
-            }
-
             ModalBottomSheet(
                 onDismissRequest = { showAccountPickerSheet = false },
                 containerColor = SmartLedgerColors.SurfacePanel
             ) {
+                var accSearch by remember { mutableStateOf("") }
+                val filtered = remember(accounts, accSearch) {
+                    if (accSearch.isBlank()) accounts
+                    else accounts.filter {
+                        it.PersonName.contains(accSearch, ignoreCase = true) ||
+                            (it.Phone?.contains(accSearch) == true)
+                    }
+                }
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .imePadding()
                         .navigationBarsPadding()
-                        .padding(16.dp)
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(
-                        "اختر الحساب للسند",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = SmartLedgerColors.TextPrimary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("اختر الطرف الحسابي للسند", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
+
                     CompactSearchBar(
-                        query = accountSearch,
-                        onQueryChange = { accountSearch = it },
-                        placeholder = "ابحث باسم العميل أو المورد..."
+                        query = accSearch,
+                        onQueryChange = { accSearch = it },
+                        placeholder = "ابحث باسم العميل أو المورد...",
+                        resultCount = filtered.size
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
 
                     LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 350.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        items(filteredAccs, key = { it.PersonId }) { acc ->
+                        items(filtered, key = { it.PersonId }) { acc ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(SmartLedgerColors.SurfaceCard)
+                                    .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
                                     .clickable {
                                         selectedAccount = acc
                                         showAccountPickerSheet = false
@@ -474,7 +424,7 @@ fun VouchersScreen(
                             ) {
                                 Text(acc.PersonName, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
                                 Text(
-                                    text = Formatters.formatCurrency(acc.NetBalance, settings.currencySymbol, settings.decimalPlaces),
+                                    text = "${NumberFormatter.formatCurrency(abs(acc.NetBalance), AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} ${if (acc.NetBalance >= 0) "عليه" else "له"}",
                                     color = if (acc.NetBalance >= 0) SmartLedgerColors.StateDanger else SmartLedgerColors.StateSuccess,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -485,29 +435,27 @@ fun VouchersScreen(
             }
         }
 
-        if (showConfirmDialog && selectedAccount != null) {
-            val voucherTitle = if (isReceiptMode) "تأكيد ترحيل سند قبض (له)" else "تأكيد ترحيل سند صرف (عليه)"
+        // تأكيد ترحيل السند المالي
+        if (showConfirmPostDialog && selectedAccount != null) {
+            val acc = selectedAccount!!
             ConfirmActionDialog(
-                title = voucherTitle,
-                message = "الحساب: ${selectedAccount!!.PersonName}\n" +
-                    "المبلغ: ${Formatters.formatCurrency(parsedAmount, settings.currencySymbol, settings.decimalPlaces)}\n" +
-                    "الأثر المحاسبي: ${if (isReceiptMode) "يُخصم من مديونية الحساب (يُقيد له دائن)" else "يُضاف على الحساب (يُقيد عليه مدين)"}\n" +
-                    "هل تؤكد حفظ وترحيل السند؟",
+                title = if (isReceiptMode) "تأكيد ترحيل سند القبض؟" else "تأكيد ترحيل سند الصرف؟",
+                message = "سيتم قيد ${if (isReceiptMode) "سند قبض (له)" else "سند صرف (عليه)"} بمبلغ ${NumberFormatter.formatCurrency(amountVal, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} على حساب «${acc.PersonName}».",
                 confirmText = "تأكيد وترحيل",
-                isDestructive = !isReceiptMode,
+                isDestructive = false,
                 onConfirm = {
-                    showConfirmDialog = false
+                    showConfirmPostDialog = false
                     scope.launch {
                         val type = if (isReceiptMode) "Receive" else "Payment"
-                        val st = statementText.ifBlank { if (isReceiptMode) "سند قبض نقدية" else "سند صرف نقدية" }
-                        viewModel.createVoucher(selectedAccount!!.PersonId, type, parsedAmount, st, referenceNo)
-                        successMessage = "تم حفظ وترحيل السند بمبلغ ${Formatters.formatCurrency(parsedAmount, settings.currencySymbol, settings.decimalPlaces)} بنجاح."
+                        val st = statementText.trim().ifBlank { if (isReceiptMode) "سند قبض نقدية" else "سند صرف نقدية" }
+                        viewModel.createVoucher(acc.PersonId, type, amountVal, st, refNumberText.trim().ifBlank { null })
+                        statusMessage = "تم حفظ وترحيل السند لحساب «${acc.PersonName}» بنجاح."
                         amountText = ""
                         statementText = ""
-                        referenceNo = ""
+                        refNumberText = ""
                     }
                 },
-                onDismiss = { showConfirmDialog = false }
+                onDismiss = { showConfirmPostDialog = false }
             )
         }
     }

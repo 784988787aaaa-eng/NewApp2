@@ -4,6 +4,9 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+/**
+ * جدول تصنيفات الدفاتر والحسابات (العملاء، الموردين، الموظفين، الحسابات العامة، ...)
+ */
 @Entity(tableName = "Books")
 data class BookEntity(
     @PrimaryKey(autoGenerate = true) val Id: Long = 0,
@@ -12,6 +15,9 @@ data class BookEntity(
     val SortOrder: Int = 0
 )
 
+/**
+ * جدول بطاقات الحسابات المالية (العملاء، الموردين، الموظفين، الحسابات المدينة والدائنة)
+ */
 @Entity(
     tableName = "People",
     indices = [
@@ -34,6 +40,12 @@ data class PersonEntity(
     val LastOperationAt: String? = null
 )
 
+/**
+ * جدول القيود والحركات المالية اليومية (سندات قبض، سندات صرف، قيود افتتاحية، مبيعات، مشتريات)
+ * اتجاه التأثير:
+ *  - مدين (عليه): DebtOnUs, Sale, Payment  (+Amount)
+ *  - دائن (له):   DebtToUs, Purchase, Receive, SaleReturn (-Amount)
+ */
 @Entity(
     tableName = "Operations",
     indices = [
@@ -46,7 +58,7 @@ data class PersonEntity(
 data class OperationEntity(
     @PrimaryKey(autoGenerate = true) val Id: Long = 0,
     val PersonId: Long,
-    val Type: String,
+    val Type: String, // Receive, Payment, DebtOnUs, DebtToUs, Sale, Purchase, SaleReturn, Adjustment
     val Amount: Double,
     val OccurredAt: String,
     val Note: String? = null,
@@ -56,6 +68,9 @@ data class OperationEntity(
     val CreatedAt: String
 )
 
+/**
+ * جدول الأصناف والمنتجات المخزنية
+ */
 @Entity(
     tableName = "Products",
     indices = [
@@ -82,11 +97,13 @@ data class ProductEntity(
     val OpeningQuantityMinor: Double = 0.0,
     val OpeningCost: Double = 0.0,
     val SupplierId: Long? = null,
-    val Notes: String? = null,
     val IsActive: Boolean = true,
     val CreatedAt: String
 )
 
+/**
+ * جدول رؤوس الفواتير التجارية (مبيعات، مشتريات، مرتجعات)
+ */
 @Entity(
     tableName = "Invoices",
     indices = [
@@ -98,7 +115,7 @@ data class ProductEntity(
 data class InvoiceEntity(
     @PrimaryKey(autoGenerate = true) val Id: Long = 0,
     val InvoiceNumber: String,
-    val Type: String,
+    val Type: String, // Sale, Purchase, SaleReturn, PurchaseReturn
     val PersonId: Long,
     val PersonNameSnapshot: String,
     val IssuedAt: String,
@@ -108,12 +125,15 @@ data class InvoiceEntity(
     val FinalTotal: Double,
     val PaidAmount: Double = 0.0,
     val RemainingAmount: Double = 0.0,
-    val PaymentType: String = "Cash",
+    val PaymentType: String = "Cash", // Cash, Credit, Partial
     val Notes: String? = null,
-    val Status: String = "Completed",
+    val Status: String = "Completed", // Completed, Suspended, Reversed
     val CreatedAt: String
 )
 
+/**
+ * جدول بنود وتفاصيل الفاتورة التجارية
+ */
 @Entity(
     tableName = "InvoiceLines",
     indices = [
@@ -138,6 +158,9 @@ data class InvoiceLineEntity(
     val SortOrder: Int = 0
 )
 
+/**
+ * جدول حركات وتغييرات المخزون المستنديه (وارد، صادر، تسوية جرد)
+ */
 @Entity(
     tableName = "StockMovements",
     indices = [
@@ -149,7 +172,7 @@ data class StockMovementEntity(
     @PrimaryKey(autoGenerate = true) val Id: Long = 0,
     val ProductId: Long,
     val OccurredAt: String,
-    val Type: String,
+    val Type: String, // In, Out, AdjustmentIn, AdjustmentOut, Sale, Purchase, ReturnIn, ReturnOut
     val QuantityMinor: Double,
     val UnitCost: Double,
     val Notes: String? = null,
@@ -158,6 +181,9 @@ data class StockMovementEntity(
     val CreatedAt: String
 )
 
+/**
+ * جدول المصروفات والنفقات التشغيلية
+ */
 @Entity(
     tableName = "Expenses",
     indices = [
@@ -176,6 +202,9 @@ data class ExpenseEntity(
     val CreatedAt: String
 )
 
+/**
+ * جدول سلة المحذوفات لتأمين استعادة السجلات المحذوفة خطأً وتوثيق سبب الإلغاء
+ */
 @Entity(
     tableName = "DeletedItems",
     indices = [
@@ -185,7 +214,7 @@ data class ExpenseEntity(
 )
 data class DeletedItemEntity(
     @PrimaryKey(autoGenerate = true) val Id: Long = 0,
-    val EntityType: String,
+    val EntityType: String, // Operation, Product, Account, Expense, Invoice
     val OriginalId: Long,
     val Title: String,
     val SnapshotJson: String,
@@ -193,6 +222,9 @@ data class DeletedItemEntity(
     val Reason: String? = null
 )
 
+/**
+ * جدول هوية المنشأة ورأس وتذييل الفواتير المطبوعة
+ */
 @Entity(tableName = "BusinessIdentity")
 data class BusinessIdentityEntity(
     @PrimaryKey val Id: Int = 1,
@@ -207,6 +239,9 @@ data class BusinessIdentityEntity(
     val ReceiptFooter: String = "البضاعة المباعة ترد وتستبدل خلال 3 أيام بفاتورة الشراء"
 )
 
+/**
+ * جدول إعدادات وتفضيلات التطبيق المحلية
+ */
 @Entity(tableName = "AppPreferences")
 data class AppPreferenceEntity(
     @PrimaryKey val Key: String,
