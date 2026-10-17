@@ -22,12 +22,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smartledger.pro.data.local.dao.RecentOperationWithPerson
+import com.smartledger.pro.domain.usecase.LedgerDirectionPolicy
 import com.smartledger.pro.ui.components.SmartEmptyState
 import com.smartledger.pro.ui.components.bounceClick
 import com.smartledger.pro.ui.components.pressScaleEffect
 import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
 import com.smartledger.pro.ui.theme.SmartLedgerTokens
+import com.smartledger.pro.ui.screens.settings.FirstRunOnboardingDialog
 import com.smartledger.pro.ui.viewmodels.DashboardViewModel
 import com.smartledger.pro.util.NumberFormatter
 import kotlin.math.abs
@@ -42,9 +44,13 @@ fun DashboardScreen(
     val metrics by viewModel.metrics.collectAsState()
     val recentOps by viewModel.recentOps.collectAsState()
     val identity by viewModel.businessIdentity.collectAsState()
+    val settings by viewModel.settings.collectAsState()
+    val financialAccounts by viewModel.financialAccounts.collectAsState()
+
     var selectedOpDetail by remember { mutableStateOf<RecentOperationWithPerson?>(null) }
 
-    val netWorkingCapital = metrics.TotalOwedToUs - metrics.TotalWeOwe
+    val netPosition = metrics.TotalOwedToUs - metrics.TotalWeOwe
+    val todayNetCashFlow = (metrics.TodaySales + metrics.TodayReceipts) - (metrics.TodayPurchases + metrics.TodayPayments)
 
     LazyColumn(
         modifier = Modifier
@@ -53,82 +59,93 @@ fun DashboardScreen(
             .padding(horizontal = SmartLedgerTokens.screenHorizontalPadding),
         verticalArrangement = Arrangement.spacedBy(SmartLedgerTokens.sectionSpacing)
     ) {
-        // 1. الترويسة العلوية وهوية المنشأة وزر الخصوصية
+        item { Spacer(modifier = Modifier.height(6.dp)) }
+
+        // 1. شريط الترحيب والهوية التجارية مع أزرار الخصوصية والتنبيهات والإعدادات
         item {
-            Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Box(
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(44.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(SmartLedgerColors.AccentSubtle)
-                            .border(1.5.dp, SmartLedgerColors.AccentPrimary, RoundedCornerShape(12.dp)),
+                            .border(1.dp, SmartLedgerColors.AccentPrimary.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.AccountBalance,
-                            contentDescription = "شعار الدفتر الذكي",
+                            contentDescription = "شعار المنشأة",
                             tint = SmartLedgerColors.AccentLight,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = identity?.TradeName ?: "الدفتر الذكي Pro",
+                            text = identity?.TradeName?.ifBlank { "نشاطي التجاري" } ?: "نشاطي التجاري",
                             style = MaterialTheme.typography.titleLarge,
+                            color = SmartLedgerColors.TextPrimary,
                             fontWeight = FontWeight.Bold,
-                            color = SmartLedgerColors.TextPrimary
+                            maxLines = 1
                         )
                         Text(
-                            text = "${metrics.ActiveAccountsCount} حساب نشط • منظومة المحاسبة والمخزون",
+                            text = "المركز المالي الموحد • ${metrics.ActiveAccountsCount} حساب نشط",
                             style = MaterialTheme.typography.labelSmall,
                             color = SmartLedgerColors.TextMuted
                         )
                     }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     IconButton(
                         onClick = onTogglePrivacy,
                         modifier = Modifier
                             .size(38.dp)
                             .clip(CircleShape)
-                            .background(SmartLedgerColors.SurfaceCardElevated)
+                            .background(SmartLedgerColors.SurfaceCard)
+                            .border(1.dp, SmartLedgerColors.BorderSubtle, CircleShape)
                             .pressScaleEffect()
                     ) {
                         Icon(
                             imageVector = if (privacyMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = "إخفاء أو إظهار الأرقام المالية",
-                            tint = if (privacyMode) SmartLedgerColors.AccentLight else SmartLedgerColors.TextSecondary,
-                            modifier = Modifier.size(20.dp)
+                            contentDescription = if (privacyMode) "إظهار المبالغ" else "إخفاء المبالغ للخصوصية",
+                            tint = if (privacyMode) SmartLedgerColors.StateWarning else SmartLedgerColors.AccentLight,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
+
                     IconButton(
                         onClick = { onNavigate("reports") },
                         modifier = Modifier
                             .size(38.dp)
                             .clip(CircleShape)
-                            .background(SmartLedgerColors.SurfaceCardElevated)
+                            .background(SmartLedgerColors.SurfaceCard)
+                            .border(1.dp, SmartLedgerColors.BorderSubtle, CircleShape)
                             .pressScaleEffect()
                     ) {
                         Icon(
                             imageVector = Icons.Default.Assessment,
                             contentDescription = "التقارير المالية",
-                            tint = SmartLedgerColors.AccentLight,
-                            modifier = Modifier.size(20.dp)
+                            tint = SmartLedgerColors.TextSecondary,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
             }
         }
 
-        // 2. تنبيه ذكي للنواقص المخزنية عند وجود أصناف وصلت لحد الطلب
+        // 2. تنبيه ذكي للمخزون المنخفض (إن وجد)
         if (metrics.LowStockCount > 0) {
             item {
                 Card(
@@ -136,7 +153,9 @@ fun DashboardScreen(
                         .fillMaxWidth()
                         .bounceClick { onNavigate("inventory") },
                     colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.StateWarningSubtle),
-                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.StateWarningBorder)),
+                    border = CardDefaults.outlinedCardBorder().copy(
+                        brush = SolidColor(SmartLedgerColors.StateWarningBorder)
+                    ),
                     shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
                 ) {
                     Row(
@@ -149,189 +168,320 @@ fun DashboardScreen(
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                             Icon(
                                 imageVector = Icons.Default.WarningAmber,
-                                contentDescription = null,
+                                contentDescription = "تنبيه مخزون",
                                 tint = SmartLedgerColors.StateWarning,
                                 modifier = Modifier.size(20.dp)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
-                                Text(
-                                    text = "تنبيه المخزون: ${metrics.LowStockCount} أصناف عند حد النفاد",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    color = SmartLedgerColors.StateWarning
-                                )
-                                Text(
-                                    text = "اضغط لمراجعة الأصناف الناقصة أو تسجيل فاتورة شراء وتوريد",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = SmartLedgerColors.TextSecondary
-                                )
-                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "تنبيه مخزني: يوجد (${metrics.LowStockCount}) أصناف قاربت على النفاد أو نفدت",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = SmartLedgerColors.TextPrimary
+                            )
                         }
-                        Icon(
-                            imageVector = Icons.Default.ChevronLeft,
-                            contentDescription = null,
-                            tint = SmartLedgerColors.StateWarning
+                        Text(
+                            text = "معاينة ←",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = SmartLedgerColors.StateWarning
                         )
                     }
                 }
             }
         }
 
-        // 3. بطاقات المركز المالي الأساسي (مستحق لنا / مستحق علينا / صافي المركز)
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    // مستحق لنا (مدين)
-                    Card(
-                        modifier = Modifier
-                            .weight(1f)
-                            .bounceClick { onNavigate("accounts") },
-                        colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
-                        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.StateSuccessBorder)),
-                        shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    text = "مستحق لنا (مدين)",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = SmartLedgerColors.StateSuccessText
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.CallReceived,
-                                    contentDescription = null,
-                                    tint = SmartLedgerColors.StateSuccess,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = NumberFormatter.formatCurrency(
-                                    amount = metrics.TotalOwedToUs,
-                                    currencySymbol = AppDesignState.currencySymbol,
-                                    decimalPlaces = AppDesignState.decimalPlaces,
-                                    privacyMode = privacyMode
-                                ),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = SmartLedgerColors.StateSuccess
-                            )
-                            Text(
-                                text = "ديون لنا لدى العملاء",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SmartLedgerColors.TextMuted
-                            )
-                        }
-                    }
-
-                    // مستحق علينا (دائن)
-                    Card(
-                        modifier = Modifier
-                            .weight(1f)
-                            .bounceClick { onNavigate("accounts") },
-                        colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
-                        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.StateDangerBorder)),
-                        shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    text = "مستحق علينا (دائن)",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = SmartLedgerColors.StateDangerText
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.CallMade,
-                                    contentDescription = null,
-                                    tint = SmartLedgerColors.StateDanger,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = NumberFormatter.formatCurrency(
-                                    amount = metrics.TotalWeOwe,
-                                    currencySymbol = AppDesignState.currencySymbol,
-                                    decimalPlaces = AppDesignState.decimalPlaces,
-                                    privacyMode = privacyMode
-                                ),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = SmartLedgerColors.StateDanger
-                            )
-                            Text(
-                                text = "التزامات للموردين",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SmartLedgerColors.TextMuted
-                            )
-                        }
-                    }
-                }
-
-                // شريط صافي المركز ونبض حركة اليوم
+        // 2-ب. بطاقة السيولة النقدية الحية في الصناديق والمحافظ (عند تعريفها)
+        if (financialAccounts.isNotEmpty()) {
+            item {
+                val totalTreasuryBalance = financialAccounts.sumOf { it.NetBalance }
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bounceClick { onNavigate("settings") },
                     colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
                     border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
                     shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
                 ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
-                                Text(
-                                    text = "صافي الذمم والمركز المالي",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = SmartLedgerColors.TextMuted
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.AccountBalanceWallet,
+                                    contentDescription = null,
+                                    tint = SmartLedgerColors.AccentLight,
+                                    modifier = Modifier.size(18.dp)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "أرصدة الصناديق والمحافظ الحية (${financialAccounts.size})",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SmartLedgerColors.TextPrimary
+                                )
+                            }
+                            Text(
+                                text = NumberFormatter.formatCurrency(
+                                    totalTreasuryBalance,
+                                    AppDesignState.currencySymbol,
+                                    AppDesignState.decimalPlaces,
+                                    privacyMode
+                                ),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (totalTreasuryBalance >= 0.0) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            financialAccounts.take(3).forEach { fa ->
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(SmartLedgerColors.SurfaceCardElevated)
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = fa.Name,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SmartLedgerColors.TextSecondary,
+                                            maxLines = 1
+                                        )
+                                        Text(
+                                            text = NumberFormatter.formatCurrency(
+                                                fa.NetBalance,
+                                                fa.CurrencySymbol,
+                                                AppDesignState.decimalPlaces,
+                                                privacyMode
+                                            ),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (fa.NetBalance >= 0.0) SmartLedgerColors.AccentLight else SmartLedgerColors.StateDanger,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. بطاقة المركز المالي الموحد (إجمالي لنا، إجمالي علينا، صافي المركز، وملخص اليوم)
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfacePanel),
+                border = CardDefaults.outlinedCardBorder().copy(
+                    brush = SolidColor(SmartLedgerColors.BorderStrong)
+                ),
+                shape = RoundedCornerShape(18.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "صافي المركز الائتماني (لنا - علينا)",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = SmartLedgerColors.TextMuted
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = NumberFormatter.formatCurrency(
+                                    amount = abs(netPosition),
+                                    currencySymbol = AppDesignState.currencySymbol,
+                                    decimalPlaces = AppDesignState.decimalPlaces,
+                                    privacyMode = privacyMode
+                                ),
+                                style = MaterialTheme.typography.displayMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = when {
+                                    netPosition > 0 -> SmartLedgerColors.StateSuccess
+                                    netPosition < 0 -> SmartLedgerColors.StateDanger
+                                    else -> SmartLedgerColors.TextPrimary
+                                }
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    when {
+                                        netPosition > 0 -> SmartLedgerColors.StateSuccessSubtle
+                                        netPosition < 0 -> SmartLedgerColors.StateDangerSubtle
+                                        else -> SmartLedgerColors.SurfaceCardElevated
+                                    }
+                                )
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = when {
+                                    netPosition > 0 -> "فائض لصالحنا"
+                                    netPosition < 0 -> "التزام علينا"
+                                    else -> "مركز متوازن"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = when {
+                                    netPosition > 0 -> SmartLedgerColors.StateSuccessText
+                                    netPosition < 0 -> SmartLedgerColors.StateDangerText
+                                    else -> SmartLedgerColors.TextSecondary
+                                }
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // بطاقة لنا (ديون على العملاء)
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .bounceClick { onNavigate("accounts") },
+                            colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
+                            border = CardDefaults.outlinedCardBorder().copy(
+                                brush = SolidColor(SmartLedgerColors.StateDangerBorder.copy(alpha = 0.5f))
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.CallMade,
+                                        contentDescription = null,
+                                        tint = SmartLedgerColors.StateDanger,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "إجمالي لنا (مدين)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = SmartLedgerColors.TextSecondary
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
                                 Text(
                                     text = NumberFormatter.formatCurrency(
-                                        amount = netWorkingCapital,
-                                        currencySymbol = AppDesignState.currencySymbol,
-                                        decimalPlaces = AppDesignState.decimalPlaces,
-                                        privacyMode = privacyMode,
-                                        showSign = true
+                                        metrics.TotalOwedToUs,
+                                        AppDesignState.currencySymbol,
+                                        AppDesignState.decimalPlaces,
+                                        privacyMode
                                     ),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (netWorkingCapital >= 0) SmartLedgerColors.AccentLight else SmartLedgerColors.StateDanger
+                                    color = SmartLedgerColors.StateDanger
                                 )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (netWorkingCapital >= 0) SmartLedgerColors.AccentSubtle else SmartLedgerColors.StateDangerSubtle)
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
                                 Text(
-                                    text = if (netWorkingCapital >= 0) "فائض لصالح المنشأة" else "التزامات صافية علينا",
+                                    text = "مستحقات لدى العملاء",
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (netWorkingCapital >= 0) SmartLedgerColors.AccentLight else SmartLedgerColors.StateDanger
+                                    color = SmartLedgerColors.TextMuted
                                 )
                             }
                         }
 
-                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        // بطاقة علينا (التزامات للموردين)
+                        Card(
+                            modifier = Modifier
+                                .weight(1f)
+                                .bounceClick { onNavigate("accounts") },
+                            colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
+                            border = CardDefaults.outlinedCardBorder().copy(
+                                brush = SolidColor(SmartLedgerColors.StateSuccessBorder.copy(alpha = 0.5f))
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.CallReceived,
+                                        contentDescription = null,
+                                        tint = SmartLedgerColors.StateSuccess,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "إجمالي علينا (دائن)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = SmartLedgerColors.TextSecondary
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = NumberFormatter.formatCurrency(
+                                        metrics.TotalWeOwe,
+                                        AppDesignState.currencySymbol,
+                                        AppDesignState.decimalPlaces,
+                                        privacyMode
+                                    ),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SmartLedgerColors.StateSuccess
+                                )
+                                Text(
+                                    text = "مستحقات للموردين",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SmartLedgerColors.TextMuted
+                                )
+                            }
+                        }
+                    }
 
-                        // ملخص حركة اليوم الحقيقي
+                    Divider(color = SmartLedgerColors.BorderSubtle)
+
+                    // ملخص حركة اليوم في صف واحد متناسق
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "حركة اليوم النقدية والبيع",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = SmartLedgerColors.TextSecondary
+                            )
+                            Text(
+                                text = "صافي اليوم: ${if (todayNetCashFlow >= 0) "+" else ""}${
+                                    NumberFormatter.formatCurrency(
+                                        todayNetCashFlow,
+                                        AppDesignState.currencySymbol,
+                                        AppDesignState.decimalPlaces,
+                                        privacyMode
+                                    )
+                                }",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (todayNetCashFlow >= 0) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger
+                            )
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
@@ -339,13 +489,13 @@ fun DashboardScreen(
                             TodayMiniMetric(
                                 label = "مبيعات اليوم",
                                 amount = metrics.TodaySales,
-                                color = SmartLedgerColors.StateSuccess,
+                                color = SmartLedgerColors.AccentLight,
                                 privacyMode = privacyMode
                             )
                             TodayMiniMetric(
                                 label = "مقبوضات اليوم",
                                 amount = metrics.TodayReceipts,
-                                color = SmartLedgerColors.AccentLight,
+                                color = SmartLedgerColors.StateSuccess,
                                 privacyMode = privacyMode
                             )
                             TodayMiniMetric(
@@ -478,7 +628,7 @@ fun DashboardScreen(
     // نافذة تفاصيل العملية السريعة عند الضغط عليها
     if (selectedOpDetail != null) {
         val op = selectedOpDetail!!
-        val isCredit = op.Type in listOf("Receive", "DebtToUs", "Purchase", "SaleReturn")
+        val isCredit = LedgerDirectionPolicy.isCreditOperation(op.Type)
         AlertDialog(
             onDismissRequest = { selectedOpDetail = null },
             containerColor = SmartLedgerColors.SurfacePanel,
@@ -515,6 +665,16 @@ fun DashboardScreen(
                     Text("إغلاق", color = SmartLedgerColors.TextSecondary)
                 }
             }
+        )
+    }
+
+    if (!settings.onboardingCompleted) {
+        FirstRunOnboardingDialog(
+            defaultCurrency = settings.currencySymbol,
+            onComplete = { tradeName, currencySymbol, cashbox, warehouse ->
+                viewModel.completeOnboarding(tradeName, currencySymbol, cashbox, warehouse)
+            },
+            onSkip = { viewModel.skipOnboarding() }
         )
     }
 }
@@ -593,13 +753,14 @@ fun RealOperationRow(
     privacyMode: Boolean,
     onClick: () -> Unit
 ) {
-    val isCredit = op.Type in listOf("Receive", "DebtToUs", "Purchase", "SaleReturn")
+    val isCredit = LedgerDirectionPolicy.isCreditOperation(op.Type)
     val typeLabel = when (op.Type) {
         "Receive" -> "سند قبض نقدية"
         "Payment" -> "سند صرف نقدية"
         "Sale" -> "فاتورة مبيعات آجل"
         "Purchase" -> "فاتورة مشتريات آجل"
         "SaleReturn" -> "مرتجع مبيعات"
+        "PurchaseReturn" -> "مرتجع مشتريات"
         "DebtOnUs" -> "رصيد افتتاحي (عليه)"
         "DebtToUs" -> "رصيد افتتاحي (له)"
         else -> op.Type

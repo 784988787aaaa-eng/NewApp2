@@ -471,7 +471,9 @@ fun <T> FilterChipRow(
                         text = label,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        color = if (isSelected) SmartLedgerColors.AccentLight else SmartLedgerColors.TextSecondary
+                        color = if (isSelected) SmartLedgerColors.AccentLight else SmartLedgerColors.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     if (count != null) {
                         Spacer(modifier = Modifier.width(6.dp))
@@ -918,6 +920,77 @@ fun AppSecurityLockScreen(
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                     ) {
                         Text("المتابعة إلى التطبيق", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * حقل الإدخال الذكي بالاقتراحات التلقائية من بيانات المستخدم (SmartAutocompleteField).
+ * يعرض اقتراحات فورية أثناء الكتابة (للتصنيفات، الوحدات، المخازن، الصناديق، أو الأوصاف المتكررة)
+ * دون فرض أي بيانات ثابتة مسبقة.
+ */
+@Composable
+fun SmartAutocompleteField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    suggestions: List<String>,
+    modifier: Modifier = Modifier,
+    placeholder: String? = null,
+    isRequired: Boolean = false,
+    leadingIcon: ImageVector? = null,
+    focusRequester: FocusRequester? = null,
+    nextFocusRequester: FocusRequester? = null,
+    imeAction: ImeAction = ImeAction.Next
+) {
+    val filteredSuggestions = remember(value, suggestions) {
+        val clean = value.trim()
+        val distinct = suggestions.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (clean.isEmpty()) {
+            distinct.take(6)
+        } else {
+            distinct.filter {
+                it.contains(clean, ignoreCase = true) && !it.equals(clean, ignoreCase = true)
+            }.take(6)
+        }
+    }
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        SmartTextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = label,
+            placeholder = placeholder,
+            isRequired = isRequired,
+            leadingIcon = leadingIcon,
+            focusRequester = focusRequester,
+            nextFocusRequester = nextFocusRequester,
+            imeAction = imeAction
+        )
+
+        if (filteredSuggestions.isNotEmpty()) {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(filteredSuggestions, key = { it }) { suggestion ->
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(SmartLedgerColors.SurfaceCardElevated)
+                            .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
+                            .clickable { onValueChange(suggestion) }
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = suggestion,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SmartLedgerColors.AccentLight,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
                 }
             }

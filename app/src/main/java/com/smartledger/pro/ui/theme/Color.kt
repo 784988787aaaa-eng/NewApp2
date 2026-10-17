@@ -21,6 +21,10 @@ object AppDesignState {
     var fontScale by mutableStateOf(1.0f)
     var currencySymbol by mutableStateOf("ر.ي")
     var decimalPlaces by mutableStateOf(0)
+    var defaultSmallUnit by mutableStateOf("قطعة")
+    var defaultLargeUnit by mutableStateOf("كرتون")
+    var defaultUnitFactor by mutableStateOf(24.0)
+    var defaultAlertThreshold by mutableStateOf(5.0)
     var showBarcodeField by mutableStateOf(true)
     var showShelfLocation by mutableStateOf(true)
     var showPhoneInAccounts by mutableStateOf(true)
@@ -34,6 +38,10 @@ object AppDesignState {
         fontScale = s.fontScale
         currencySymbol = s.currencySymbol
         decimalPlaces = s.decimalPlaces
+        defaultSmallUnit = s.defaultSmallUnit
+        defaultLargeUnit = s.defaultLargeUnit
+        defaultUnitFactor = s.defaultUnitFactor
+        defaultAlertThreshold = s.defaultAlertThreshold
         showBarcodeField = s.showBarcodeField
         showShelfLocation = s.showShelfLocation
         showPhoneInAccounts = s.showPhoneInAccounts

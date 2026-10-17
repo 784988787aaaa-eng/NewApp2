@@ -32,9 +32,18 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private val reportRepo = container.reportRepository
     private val voucherRepo = container.voucherRepository
     private val identityRepo = container.businessIdentityRepository
+    private val financialAccountRepo = container.financialAccountRepository
+    private val warehouseRepo = container.warehouseRepository
+    private val prefsRepo = container.preferencesRepository
+
+    val settings: StateFlow<AppSettingsSnapshot> = prefsRepo.settings
 
     val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityRepo.observeBusinessIdentity()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val financialAccounts: StateFlow<List<FinancialAccountBalanceSummary>> =
+        financialAccountRepo.observeAccountBalances(onlyActive = true)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val metrics: StateFlow<DashboardMetrics> = reportRepo.getDashboardMetrics()
         .stateIn(
@@ -49,6 +58,55 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             SharingStarted.WhileSubscribed(5000),
             emptyList()
         )
+
+    fun completeOnboarding(
+        tradeName: String,
+        currencySymbol: String,
+        initialCashboxName: String?,
+        initialWarehouseName: String?,
+        onComplete: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val cleanTrade = tradeName.trim().ifBlank { "نشاطي التجاري" }
+            val cleanCurrency = currencySymbol.trim().ifBlank { "ر.ي" }
+            identityRepo.saveBusinessIdentity(
+                BusinessIdentityEntity(
+                    Id = 1,
+                    TradeName = cleanTrade,
+                    LegalName = cleanTrade,
+                    Phone1 = "",
+                    Address = "",
+                    ReceiptHeader = "مرحباً بكم في $cleanTrade",
+                    ReceiptFooter = "شكراً لتعاملكم معنا"
+                )
+            )
+            if (!initialCashboxName.isNullOrBlank()) {
+                financialAccountRepo.saveFinancialAccount(
+                    name = initialCashboxName.trim(),
+                    accountType = "CASH_BOX",
+                    currencySymbol = cleanCurrency,
+                    isDefault = true
+                )
+            }
+            if (!initialWarehouseName.isNullOrBlank()) {
+                warehouseRepo.saveWarehouse(
+                    name = initialWarehouseName.trim(),
+                    isDefault = true
+                )
+            }
+            prefsRepo.updateSettings {
+                it.copy(
+                    currencySymbol = cleanCurrency,
+                    onboardingCompleted = true
+                )
+            }
+            onComplete()
+        }
+    }
+
+    fun skipOnboarding() {
+        prefsRepo.updateSettings { it.copy(onboardingCompleted = true) }
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -56,6 +114,18 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     private val container = AppContainer.getInstance(application)
     private val accountRepo = container.accountRepository
     private val voucherRepo = container.voucherRepository
+    private val invoiceRepo = container.invoiceRepository
+    private val financialAccountRepo = container.financialAccountRepository
+    private val identityRepo = container.businessIdentityRepository
+    private val prefsRepo = container.preferencesRepository
+
+    val settings: StateFlow<AppSettingsSnapshot> = prefsRepo.settings
+    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityRepo.observeBusinessIdentity()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val financialAccounts: StateFlow<List<FinancialAccountBalanceSummary>> =
+        financialAccountRepo.observeAccountBalances(onlyActive = true)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
@@ -108,6 +178,10 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         _balanceFilter.value = "ALL"
     }
 
+    suspend fun saveBookAsync(name: String, id: Long = 0L): Result<Long> {
+        return accountRepo.saveBook(name, id)
+    }
+
     suspend fun saveAccountAsync(
         id: Long = 0,
         name: String,
@@ -138,13 +212,29 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun restoreAccount(id: Long, onResult: ((Result<Boolean>) -> Unit)? = null) {
+        viewModelScope.launch {
+            val res = accountRepo.restoreAccount(id)
+            onResult?.invoke(res)
+        }
+    }
+
     fun getOperationsForAccount(personId: Long): Flow<List<OperationEntity>> {
         return accountRepo.getAccountOperations(personId)
     }
 
-    fun deleteOperation(operationId: Long, reason: String? = null) {
+    fun getOpenInvoicesForAccount(personId: Long): Flow<List<InvoiceEntity>> {
+        return invoiceRepo.getOpenInvoicesForPerson(personId)
+    }
+
+    fun deleteOperation(
+        operationId: Long,
+        reason: String? = null,
+        onResult: ((Result<Long>) -> Unit)? = null
+    ) {
         viewModelScope.launch {
-            accountRepo.deleteOperation(operationId, reason)
+            val res = accountRepo.deleteOperation(operationId, reason)
+            onResult?.invoke(res)
         }
     }
 
@@ -153,9 +243,19 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         type: String,
         amount: Double,
         statement: String,
-        refNumber: String? = null
+        refNumber: String? = null,
+        financialAccountId: Long? = null,
+        targetInvoiceId: Long? = null
     ): Result<Long> {
-        return voucherRepo.createVoucher(personId, type, amount, statement, refNumber)
+        return voucherRepo.createVoucher(
+            personId = personId,
+            type = type,
+            amount = amount,
+            statement = statement,
+            refNumber = refNumber,
+            financialAccountId = financialAccountId,
+            targetInvoiceId = targetInvoiceId
+        )
     }
 }
 
@@ -163,12 +263,28 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
 class InventoryViewModel(application: Application) : AndroidViewModel(application) {
     private val container = AppContainer.getInstance(application)
     private val inventoryRepo = container.inventoryRepository
+    private val categoryRepo = container.categoryRepository
+    private val unitRepo = container.measurementUnitRepository
+    private val warehouseRepo = container.warehouseRepository
+    private val prefsRepo = container.preferencesRepository
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
     private val _stockFilter = MutableStateFlow("ALL")
     val stockFilter = _stockFilter.asStateFlow()
+
+    val productCategories: StateFlow<List<CategoryEntity>> =
+        categoryRepo.observeCategories(domain = "PRODUCT", onlyActive = true)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val units: StateFlow<List<MeasurementUnitEntity>> =
+        unitRepo.observeUnits(onlyActive = true)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val warehouses: StateFlow<List<WarehouseEntity>> =
+        warehouseRepo.observeWarehouses(onlyActive = true)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val products: StateFlow<List<ProductStockItem>> = combine(
         _searchQuery,
@@ -225,16 +341,26 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
         val safeFactor = if (unitFactor <= 0.0 || largeUnit.isNullOrBlank()) 1.0 else unitFactor
         val totalOpeningMinor = UnitConversionEngine.toMinorQuantity(openingMajorQty, openingMinorQty, safeFactor)
         val effectiveMajorPrice = if (wholesalePrice > 0.0) wholesalePrice else (retailPrice * safeFactor)
+        val cleanWarehouse = warehouse.trim().ifBlank { "المستودع الرئيسي" }
+        val cleanSmallUnit = smallUnit.trim().ifBlank { "قطعة" }
+        val cleanLargeUnit = largeUnit?.trim()?.ifBlank { null }
+
+        unitRepo.ensureUnitExists(cleanSmallUnit)
+        if (cleanLargeUnit != null) {
+            unitRepo.ensureUnitExists(cleanLargeUnit)
+        }
+        val matchedWarehouseId = warehouses.value.firstOrNull { it.Name.equals(cleanWarehouse, ignoreCase = true) }?.Id
+            ?: warehouseRepo.saveWarehouse(name = cleanWarehouse).getOrNull()
 
         val product = ProductEntity(
             Id = id,
             Barcode = barcode?.trim()?.ifBlank { null },
             Name = name.trim(),
             CategoryId = categoryId,
-            Warehouse = warehouse.trim().ifBlank { "المستودع الرئيسي" },
+            Warehouse = cleanWarehouse,
             ShelfLocation = shelfLocation?.trim()?.ifBlank { null },
-            SmallUnit = smallUnit.trim().ifBlank { "قطعة" },
-            LargeUnit = largeUnit?.trim()?.ifBlank { null },
+            SmallUnit = cleanSmallUnit,
+            LargeUnit = cleanLargeUnit,
             UnitFactor = safeFactor,
             CostPrice = NumberFormatter.roundCurrency(costPrice.coerceAtLeast(0.0)),
             RetailPrice = NumberFormatter.roundCurrency(retailPrice.coerceAtLeast(0.0)),
@@ -244,12 +370,19 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
             OpeningCost = NumberFormatter.roundCurrency(costPrice.coerceAtLeast(0.0)),
             CreatedAt = now
         )
-        return inventoryRepo.saveProduct(product, totalOpeningMinor)
+        return inventoryRepo.saveProduct(product, totalOpeningMinor, matchedWarehouseId)
     }
 
     fun deleteProduct(id: Long, reason: String? = null) {
         viewModelScope.launch {
             inventoryRepo.softDeleteProduct(id, reason)
+        }
+    }
+
+    fun restoreProduct(id: Long, onResult: ((Result<Boolean>) -> Unit)? = null) {
+        viewModelScope.launch {
+            val res = inventoryRepo.restoreProduct(id)
+            onResult?.invoke(res)
         }
     }
 
@@ -261,13 +394,27 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
     ): Result<Long> {
         return inventoryRepo.commitStockAdjustment(productId, actualQty, currentQty, notes)
     }
+
+    suspend fun transferStockBetweenWarehousesAsync(
+        productId: Long,
+        fromWarehouseId: Long,
+        toWarehouseId: Long,
+        quantityMinor: Double,
+        notes: String? = null
+    ): Result<Boolean> {
+        return warehouseRepo.transferStockBetweenWarehouses(
+            productId = productId,
+            fromWarehouseId = fromWarehouseId,
+            toWarehouseId = toWarehouseId,
+            quantityMinor = quantityMinor,
+            allowNegativeStock = prefsRepo.settings.value.allowNegativeStock,
+            notes = notes
+        )
+    }
 }
 
 /**
- * نموذج عرض نقطة البيع السريعة (`PosViewModel`) مع حماية كاملة ضد قتل العملية في الخلفية (`Process Death`):
- * - يحفظ عناصر السلة (`cartLines`) ومعرّف العميل المختار (`selectedCustomer`) تلقائياً داخل `SavedStateHandle`
- *   بصيغة JSON مضغوطة وآمنة ضد `TransactionTooLargeException`.
- * - يستعيد السلة والعميل تلقائياً عند إعادة إنشاء العملية بواسطة نظام أندرويد.
+ * نموذج عرض نقطة البيع السريعة (`PosViewModel`) مع حماية كاملة ضد قتل العملية في الخلفية (`Process Death`)
  */
 class PosViewModel(
     application: Application,
@@ -281,6 +428,7 @@ class PosViewModel(
     private val productRepo = container.inventoryRepository
     private val accountRepo = container.accountRepository
     private val identityRepo = container.businessIdentityRepository
+    private val financialAccountRepo = container.financialAccountRepository
     private val prefsRepo = container.preferencesRepository
     private val createSaleUseCase = container.createSaleUseCase
 
@@ -289,10 +437,14 @@ class PosViewModel(
     val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityRepo.observeBusinessIdentity()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    val financialAccounts: StateFlow<List<FinancialAccountBalanceSummary>> =
+        financialAccountRepo.observeAccountBalances(onlyActive = true)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val products: StateFlow<List<ProductStockItem>> = productRepo.getProducts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val customers: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries(bookId = 1)
+    val customers: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val recentInvoices: StateFlow<List<InvoiceEntity>> = invoiceRepo.getRecentInvoices(40)
@@ -408,6 +560,16 @@ class PosViewModel(
         persistCartToSavedState()
     }
 
+    fun restoreRemovedCartItem(item: CartLineItem) {
+        val existingIdx = cartLines.indexOfFirst { it.productId == item.productId }
+        if (existingIdx >= 0) {
+            cartLines[existingIdx] = item
+        } else {
+            cartLines.add(item)
+        }
+        persistCartToSavedState()
+    }
+
     fun updateLineQuantities(productId: Long, majorQty: Double, minorQty: Double) {
         val index = cartLines.indexOfFirst { it.productId == productId }
         if (index >= 0) {
@@ -458,9 +620,14 @@ class PosViewModel(
         paymentType: String, // Cash, Credit, Partial
         discount: Double = 0.0,
         paidAmount: Double = 0.0,
-        notes: String? = null
+        notes: String? = null,
+        financialAccountId: Long? = null
     ): Result<InvoiceEntity> {
         val activeSettings = prefsRepo.settings.value
+        val defaultAccountId = financialAccountId
+            ?: financialAccounts.value.firstOrNull { it.IsDefault }?.Id
+            ?: financialAccounts.value.firstOrNull()?.Id
+
         val draftLines = cartLines.map { item ->
             SaleLineDraft(
                 productId = item.productId,
@@ -486,7 +653,8 @@ class PosViewModel(
             paidAmountInput = paidAmount,
             notes = notes,
             allowNegativeStock = activeSettings.allowNegativeStock,
-            invoicePrefix = activeSettings.invoicePrefix
+            invoicePrefix = activeSettings.invoicePrefix,
+            financialAccountId = defaultAccountId
         )
         if (result.isSuccess) {
             clearCart()
@@ -545,14 +713,19 @@ class PurchasesViewModel(application: Application) : AndroidViewModel(applicatio
     private val invoiceRepo = container.invoiceRepository
     private val accountRepo = container.accountRepository
     private val inventoryRepo = container.inventoryRepository
+    private val financialAccountRepo = container.financialAccountRepository
     private val createPurchaseUseCase = container.createPurchaseUseCase
     private val prefsRepo = container.preferencesRepository
 
-    val suppliers: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries(bookId = 2)
+    val suppliers: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val products: StateFlow<List<ProductStockItem>> = inventoryRepo.getProducts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val financialAccounts: StateFlow<List<FinancialAccountBalanceSummary>> =
+        financialAccountRepo.observeAccountBalances(onlyActive = true)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val recentPurchases: StateFlow<List<InvoiceEntity>> = invoiceRepo.getRecentInvoices()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -564,8 +737,12 @@ class PurchasesViewModel(application: Application) : AndroidViewModel(applicatio
         quantity: Double,
         unitPurchaseCost: Double,
         paidCash: Double,
-        notes: String?
+        notes: String?,
+        financialAccountId: Long? = null
     ): Result<Long> {
+        val defaultAccountId = financialAccountId
+            ?: financialAccounts.value.firstOrNull { it.IsDefault }?.Id
+            ?: financialAccounts.value.firstOrNull()?.Id
         return createPurchaseUseCase.execute(
             supplier = supplier,
             product = product,
@@ -574,7 +751,8 @@ class PurchasesViewModel(application: Application) : AndroidViewModel(applicatio
             unitPurchaseCost = unitPurchaseCost,
             paidCash = paidCash,
             notes = notes,
-            purchasePrefix = prefsRepo.settings.value.purchasePrefix
+            purchasePrefix = prefsRepo.settings.value.purchasePrefix,
+            financialAccountId = defaultAccountId
         )
     }
 
@@ -587,52 +765,106 @@ class VouchersViewModel(application: Application) : AndroidViewModel(application
     private val container = AppContainer.getInstance(application)
     private val voucherRepo = container.voucherRepository
     private val accountRepo = container.accountRepository
+    private val invoiceRepo = container.invoiceRepository
+    private val financialAccountRepo = container.financialAccountRepository
 
     val accounts: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val financialAccounts: StateFlow<List<FinancialAccountBalanceSummary>> =
+        financialAccountRepo.observeAccountBalances(onlyActive = true)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val recentVouchers: StateFlow<List<RecentOperationWithPerson>> = voucherRepo.observeRecentOperations(limit = 30)
         .map { list -> list.filter { it.Type == "Receive" || it.Type == "Payment" } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun getOpenInvoicesForPerson(personId: Long): Flow<List<InvoiceEntity>> {
+        return invoiceRepo.getOpenInvoicesForPerson(personId)
+    }
 
     suspend fun createVoucher(
         personId: Long,
         type: String,
         amount: Double,
         statement: String,
-        refNumber: String? = null
+        refNumber: String? = null,
+        financialAccountId: Long? = null,
+        targetInvoiceId: Long? = null
     ): Result<Long> {
-        return voucherRepo.createVoucher(personId, type, amount, statement, refNumber)
+        val defaultAccountId = financialAccountId
+            ?: financialAccounts.value.firstOrNull { it.IsDefault }?.Id
+            ?: financialAccounts.value.firstOrNull()?.Id
+        return voucherRepo.createVoucher(
+            personId = personId,
+            type = type,
+            amount = amount,
+            statement = statement,
+            refNumber = refNumber,
+            financialAccountId = defaultAccountId,
+            targetInvoiceId = targetInvoiceId
+        )
     }
 }
 
 class ExpensesViewModel(application: Application) : AndroidViewModel(application) {
     private val container = AppContainer.getInstance(application)
     private val expenseRepo = container.expenseRepository
+    private val categoryRepo = container.categoryRepository
+    private val financialAccountRepo = container.financialAccountRepository
 
     val expenses: StateFlow<List<ExpenseEntity>> = expenseRepo.getAllExpenses()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val categories: StateFlow<List<CategoryEntity>> =
+        categoryRepo.observeCategories(onlyActive = true)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val financialAccounts: StateFlow<List<FinancialAccountBalanceSummary>> =
+        financialAccountRepo.observeAccountBalances(onlyActive = true)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     suspend fun saveExpenseAsync(
         amount: Double,
         statement: String,
         category: String,
         source: String,
-        photoUri: String? = null
+        photoUri: String? = null,
+        entryType: String = "EXPENSE",
+        categoryId: Long? = null,
+        financialAccountId: Long? = null
     ): Result<Long> {
         val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-        val fullStatement = if (category.isNotBlank() && !statement.startsWith("[$category]")) {
-            "[$category] ${statement.trim()}"
+        val cleanCatName = category.trim()
+        val cleanDomain = if (entryType == "REVENUE") "REVENUE" else "EXPENSE"
+
+        // إذا أدخل المستخدم اسم تصنيف جديد غير موجود بعد، يُحفظ تلقائياً في جدول التصنيفات المرن
+        val resolvedCategoryId = categoryId ?: if (cleanCatName.isNotEmpty()) {
+            categories.value.firstOrNull {
+                it.Domain.equals(cleanDomain, ignoreCase = true) && it.Name.equals(cleanCatName, ignoreCase = true)
+            }?.Id ?: categoryRepo.saveCategory(domain = cleanDomain, name = cleanCatName).getOrNull()
+        } else null
+
+        val resolvedAccountId = financialAccountId ?: if (source.isNotBlank()) {
+            financialAccounts.value.firstOrNull { it.Name.equals(source.trim(), ignoreCase = true) }?.Id
+        } else null
+
+        val fullStatement = if (cleanCatName.isNotBlank() && !statement.startsWith("[$cleanCatName]")) {
+            "[$cleanCatName] ${statement.trim()}"
         } else {
             statement.trim()
         }
         val entity = ExpenseEntity(
             ExpenseDate = now,
+            CategoryId = resolvedCategoryId,
             Amount = NumberFormatter.roundCurrency(amount),
             Statement = fullStatement,
-            PaymentSource = source.trim().ifBlank { "الخزينة الرئيسية" },
+            PaymentSource = source.trim().ifBlank { "صندوق عام" },
             ReceiptPhotoUri = photoUri,
-            CreatedAt = now
+            CreatedAt = now,
+            EntryType = entryType,
+            FinancialAccountId = resolvedAccountId,
+            IsArchived = 0
         )
         return expenseRepo.saveExpense(entity)
     }
@@ -642,6 +874,12 @@ class ExpensesViewModel(application: Application) : AndroidViewModel(application
             expenseRepo.deleteExpense(id, reason)
         }
     }
+
+    fun restoreExpenseSnapshot(expense: ExpenseEntity) {
+        viewModelScope.launch {
+            expenseRepo.restoreExpenseSnapshot(expense)
+        }
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -649,9 +887,14 @@ class ReportsViewModel(application: Application) : AndroidViewModel(application)
     private val container = AppContainer.getInstance(application)
     private val reportRepo = container.reportRepository
     private val identityRepo = container.businessIdentityRepository
+    private val financialAccountRepo = container.financialAccountRepository
 
     val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityRepo.observeBusinessIdentity()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val financialAccounts: StateFlow<List<FinancialAccountBalanceSummary>> =
+        financialAccountRepo.observeAccountBalances(onlyActive = true)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _selectedPeriod = MutableStateFlow("ALL")
     val selectedPeriod = _selectedPeriod.asStateFlow()
@@ -698,21 +941,48 @@ class ReportsViewModel(application: Application) : AndroidViewModel(application)
 }
 
 /**
- * نموذج عرض الإعدادات والنسخ الاحتياطي والأمان (`SettingsViewModel`).
- *
- * يدير العمليات الحرجة (النسخ الاحتياطي، التصدير، الفحص، الاستعادة، الرفع السحابي، وتشفير PIN)
- * داخل `viewModelScope` وبعيداً عن الخيط الرئيسي (`Main Thread`).
+ * نموذج عرض الإعدادات والفهارس المرنة والنسخ الاحتياطي والأمان (`SettingsViewModel`).
  */
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
     private val container = AppContainer.getInstance(appContext)
     private val identityRepo = container.businessIdentityRepository
+    private val accountRepo = container.accountRepository
+    private val categoryRepo = container.categoryRepository
+    private val unitRepo = container.measurementUnitRepository
+    private val financialAccountRepo = container.financialAccountRepository
+    private val warehouseRepo = container.warehouseRepository
     val prefsRepo = container.preferencesRepository
 
     val settings: StateFlow<AppSettingsSnapshot> = prefsRepo.settings
 
     val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityRepo.observeBusinessIdentity()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val deletedItems: StateFlow<List<DeletedItemEntity>> = accountRepo.getAllDeletedItems()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val categories: StateFlow<List<CategoryEntity>> = categoryRepo.observeCategories(onlyActive = false)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val units: StateFlow<List<MeasurementUnitEntity>> = unitRepo.observeUnits(onlyActive = false)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val financialAccounts: StateFlow<List<FinancialAccountBalanceSummary>> =
+        financialAccountRepo.observeAccountBalances(onlyActive = false)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val recentTransfers: StateFlow<List<FinancialTransferEntity>> =
+        financialAccountRepo.observeRecentTransfers(40)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val warehouses: StateFlow<List<WarehouseEntity>> =
+        warehouseRepo.observeWarehouses(onlyActive = false)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val books: StateFlow<List<BookEntity>> =
+        accountRepo.getAllBooks()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _indexedBackups = MutableStateFlow<List<BackupRecord>>(emptyList())
     val indexedBackups: StateFlow<List<BackupRecord>> = _indexedBackups.asStateFlow()
@@ -724,6 +994,108 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun refreshIndexedBackups() {
         viewModelScope.launch {
             _indexedBackups.value = BackupRestoreHelper.getIndexedBackups(appContext)
+        }
+    }
+
+    suspend fun saveCategoryAsync(
+        id: Long = 0L,
+        domain: String,
+        name: String,
+        parentId: Long? = null,
+        description: String? = null
+    ): Result<Long> {
+        return categoryRepo.saveCategory(id = id, domain = domain, name = name, parentId = parentId, description = description)
+    }
+
+    suspend fun deleteOrDeactivateCategoryAsync(categoryId: Long): Result<String> {
+        return categoryRepo.deleteOrDeactivateCategory(categoryId)
+    }
+
+    suspend fun reactivateCategoryAsync(categoryId: Long): Result<Boolean> {
+        return categoryRepo.reactivateCategory(categoryId)
+    }
+
+    suspend fun saveUnitAsync(
+        id: Long = 0L,
+        name: String,
+        symbol: String,
+        decimalPrecision: Int,
+        baseUnitId: Long?,
+        conversionFactorToBase: Double
+    ): Result<Long> {
+        return unitRepo.saveUnit(id, name, symbol, decimalPrecision, baseUnitId, conversionFactorToBase)
+    }
+
+    suspend fun saveFinancialAccountAsync(
+        id: Long = 0L,
+        name: String,
+        accountType: String,
+        parentGroupId: Long? = null,
+        currencySymbol: String = settings.value.currencySymbol,
+        accountNumberOrPhone: String? = null,
+        openingBalance: Double = 0.0,
+        allowNegativeBalance: Boolean = false,
+        isDefault: Boolean = false,
+        notes: String? = null
+    ): Result<Long> {
+        return financialAccountRepo.saveFinancialAccount(
+            id = id,
+            name = name,
+            accountType = accountType,
+            parentGroupId = parentGroupId,
+            currencySymbol = currencySymbol,
+            accountNumberOrPhone = accountNumberOrPhone,
+            openingBalance = openingBalance,
+            allowNegativeBalance = allowNegativeBalance,
+            isDefault = isDefault,
+            notes = notes
+        )
+    }
+
+    suspend fun createInternalTransferAsync(
+        fromAccountId: Long,
+        toAccountId: Long,
+        amount: Double,
+        feeAmount: Double = 0.0,
+        notes: String? = null
+    ): Result<Long> {
+        return financialAccountRepo.createInternalTransfer(fromAccountId, toAccountId, amount, feeAmount, notes)
+    }
+
+    suspend fun reconcileFinancialAccountAsync(
+        accountId: Long,
+        actualBalance: Double,
+        notes: String? = null
+    ): Result<Double> {
+        return financialAccountRepo.reconcileAccountBalance(accountId, actualBalance, notes)
+    }
+
+    suspend fun saveWarehouseAsync(
+        id: Long = 0L,
+        name: String,
+        code: String? = null,
+        location: String? = null,
+        description: String? = null,
+        isDefault: Boolean = false
+    ): Result<Long> {
+        return warehouseRepo.saveWarehouse(id, name, code, location, description, isDefault)
+    }
+
+    suspend fun saveBookAsync(name: String, id: Long = 0L): Result<Long> {
+        return accountRepo.saveBook(name, id)
+    }
+
+    fun restoreDeletedItem(item: DeletedItemEntity, onResult: (Result<String>) -> Unit) {
+        viewModelScope.launch {
+            val res = accountRepo.restoreDeletedItem(item)
+            onResult(res)
+        }
+    }
+
+    fun deleteDeletedItemPermanently(id: Long, onResult: (Result<Boolean>) -> Unit) {
+        viewModelScope.launch {
+            val res = accountRepo.deleteDeletedItemPermanently(id)
+            onResult(res)
         }
     }
 
@@ -741,8 +1113,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             identityRepo.saveBusinessIdentity(
                 BusinessIdentityEntity(
                     Id = 1,
-                    TradeName = tradeName.trim().ifBlank { "الدفتر الذكي للتجارة العامة" },
-                    LegalName = tradeName.trim().ifBlank { "الدفتر الذكي" },
+                    TradeName = tradeName.trim().ifBlank { "نشاطي التجاري" },
+                    LegalName = tradeName.trim().ifBlank { "نشاطي التجاري" },
                     TaxNumber = taxNumber?.trim()?.ifBlank { null },
                     Phone1 = phone.trim(),
                     Address = address.trim(),
@@ -763,9 +1135,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         prefsRepo.updateSettings(transform)
     }
 
-    /**
-     * اشتقاق بصمة رمز الحماية (PBKDF2-SHA256) على خيط خلفي (`Dispatchers.Default`) لمنع تجميد الخيط الرئيسي
-     */
     fun updateAppPin(rawPin: String, onComplete: (() -> Unit)? = null) {
         viewModelScope.launch {
             val clean = rawPin.trim()
@@ -859,10 +1228,22 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     fileToRestore,
                     createPreRestoreSafety = true
                 )
-                uriToRestore != null -> BackupRestoreHelper.restoreFromUri(appContext, uriToRestore)
+                uriToRestore != null -> BackupRestoreHelper.restoreFromUri(
+                    appContext,
+                    uriToRestore
+                )
                 else -> Result.failure(Exception("لم يتم تحديد مصدر الاستعادة"))
             }
-            _indexedBackups.value = BackupRestoreHelper.getIndexedBackups(appContext)
+            if (res.isSuccess) {
+                val insp = res.getOrThrow()
+                prefsRepo.updateSettings {
+                    it.copy(
+                        lastRestoreTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date()),
+                        lastLocalBackupSha256 = insp.actualSha256
+                    )
+                }
+                _indexedBackups.value = BackupRestoreHelper.getIndexedBackups(appContext)
+            }
             onResult(res)
         }
     }
@@ -872,26 +1253,35 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         onResult: (Result<CloudBackupInfo>) -> Unit
     ) {
         viewModelScope.launch {
-            val archiveFile = GoogleDriveBackupHelper.createLocalArchive(appContext)
-            if (archiveFile == null) {
-                onResult(Result.failure(Exception("تعذر تجهيز ملف الأرشيف المحلي للرفع.")))
+            val currentSettings = prefsRepo.settings.value
+            val localRes = BackupRestoreHelper.createStructuredArchiveBackup(
+                context = appContext,
+                sourceTag = "DriveCloudSync",
+                keepMaxCount = currentSettings.keepBackupCount
+            )
+            if (localRes.isFailure) {
+                onResult(Result.failure(localRes.exceptionOrNull() ?: Exception("تعذر تجهيز ملف النسخة للرفع")))
                 return@launch
             }
+            val rec = localRes.getOrThrow()
+            _indexedBackups.value = BackupRestoreHelper.getIndexedBackups(appContext)
+
             val uploadRes = GoogleDriveBackupHelper.uploadBackupToDrive(
-                backupFile = archiveFile,
-                accessToken = prefsRepo.settings.value.googleDriveAccessToken,
+                backupFile = File(rec.filePath),
+                accessToken = currentSettings.googleDriveAccessToken,
                 onProgress = onProgress
             )
             if (uploadRes.isSuccess) {
-                val info = uploadRes.getOrThrow()
+                val cloud = uploadRes.getOrThrow()
                 prefsRepo.updateSettings {
                     it.copy(
-                        lastCloudBackupTime = info.modifiedTime,
-                        lastCloudBackupSize = info.sizeBytes,
-                        lastCloudStatusMessage = "تم الرفع بنجاح (${info.fileName})"
+                        lastCloudBackupTime = cloud.modifiedTime,
+                        lastCloudBackupSize = cloud.sizeBytes,
+                        lastLocalBackupTime = rec.createdAt,
+                        lastLocalBackupSize = rec.sizeBytes,
+                        lastLocalBackupSha256 = rec.sha256
                     )
                 }
-                _indexedBackups.value = BackupRestoreHelper.getIndexedBackups(appContext)
             }
             onResult(uploadRes)
         }

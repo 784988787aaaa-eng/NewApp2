@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.smartledger.pro.data.local.SmartLedgerDatabase
 import com.smartledger.pro.data.local.entity.BusinessIdentityEntity
+import com.smartledger.pro.data.local.entity.ExpenseEntity
 import com.smartledger.pro.data.local.entity.PersonEntity
 import com.smartledger.pro.data.local.entity.ProductEntity
 import com.smartledger.pro.data.repository.*
@@ -21,11 +22,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * اختبارات التكامل الفعلية مع قاعدة بيانات Room SQLite الحقيقية (RoomAccountingIntegrationTest).
- *
- * تختبر الكود الإنتاجي الفعلي (`SmartLedgerDatabase`, `AccountRepository`, `InventoryRepository`,
- * `InvoiceRepository`, `VoucherRepository`, `ExpenseRepository`, `ReportRepository`, `BusinessIdentityRepository`,
- * `CreateSaleUseCase`, `CreatePurchaseUseCase`) وتتحقق من استعلامات SQL والمعاملات الذرية وإعادة ربط المستودعات بعد الاستعادة.
+ * اختبارات التكامل الفعلية مع قاعدة بيانات Room SQLite الحقيقية بالإصدار 2 (RoomAccountingIntegrationTest).
  */
 @RunWith(AndroidJUnit4::class)
 class RoomAccountingIntegrationTest {
@@ -38,6 +35,10 @@ class RoomAccountingIntegrationTest {
     private lateinit var expenseRepo: ExpenseRepository
     private lateinit var reportRepo: ReportRepository
     private lateinit var identityRepo: BusinessIdentityRepository
+    private lateinit var categoryRepo: CategoryRepository
+    private lateinit var unitRepo: MeasurementUnitRepository
+    private lateinit var financialAccountRepo: FinancialAccountRepository
+    private lateinit var warehouseRepo: WarehouseRepository
     private lateinit var createSaleUseCase: CreateSaleUseCase
     private lateinit var createPurchaseUseCase: CreatePurchaseUseCase
 
@@ -56,6 +57,10 @@ class RoomAccountingIntegrationTest {
         expenseRepo = ExpenseRepository { activeDb }
         reportRepo = ReportRepository { activeDb }
         identityRepo = BusinessIdentityRepository { activeDb }
+        categoryRepo = CategoryRepository { activeDb }
+        unitRepo = MeasurementUnitRepository { activeDb }
+        financialAccountRepo = FinancialAccountRepository { activeDb }
+        warehouseRepo = WarehouseRepository { activeDb }
         createSaleUseCase = CreateSaleUseCase(invoiceRepo)
         createPurchaseUseCase = CreatePurchaseUseCase(invoiceRepo)
     }
@@ -91,7 +96,6 @@ class RoomAccountingIntegrationTest {
         val customerSummary = accountRepo.getAccountSummaries(1L).first().first { it.PersonId == customerId }
         assertEquals(5000.0, customerSummary.NetBalance, 0.001)
 
-        // 1. بيع 6 قطع بالآجل (المتاح 10 قطع)
         val draft1 = SaleLineDraft(
             productId = productId,
             name = "صنف اختبار مخزني",
@@ -118,8 +122,6 @@ class RoomAccountingIntegrationTest {
 
         assertEquals(4.0, activeDb.productDao().getProductStock(productId), 0.001)
 
-        // 2. محاولة بيع 7 قطع باستخدام مسودة قديمة تدعي أن المتاح لا يزال 10 قطع!
-        // يجب أن ترفض المعاملة داخل InvoiceRepository العملية لأن الرصيد الفعلي في Room أصبح 4 قطع فقط!
         val staleDraft2 = draft1.copy(minorQuantity = 7.0, availableStockMinor = 10.0)
         val failedConcurrentSale = createSaleUseCase.execute(
             draftLines = listOf(staleDraft2),
@@ -133,7 +135,6 @@ class RoomAccountingIntegrationTest {
         assertTrue(failedConcurrentSale.isFailure)
         assertEquals(4.0, activeDb.productDao().getProductStock(productId), 0.001)
 
-        // 3. إصدار فاتورة ثانية سليمة بـ 2 قطعة والتأكد من عدم تكرار رقم الفاتورة
         val validDraft2 = draft1.copy(minorQuantity = 2.0, availableStockMinor = 4.0)
         val sale2 = createSaleUseCase.execute(
             draftLines = listOf(validDraft2),
@@ -148,16 +149,13 @@ class RoomAccountingIntegrationTest {
         assertNotEquals(sale1.InvoiceNumber, sale2.InvoiceNumber)
         assertEquals(2.0, activeDb.productDao().getProductStock(productId), 0.001)
 
-        // 4. التحقق من الإلغاء المحاسبي الموثق (القيد العكسي) دون حذف السجل الأصلي
         val voucherId = voucherRepo.createVoucher(customerId, "Receive", 1500.0, "دفعة من العميل").getOrThrow()
         val beforeCancelBalance = accountRepo.getAccountSummaries(1L).first().first { it.PersonId == customerId }.NetBalance
-        // 5000 افتتاحي + 3600 فاتورة آجلة - 1500 سند قبض = 7100
         assertEquals(7100.0, beforeCancelBalance, 0.001)
 
         val revOpId = accountRepo.deleteOperation(voucherId, "خطأ في إدخال مبلغ السند").getOrThrow()
         assertTrue(revOpId > 0L)
 
-        // بقاء الحركة الأصلية + إضافة القيد العكسي وعودة الرصيد إلى 8600
         val allOps = accountRepo.getAccountOperations(customerId).first()
         assertTrue(allOps.any { it.Id == voucherId })
         assertTrue(allOps.any { it.Id == revOpId && it.ReferenceNumber == "REV-OP-$voucherId" })
@@ -166,8 +164,73 @@ class RoomAccountingIntegrationTest {
     }
 
     @Test
+    fun testRoomIntegration_FlexibleCategories_FinancialAccounts_InternalTransfers_AndWarehouses() = runBlocking {
+        // 1. التصنيفات الهرمية ومنع الحذف النهائي عند الارتباط بنفقة
+        val parentCatId = categoryRepo.saveCategory(domain = "EXPENSE", name = "مصاريف إدارية").getOrThrow()
+        val childCatId = categoryRepo.saveCategory(domain = "EXPENSE", name = "اتصالات وإنترنت", parentId = parentCatId).getOrThrow()
+        assertTrue(categoryRepo.saveCategory(id = parentCatId, domain = "EXPENSE", name = "مصاريف إدارية", parentId = childCatId).isFailure)
+
+        // 2. الصناديق والمحافظ والتحويل الداخلي الذري
+        val cashboxId = financialAccountRepo.saveFinancialAccount(
+            name = "صندوق الكاشير",
+            accountType = "CASH_BOX",
+            openingBalance = 50000.0,
+            allowNegativeBalance = false,
+            isDefault = true
+        ).getOrThrow()
+        val walletId = financialAccountRepo.saveFinancialAccount(
+            name = "محفظة إلكترونية",
+            accountType = "E_WALLET",
+            openingBalance = 10000.0,
+            allowNegativeBalance = false
+        ).getOrThrow()
+
+        // تسجيل مصروف مرتبط بالتصنيف والصندوق
+        val expenseId = expenseRepo.saveExpense(
+            ExpenseEntity(
+                ExpenseDate = "2026-10-17 12:00:00",
+                CategoryId = childCatId,
+                Amount = 5000.0,
+                Statement = "اشتراك إنترنت",
+                PaymentSource = "صندوق الكاشير",
+                FinancialAccountId = cashboxId,
+                CreatedAt = "2026-10-17 12:00:00"
+            )
+        ).getOrThrow()
+
+        // محاولة حذف التصنيف المرتبط بنفقة -> يتم تعطيله بدلاً من حذفه
+        categoryRepo.deleteOrDeactivateCategory(childCatId).getOrThrow()
+        val deactivatedCat = activeDb.categoryDao().getCategoryById(childCatId)
+        assertNotNull(deactivatedCat)
+        assertFalse(deactivatedCat!!.IsActive)
+
+        // تحويل داخلي ذري بقيمة 15,000 مع رسوم 100 من الصندوق إلى المحفظة
+        financialAccountRepo.createInternalTransfer(
+            fromAccountId = cashboxId,
+            toAccountId = walletId,
+            amount = 15000.0,
+            feeAmount = 100.0
+        ).getOrThrow()
+
+        val accountSummaries = financialAccountRepo.observeAccountBalances().first()
+        val cashboxSummary = accountSummaries.first { it.Id == cashboxId }
+        val walletSummary = accountSummaries.first { it.Id == walletId }
+        // الصندوق: 50,000 افتتاحي - 5,000 مصروف - 15,100 تحويل ورسوم = 29,900
+        assertEquals(29900.0, cashboxSummary.NetBalance, 0.001)
+        // المحفظة: 10,000 افتتاحي + 15,000 تحويل وارد = 25,000
+        assertEquals(25000.0, walletSummary.NetBalance, 0.001)
+
+        // أرشفة المصروف واستعادته مع الحفاظ على نفس المعرف الأصلي (expenseId)
+        expenseRepo.deleteExpense(expenseId, "أرشفة مؤقتة")
+        val deletedExpenseItem = accountRepo.getAllDeletedItems().first().first { it.EntityType == "Expense" && it.OriginalId == expenseId }
+        accountRepo.restoreDeletedItem(deletedExpenseItem).getOrThrow()
+        val restoredExpense = activeDb.expenseDao().getExpenseById(expenseId)
+        assertNotNull(restoredExpense)
+        assertEquals(0, restoredExpense!!.IsArchived ?: 0)
+    }
+
+    @Test
     fun testRoomIntegration_DynamicDatabaseProvider_SurvivesCloseAndReopenOnRestore() = runBlocking {
-        // حفظ حساب في القاعدة الأولى
         val firstId = accountRepo.saveAccount(
             person = PersonEntity(BookId = 1, Name = "عميل قبل الاستعادة", CreatedAt = "2026-10-17 10:00:00"),
             openingBalance = 1000.0,
@@ -175,7 +238,6 @@ class RoomAccountingIntegrationTest {
         ).getOrThrow()
         assertTrue(firstId > 0L)
 
-        // محاكاة إغلاق القاعدة الأولى واستبدالها بقاعدة ثانية مستعادة دون إعادة إنشاء المستودعات (Repositories)
         val context = ApplicationProvider.getApplicationContext<Context>()
         activeDb.close()
         activeDb = Room.inMemoryDatabaseBuilder(context, SmartLedgerDatabase::class.java)
@@ -184,7 +246,6 @@ class RoomAccountingIntegrationTest {
         SmartLedgerDatabase.seedInitialData(activeDb)
         SmartLedgerDatabase.notifyDatabaseRestored()
 
-        // التحقق من أن نفس نسخة AccountRepository و BusinessIdentityRepository تعمل على القاعدة الجديدة فوراً دون استثناء
         val restoredCustomerId = accountRepo.saveAccount(
             person = PersonEntity(BookId = 1, Name = "عميل بعد الاستعادة", CreatedAt = "2026-10-17 11:00:00"),
             openingBalance = 2500.0,

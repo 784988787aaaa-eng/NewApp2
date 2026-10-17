@@ -15,9 +15,8 @@ import com.smartledger.pro.ui.theme.AppDesignState
  * 1. تمرر مزوداً ديناميكياً لقاعدة البيانات (`{ SmartLedgerDatabase.getInstance(appContext) }`) إلى كافة المستودعات
  *    (`Repositories`) بدلاً من تخزين نسخة `SmartLedgerDatabase` ثابتة، مما يضمن أنه عند إغلاق واستعادة قاعدة البيانات
  *    أثناء عمل التطبيق، تتحول جميع المستودعات والتدفقات تلقائياً إلى القاعدة المستعادة دون أخطاء `Connection pool closed`.
- * 2. توفر `businessIdentityRepository` لعزل جميع `ViewModels` عن الوصول المباشر إلى `DAO`.
- * 3. تربط مراقب الحالة الحية بين `AppPreferencesRepository` وطبقة التصميم (`AppDesignState` / `AppSensoryConfig`)
- *    من الطبقة العليا (`di`) بحيث لا تعتمد طبقة `data` على طبقة `ui`.
+ * 2. توفر المستودعات المرنة (`categoryRepository`, `measurementUnitRepository`, `financialAccountRepository`, `warehouseRepository`)
+ *    ومستودع الهوية التجارية (`businessIdentityRepository`).
  */
 class AppContainer private constructor(context: Context) {
     private val appContext = context.applicationContext
@@ -60,6 +59,22 @@ class AppContainer private constructor(context: Context) {
 
     val businessIdentityRepository: BusinessIdentityRepository by lazy {
         BusinessIdentityRepository { SmartLedgerDatabase.getInstance(appContext) }
+    }
+
+    val categoryRepository: CategoryRepository by lazy {
+        CategoryRepository { SmartLedgerDatabase.getInstance(appContext) }
+    }
+
+    val measurementUnitRepository: MeasurementUnitRepository by lazy {
+        MeasurementUnitRepository { SmartLedgerDatabase.getInstance(appContext) }
+    }
+
+    val financialAccountRepository: FinancialAccountRepository by lazy {
+        FinancialAccountRepository { SmartLedgerDatabase.getInstance(appContext) }
+    }
+
+    val warehouseRepository: WarehouseRepository by lazy {
+        WarehouseRepository { SmartLedgerDatabase.getInstance(appContext) }
     }
 
     val createSaleUseCase: CreateSaleUseCase by lazy {

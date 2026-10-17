@@ -47,6 +47,26 @@ data class ProductStockItem(
 )
 
 /**
+ * ملخص رصيد الحساب المالي الفعلي (صندوق / محفظة / بنك) المشتق من مصدر حقيقة واحد
+ */
+data class FinancialAccountBalanceSummary(
+    val Id: Long,
+    val Name: String,
+    val AccountType: String,
+    val ParentGroupId: Long?,
+    val CurrencySymbol: String,
+    val AccountNumberOrPhone: String?,
+    val OpeningBalance: Double,
+    val AllowNegativeBalance: Boolean,
+    val IsDefault: Boolean,
+    val IsActive: Boolean,
+    val Notes: String?,
+    val TotalInflows: Double,
+    val TotalOutflows: Double,
+    val NetBalance: Double
+)
+
+/**
  * ملخص القوائم المالية الشامل:
  * يفصل بوضوح بين:
  * 1. قائمة الدخل المحاسبية (Accrual Income Statement): `TotalSales`, `CostOfGoodsSold`, `GrossProfit`, `TotalExpenses`, `NetProfit`.
@@ -148,6 +168,9 @@ interface AccountDao {
     @Query("UPDATE People SET IsActive = 0 WHERE Id = :id")
     suspend fun softDeletePerson(id: Long)
 
+    @Query("UPDATE People SET IsActive = 1 WHERE Id = :id")
+    suspend fun restorePerson(id: Long)
+
     @Query("UPDATE People SET LastOperationAt = :datetime WHERE Id = :id")
     suspend fun updateLastOperationAt(id: Long, datetime: String)
 }
@@ -156,6 +179,9 @@ interface AccountDao {
 interface BookDao {
     @Query("SELECT * FROM Books ORDER BY SortOrder ASC, Id ASC")
     fun getAllBooks(): Flow<List<BookEntity>>
+
+    @Query("SELECT * FROM Books ORDER BY SortOrder ASC, Id ASC")
+    suspend fun getAllBooksOnce(): List<BookEntity>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertBook(book: BookEntity): Long
@@ -174,8 +200,8 @@ interface ProductDao {
             p.Id, p.Barcode, p.Name, p.CategoryId, p.Warehouse, p.ShelfLocation, p.SmallUnit, p.LargeUnit, 
             p.UnitFactor, p.CostPrice, p.RetailPrice, p.WholesalePrice, p.AlertThreshold,
             COALESCE(SUM(CASE 
-                WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn') THEN sm.QuantityMinor 
-                WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut') THEN -sm.QuantityMinor 
+                WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn', 'TransferIn') THEN sm.QuantityMinor 
+                WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut', 'TransferOut') THEN -sm.QuantityMinor 
                 ELSE 0.0 
             END), 0.0) AS CurrentStockMinor
         FROM Products p
@@ -191,8 +217,8 @@ interface ProductDao {
             p.Id, p.Barcode, p.Name, p.CategoryId, p.Warehouse, p.ShelfLocation, p.SmallUnit, p.LargeUnit, 
             p.UnitFactor, p.CostPrice, p.RetailPrice, p.WholesalePrice, p.AlertThreshold,
             COALESCE(SUM(CASE 
-                WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn') THEN sm.QuantityMinor 
-                WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut') THEN -sm.QuantityMinor 
+                WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn', 'TransferIn') THEN sm.QuantityMinor 
+                WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut', 'TransferOut') THEN -sm.QuantityMinor 
                 ELSE 0.0 
             END), 0.0) AS CurrentStockMinor
         FROM Products p
@@ -212,16 +238,33 @@ interface ProductDao {
     @Query("SELECT COUNT(*) FROM Products WHERE IsActive = 1")
     suspend fun getActiveProductsCount(): Int
 
+    @Query("SELECT COUNT(*) FROM Products WHERE CategoryId = :categoryId")
+    suspend fun countProductsByCategory(categoryId: Long): Int
+
     @Query("""
         SELECT COALESCE(SUM(CASE 
-            WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn') THEN sm.QuantityMinor 
-            WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut') THEN -sm.QuantityMinor 
+            WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn', 'TransferIn') THEN sm.QuantityMinor 
+            WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut', 'TransferOut') THEN -sm.QuantityMinor 
             ELSE 0.0 
         END), 0.0)
         FROM StockMovements sm
         WHERE sm.ProductId = :productId
     """)
     suspend fun getProductStock(productId: Long): Double
+
+    @Query("""
+        SELECT COALESCE(SUM(CASE 
+            WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn', 'TransferIn') THEN sm.QuantityMinor 
+            WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut', 'TransferOut') THEN -sm.QuantityMinor 
+            ELSE 0.0 
+        END), 0.0)
+        FROM StockMovements sm
+        WHERE sm.ProductId = :productId AND (:warehouseId IS NULL OR sm.WarehouseId = :warehouseId)
+    """)
+    suspend fun getProductStockInWarehouse(productId: Long, warehouseId: Long?): Double
+
+    @Query("UPDATE Products SET CostPrice = :newCostPrice WHERE Id = :productId")
+    suspend fun updateProductCostPrice(productId: Long, newCostPrice: Double)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProduct(product: ProductEntity): Long
@@ -231,6 +274,9 @@ interface ProductDao {
 
     @Query("UPDATE Products SET IsActive = 0 WHERE Id = :id")
     suspend fun softDeleteProduct(id: Long)
+
+    @Query("UPDATE Products SET IsActive = 1 WHERE Id = :id")
+    suspend fun restoreProduct(id: Long)
 }
 
 @Dao
@@ -294,6 +340,9 @@ interface InvoiceDao {
     @Query("SELECT * FROM Invoices ORDER BY IssuedAt DESC, Id DESC LIMIT :limit OFFSET :offset")
     fun getRecentInvoices(limit: Int = 100, offset: Int = 0): Flow<List<InvoiceEntity>>
 
+    @Query("SELECT * FROM Invoices WHERE PersonId = :personId AND Status = 'Completed' AND RemainingAmount > 0.001 ORDER BY IssuedAt ASC, Id ASC")
+    fun getOpenInvoicesForPerson(personId: Long): Flow<List<InvoiceEntity>>
+
     @Query("SELECT * FROM Invoices WHERE Id = :id LIMIT 1")
     suspend fun getInvoiceById(id: Long): InvoiceEntity?
 
@@ -318,20 +367,162 @@ interface InvoiceDao {
 
 @Dao
 interface ExpenseDao {
-    @Query("SELECT * FROM Expenses ORDER BY ExpenseDate DESC, Id DESC")
+    @Query("SELECT * FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 ORDER BY ExpenseDate DESC, Id DESC")
     fun getAllExpenses(): Flow<List<ExpenseEntity>>
 
-    @Query("SELECT * FROM Expenses WHERE date(ExpenseDate) BETWEEN date(:from) AND date(:to) ORDER BY ExpenseDate DESC")
+    @Query("SELECT * FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND date(ExpenseDate) BETWEEN date(:from) AND date(:to) ORDER BY ExpenseDate DESC")
     fun getExpensesBetweenDates(from: String, to: String): Flow<List<ExpenseEntity>>
 
     @Query("SELECT * FROM Expenses WHERE Id = :id LIMIT 1")
     suspend fun getExpenseById(id: Long): ExpenseEntity?
 
-    @Insert(onConflict = OnConflictStrategy.ABORT)
+    @Query("SELECT COUNT(*) FROM Expenses WHERE CategoryId = :categoryId")
+    suspend fun countExpensesByCategory(categoryId: Long): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertExpense(expense: ExpenseEntity): Long
+
+    @Update
+    suspend fun updateExpense(expense: ExpenseEntity)
+
+    @Query("UPDATE Expenses SET IsArchived = 1 WHERE Id = :id")
+    suspend fun archiveExpense(id: Long)
+
+    @Query("UPDATE Expenses SET IsArchived = 0 WHERE Id = :id")
+    suspend fun restoreArchivedExpense(id: Long)
 
     @Query("DELETE FROM Expenses WHERE Id = :id")
     suspend fun deleteExpense(id: Long)
+}
+
+@Dao
+interface CategoryDao {
+    @Query("SELECT * FROM Categories WHERE (:domain IS NULL OR Domain = :domain) AND (:onlyActive = 0 OR IsActive = 1) ORDER BY SortOrder ASC, Name ASC")
+    fun observeCategories(domain: String? = null, onlyActive: Int = 0): Flow<List<CategoryEntity>>
+
+    @Query("SELECT * FROM Categories WHERE (:domain IS NULL OR Domain = :domain) ORDER BY SortOrder ASC, Name ASC")
+    suspend fun getAllCategoriesOnce(domain: String? = null): List<CategoryEntity>
+
+    @Query("SELECT * FROM Categories WHERE Id = :id LIMIT 1")
+    suspend fun getCategoryById(id: Long): CategoryEntity?
+
+    @Query("SELECT COUNT(*) FROM Categories WHERE ParentId = :parentId")
+    suspend fun countChildCategories(parentId: Long): Int
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertCategory(category: CategoryEntity): Long
+
+    @Update
+    suspend fun updateCategory(category: CategoryEntity)
+
+    @Query("UPDATE Categories SET IsActive = :isActive WHERE Id = :id")
+    suspend fun setCategoryActive(id: Long, isActive: Boolean)
+
+    @Query("DELETE FROM Categories WHERE Id = :id")
+    suspend fun deleteCategoryById(id: Long)
+}
+
+@Dao
+interface MeasurementUnitDao {
+    @Query("SELECT * FROM MeasurementUnits WHERE (:onlyActive = 0 OR IsActive = 1) ORDER BY Name ASC")
+    fun observeUnits(onlyActive: Int = 0): Flow<List<MeasurementUnitEntity>>
+
+    @Query("SELECT * FROM MeasurementUnits ORDER BY Name ASC")
+    suspend fun getAllUnitsOnce(): List<MeasurementUnitEntity>
+
+    @Query("SELECT * FROM MeasurementUnits WHERE Id = :id LIMIT 1")
+    suspend fun getUnitById(id: Long): MeasurementUnitEntity?
+
+    @Query("SELECT * FROM MeasurementUnits WHERE lower(Name) = lower(:name) LIMIT 1")
+    suspend fun findUnitByName(name: String): MeasurementUnitEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertUnit(unit: MeasurementUnitEntity): Long
+
+    @Update
+    suspend fun updateUnit(unit: MeasurementUnitEntity)
+
+    @Query("UPDATE MeasurementUnits SET IsActive = :isActive WHERE Id = :id")
+    suspend fun setUnitActive(id: Long, isActive: Boolean)
+}
+
+@Dao
+interface FinancialAccountDao {
+    @Query("""
+        SELECT 
+            fa.Id, fa.Name, fa.AccountType, fa.ParentGroupId, fa.CurrencySymbol,
+            fa.AccountNumberOrPhone, fa.OpeningBalance, fa.AllowNegativeBalance,
+            fa.IsDefault, fa.IsActive, fa.Notes,
+            (
+                COALESCE((SELECT SUM(PaidAmount) FROM Invoices i WHERE i.FinancialAccountId = fa.Id AND i.Type = 'Sale' AND i.Status = 'Completed'), 0.0) +
+                COALESCE((SELECT SUM(CASE WHEN COALESCE(o.ReferenceNumber, '') LIKE 'REV-OP-%' THEN -o.Amount ELSE o.Amount END) FROM Operations o WHERE o.FinancialAccountId = fa.Id AND ((o.Type = 'Receive' AND COALESCE(o.ReferenceNumber, '') NOT LIKE 'REV-OP-%') OR (o.Type = 'Payment' AND COALESCE(o.ReferenceNumber, '') LIKE 'REV-OP-%'))), 0.0) +
+                COALESCE((SELECT SUM(Amount) FROM Expenses e WHERE e.FinancialAccountId = fa.Id AND COALESCE(e.IsArchived, 0) = 0 AND e.EntryType = 'REVENUE'), 0.0) +
+                COALESCE((SELECT SUM(Amount) FROM FinancialTransfers ft WHERE ft.ToAccountId = fa.Id AND ft.Status = 'Completed'), 0.0)
+            ) AS TotalInflows,
+            (
+                COALESCE((SELECT SUM(PaidAmount) FROM Invoices i WHERE i.FinancialAccountId = fa.Id AND i.Type = 'Purchase' AND i.Status = 'Completed'), 0.0) +
+                COALESCE((SELECT SUM(CASE WHEN COALESCE(o.ReferenceNumber, '') LIKE 'REV-OP-%' THEN -o.Amount ELSE o.Amount END) FROM Operations o WHERE o.FinancialAccountId = fa.Id AND ((o.Type = 'Payment' AND COALESCE(o.ReferenceNumber, '') NOT LIKE 'REV-OP-%') OR (o.Type = 'Receive' AND COALESCE(o.ReferenceNumber, '') LIKE 'REV-OP-%'))), 0.0) +
+                COALESCE((SELECT SUM(Amount) FROM Expenses e WHERE e.FinancialAccountId = fa.Id AND COALESCE(e.IsArchived, 0) = 0 AND COALESCE(e.EntryType, 'EXPENSE') = 'EXPENSE'), 0.0) +
+                COALESCE((SELECT SUM(Amount + FeeAmount) FROM FinancialTransfers ft WHERE ft.FromAccountId = fa.Id AND ft.Status = 'Completed'), 0.0)
+            ) AS TotalOutflows,
+            (
+                fa.OpeningBalance +
+                COALESCE((SELECT SUM(PaidAmount) FROM Invoices i WHERE i.FinancialAccountId = fa.Id AND i.Type = 'Sale' AND i.Status = 'Completed'), 0.0) +
+                COALESCE((SELECT SUM(CASE WHEN COALESCE(o.ReferenceNumber, '') LIKE 'REV-OP-%' THEN -o.Amount ELSE o.Amount END) FROM Operations o WHERE o.FinancialAccountId = fa.Id AND ((o.Type = 'Receive' AND COALESCE(o.ReferenceNumber, '') NOT LIKE 'REV-OP-%') OR (o.Type = 'Payment' AND COALESCE(o.ReferenceNumber, '') LIKE 'REV-OP-%'))), 0.0) +
+                COALESCE((SELECT SUM(Amount) FROM Expenses e WHERE e.FinancialAccountId = fa.Id AND COALESCE(e.IsArchived, 0) = 0 AND e.EntryType = 'REVENUE'), 0.0) +
+                COALESCE((SELECT SUM(Amount) FROM FinancialTransfers ft WHERE ft.ToAccountId = fa.Id AND ft.Status = 'Completed'), 0.0) -
+                COALESCE((SELECT SUM(PaidAmount) FROM Invoices i WHERE i.FinancialAccountId = fa.Id AND i.Type = 'Purchase' AND i.Status = 'Completed'), 0.0) -
+                COALESCE((SELECT SUM(CASE WHEN COALESCE(o.ReferenceNumber, '') LIKE 'REV-OP-%' THEN -o.Amount ELSE o.Amount END) FROM Operations o WHERE o.FinancialAccountId = fa.Id AND ((o.Type = 'Payment' AND COALESCE(o.ReferenceNumber, '') NOT LIKE 'REV-OP-%') OR (o.Type = 'Receive' AND COALESCE(o.ReferenceNumber, '') LIKE 'REV-OP-%'))), 0.0) -
+                COALESCE((SELECT SUM(Amount) FROM Expenses e WHERE e.FinancialAccountId = fa.Id AND COALESCE(e.IsArchived, 0) = 0 AND COALESCE(e.EntryType, 'EXPENSE') = 'EXPENSE'), 0.0) -
+                COALESCE((SELECT SUM(Amount + FeeAmount) FROM FinancialTransfers ft WHERE ft.FromAccountId = fa.Id AND ft.Status = 'Completed'), 0.0)
+            ) AS NetBalance
+        FROM FinancialAccounts fa
+        WHERE (:onlyActive = 0 OR fa.IsActive = 1)
+        ORDER BY fa.IsDefault DESC, fa.Id ASC
+    """)
+    fun observeAccountBalanceSummaries(onlyActive: Int = 0): Flow<List<FinancialAccountBalanceSummary>>
+
+    @Query("SELECT * FROM FinancialAccounts WHERE Id = :id LIMIT 1")
+    suspend fun getFinancialAccountById(id: Long): FinancialAccountEntity?
+
+    @Query("SELECT * FROM FinancialAccounts ORDER BY IsDefault DESC, Id ASC")
+    suspend fun getAllFinancialAccountsOnce(): List<FinancialAccountEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFinancialAccount(account: FinancialAccountEntity): Long
+
+    @Update
+    suspend fun updateFinancialAccount(account: FinancialAccountEntity)
+
+    @Query("UPDATE FinancialAccounts SET IsActive = :isActive WHERE Id = :id")
+    suspend fun setFinancialAccountActive(id: Long, isActive: Boolean)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertTransfer(transfer: FinancialTransferEntity): Long
+
+    @Query("SELECT * FROM FinancialTransfers ORDER BY OccurredAt DESC, Id DESC LIMIT :limit")
+    fun observeRecentTransfers(limit: Int = 50): Flow<List<FinancialTransferEntity>>
+}
+
+@Dao
+interface WarehouseDao {
+    @Query("SELECT * FROM Warehouses WHERE (:onlyActive = 0 OR IsActive = 1) ORDER BY IsDefault DESC, Name ASC")
+    fun observeWarehouses(onlyActive: Int = 0): Flow<List<WarehouseEntity>>
+
+    @Query("SELECT * FROM Warehouses ORDER BY IsDefault DESC, Name ASC")
+    suspend fun getAllWarehousesOnce(): List<WarehouseEntity>
+
+    @Query("SELECT * FROM Warehouses WHERE Id = :id LIMIT 1")
+    suspend fun getWarehouseById(id: Long): WarehouseEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertWarehouse(warehouse: WarehouseEntity): Long
+
+    @Update
+    suspend fun updateWarehouse(warehouse: WarehouseEntity)
+
+    @Query("UPDATE Warehouses SET IsActive = :isActive WHERE Id = :id")
+    suspend fun setWarehouseActive(id: Long, isActive: Boolean)
 }
 
 @Dao
@@ -344,6 +535,9 @@ interface DeletedItemDao {
 
     @Query("DELETE FROM DeletedItems WHERE Id = :id")
     suspend fun deletePermanently(id: Long)
+
+    @Query("DELETE FROM DeletedItems WHERE EntityType = :entityType AND OriginalId = :originalId")
+    suspend fun deleteByEntityAndOriginalId(entityType: String, originalId: Long)
 
     @Query("SELECT * FROM DeletedItems WHERE Id = :id LIMIT 1")
     suspend fun getDeletedItemById(id: Long): DeletedItemEntity?
@@ -387,12 +581,24 @@ interface DashboardDao {
             COALESCE(SUM(CASE WHEN NetBalance < 0 THEN ABS(NetBalance) ELSE 0 END), 0.0) AS TotalWeOwe,
             (SELECT COALESCE(SUM(FinalTotal), 0.0) FROM Invoices WHERE Type = 'Sale' AND date(IssuedAt) = date('now', 'localtime') AND Status = 'Completed') AS TodaySales,
             (SELECT COALESCE(SUM(FinalTotal), 0.0) FROM Invoices WHERE Type = 'Purchase' AND date(IssuedAt) = date('now', 'localtime') AND Status = 'Completed') AS TodayPurchases,
-            (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Receive' AND date(OccurredAt) = date('now', 'localtime')) AS TodayReceipts,
-            (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Payment' AND date(OccurredAt) = date('now', 'localtime')) AS TodayPayments,
+            (
+                SELECT COALESCE(SUM(CASE WHEN COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%' THEN -Amount ELSE Amount END), 0.0)
+                FROM Operations
+                WHERE date(OccurredAt) = date('now', 'localtime')
+                  AND ((Type = 'Receive' AND COALESCE(ReferenceNumber, '') NOT LIKE 'REV-OP-%')
+                    OR (Type = 'Payment' AND COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%'))
+            ) AS TodayReceipts,
+            (
+                SELECT COALESCE(SUM(CASE WHEN COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%' THEN -Amount ELSE Amount END), 0.0)
+                FROM Operations
+                WHERE date(OccurredAt) = date('now', 'localtime')
+                  AND ((Type = 'Payment' AND COALESCE(ReferenceNumber, '') NOT LIKE 'REV-OP-%')
+                    OR (Type = 'Receive' AND COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%'))
+            ) AS TodayPayments,
             (SELECT COUNT(*) FROM Products p WHERE p.IsActive = 1 AND (
                 SELECT COALESCE(SUM(CASE 
-                    WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn') THEN sm.QuantityMinor 
-                    WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut') THEN -sm.QuantityMinor 
+                    WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn', 'TransferIn') THEN sm.QuantityMinor 
+                    WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut', 'TransferOut') THEN -sm.QuantityMinor 
                     ELSE 0.0 
                 END), 0.0) FROM StockMovements sm WHERE sm.ProductId = p.Id
             ) <= p.AlertThreshold) AS LowStockCount,
@@ -424,15 +630,16 @@ interface ReportDao {
                 (SELECT COALESCE(SUM(FinalTotal), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed') - 
                 (SELECT COALESCE(SUM(il.QuantityMinor * il.LineCost), 0.0) FROM InvoiceLines il INNER JOIN Invoices i ON il.InvoiceId = i.Id WHERE i.Type = 'Sale' AND i.Status = 'Completed')
             ) AS GrossProfit,
-            (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses) AS TotalExpenses,
+            (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND COALESCE(EntryType, 'EXPENSE') = 'EXPENSE') AS TotalExpenses,
             (
-                (SELECT COALESCE(SUM(FinalTotal), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed') - 
+                (SELECT COALESCE(SUM(FinalTotal), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed') +
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND EntryType = 'REVENUE') -
                 (SELECT COALESCE(SUM(il.QuantityMinor * il.LineCost), 0.0) FROM InvoiceLines il INNER JOIN Invoices i ON il.InvoiceId = i.Id WHERE i.Type = 'Sale' AND i.Status = 'Completed') - 
-                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses)
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND COALESCE(EntryType, 'EXPENSE') = 'EXPENSE')
             ) AS NetProfit,
             (
                 SELECT COALESCE(SUM(
-                    (SELECT COALESCE(SUM(CASE WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn') THEN sm.QuantityMinor WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut') THEN -sm.QuantityMinor ELSE 0.0 END), 0.0) FROM StockMovements sm WHERE sm.ProductId = p.Id) * p.CostPrice
+                    (SELECT COALESCE(SUM(CASE WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn', 'TransferIn') THEN sm.QuantityMinor WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut', 'TransferOut') THEN -sm.QuantityMinor ELSE 0.0 END), 0.0) FROM StockMovements sm WHERE sm.ProductId = p.Id) * p.CostPrice
                 ), 0.0) FROM Products p WHERE p.IsActive = 1
             ) AS InventoryValuation,
             (
@@ -449,22 +656,24 @@ interface ReportDao {
             ) AS TotalDebtsOnUs,
             (
                 (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed') +
-                (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Receive')
+                (SELECT COALESCE(SUM(CASE WHEN COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%' THEN -Amount ELSE Amount END), 0.0) FROM Operations WHERE (Type = 'Receive' AND COALESCE(ReferenceNumber, '') NOT LIKE 'REV-OP-%') OR (Type = 'Payment' AND COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%')) +
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND EntryType = 'REVENUE')
             ) AS CashInflows,
             (
                 (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Purchase' AND Status = 'Completed') +
-                (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Payment') +
-                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses)
+                (SELECT COALESCE(SUM(CASE WHEN COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%' THEN -Amount ELSE Amount END), 0.0) FROM Operations WHERE (Type = 'Payment' AND COALESCE(ReferenceNumber, '') NOT LIKE 'REV-OP-%') OR (Type = 'Receive' AND COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%')) +
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND COALESCE(EntryType, 'EXPENSE') = 'EXPENSE')
             ) AS CashOutflows,
             (
                 (
                     (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed') +
-                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Receive')
+                    (SELECT COALESCE(SUM(CASE WHEN COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%' THEN -Amount ELSE Amount END), 0.0) FROM Operations WHERE (Type = 'Receive' AND COALESCE(ReferenceNumber, '') NOT LIKE 'REV-OP-%') OR (Type = 'Payment' AND COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%')) +
+                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND EntryType = 'REVENUE')
                 ) -
                 (
                     (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Purchase' AND Status = 'Completed') +
-                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Payment') +
-                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses)
+                    (SELECT COALESCE(SUM(CASE WHEN COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%' THEN -Amount ELSE Amount END), 0.0) FROM Operations WHERE (Type = 'Payment' AND COALESCE(ReferenceNumber, '') NOT LIKE 'REV-OP-%') OR (Type = 'Receive' AND COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%')) +
+                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND COALESCE(EntryType, 'EXPENSE') = 'EXPENSE')
                 )
             ) AS NetCashBalance
     """)
@@ -478,15 +687,16 @@ interface ReportDao {
                 (SELECT COALESCE(SUM(FinalTotal), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed' AND date(IssuedAt) >= date(:fromDate)) - 
                 (SELECT COALESCE(SUM(il.QuantityMinor * il.LineCost), 0.0) FROM InvoiceLines il INNER JOIN Invoices i ON il.InvoiceId = i.Id WHERE i.Type = 'Sale' AND i.Status = 'Completed' AND date(i.IssuedAt) >= date(:fromDate))
             ) AS GrossProfit,
-            (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE date(ExpenseDate) >= date(:fromDate)) AS TotalExpenses,
+            (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND COALESCE(EntryType, 'EXPENSE') = 'EXPENSE' AND date(ExpenseDate) >= date(:fromDate)) AS TotalExpenses,
             (
-                (SELECT COALESCE(SUM(FinalTotal), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed' AND date(IssuedAt) >= date(:fromDate)) - 
+                (SELECT COALESCE(SUM(FinalTotal), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed' AND date(IssuedAt) >= date(:fromDate)) +
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND EntryType = 'REVENUE' AND date(ExpenseDate) >= date(:fromDate)) -
                 (SELECT COALESCE(SUM(il.QuantityMinor * il.LineCost), 0.0) FROM InvoiceLines il INNER JOIN Invoices i ON il.InvoiceId = i.Id WHERE i.Type = 'Sale' AND i.Status = 'Completed' AND date(i.IssuedAt) >= date(:fromDate)) - 
-                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE date(ExpenseDate) >= date(:fromDate))
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND COALESCE(EntryType, 'EXPENSE') = 'EXPENSE' AND date(ExpenseDate) >= date(:fromDate))
             ) AS NetProfit,
             (
                 SELECT COALESCE(SUM(
-                    (SELECT COALESCE(SUM(CASE WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn') THEN sm.QuantityMinor WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut') THEN -sm.QuantityMinor ELSE 0.0 END), 0.0) FROM StockMovements sm WHERE sm.ProductId = p.Id) * p.CostPrice
+                    (SELECT COALESCE(SUM(CASE WHEN sm.Type IN ('In', 'Purchase', 'ReturnIn', 'AdjustmentIn', 'TransferIn') THEN sm.QuantityMinor WHEN sm.Type IN ('Out', 'Sale', 'ReturnOut', 'AdjustmentOut', 'TransferOut') THEN -sm.QuantityMinor ELSE 0.0 END), 0.0) FROM StockMovements sm WHERE sm.ProductId = p.Id) * p.CostPrice
                 ), 0.0) FROM Products p WHERE p.IsActive = 1
             ) AS InventoryValuation,
             (
@@ -503,22 +713,24 @@ interface ReportDao {
             ) AS TotalDebtsOnUs,
             (
                 (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed' AND date(IssuedAt) >= date(:fromDate)) +
-                (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Receive' AND date(OccurredAt) >= date(:fromDate))
+                (SELECT COALESCE(SUM(CASE WHEN COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%' THEN -Amount ELSE Amount END), 0.0) FROM Operations WHERE date(OccurredAt) >= date(:fromDate) AND ((Type = 'Receive' AND COALESCE(ReferenceNumber, '') NOT LIKE 'REV-OP-%') OR (Type = 'Payment' AND COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%'))) +
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND EntryType = 'REVENUE' AND date(ExpenseDate) >= date(:fromDate))
             ) AS CashInflows,
             (
                 (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Purchase' AND Status = 'Completed' AND date(IssuedAt) >= date(:fromDate)) +
-                (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Payment' AND date(OccurredAt) >= date(:fromDate)) +
-                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE date(ExpenseDate) >= date(:fromDate))
+                (SELECT COALESCE(SUM(CASE WHEN COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%' THEN -Amount ELSE Amount END), 0.0) FROM Operations WHERE date(OccurredAt) >= date(:fromDate) AND ((Type = 'Payment' AND COALESCE(ReferenceNumber, '') NOT LIKE 'REV-OP-%') OR (Type = 'Receive' AND COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%'))) +
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND COALESCE(EntryType, 'EXPENSE') = 'EXPENSE' AND date(ExpenseDate) >= date(:fromDate))
             ) AS CashOutflows,
             (
                 (
                     (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed' AND date(IssuedAt) >= date(:fromDate)) +
-                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Receive' AND date(OccurredAt) >= date(:fromDate))
+                    (SELECT COALESCE(SUM(CASE WHEN COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%' THEN -Amount ELSE Amount END), 0.0) FROM Operations WHERE date(OccurredAt) >= date(:fromDate) AND ((Type = 'Receive' AND COALESCE(ReferenceNumber, '') NOT LIKE 'REV-OP-%') OR (Type = 'Payment' AND COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%'))) +
+                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND EntryType = 'REVENUE' AND date(ExpenseDate) >= date(:fromDate))
                 ) -
                 (
                     (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Purchase' AND Status = 'Completed' AND date(IssuedAt) >= date(:fromDate)) +
-                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Payment' AND date(OccurredAt) >= date(:fromDate)) +
-                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE date(ExpenseDate) >= date(:fromDate))
+                    (SELECT COALESCE(SUM(CASE WHEN COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%' THEN -Amount ELSE Amount END), 0.0) FROM Operations WHERE date(OccurredAt) >= date(:fromDate) AND ((Type = 'Payment' AND COALESCE(ReferenceNumber, '') NOT LIKE 'REV-OP-%') OR (Type = 'Receive' AND COALESCE(ReferenceNumber, '') LIKE 'REV-OP-%'))) +
+                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE COALESCE(IsArchived, 0) = 0 AND COALESCE(EntryType, 'EXPENSE') = 'EXPENSE' AND date(ExpenseDate) >= date(:fromDate))
                 )
             ) AS NetCashBalance
     """)

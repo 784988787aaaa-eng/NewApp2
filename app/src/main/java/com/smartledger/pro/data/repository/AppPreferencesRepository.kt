@@ -19,10 +19,12 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.CopyOnWriteArrayList
 
 data class AppSettingsSnapshot(
-    // 1. العملة والتنسيق
+    // 1. العملة والتنسيق والإعداد الأولي
     val currencySymbol: String = "ر.ي",
     val decimalPlaces: Int = 0,
     val dateFormat: String = "yyyy-MM-dd",
+    val onboardingCompleted: Boolean = false,
+    val defaultCountryCode: String = "+967",
     // 2. المخزون والوحدات
     val defaultSmallUnit: String = "قطعة",
     val defaultLargeUnit: String = "كرتون",
@@ -51,6 +53,7 @@ data class AppSettingsSnapshot(
     val lastLocalBackupTime: String = "",
     val lastLocalBackupSize: Long = 0L,
     val lastLocalBackupSha256: String = "",
+    val lastRestoreTime: String = "",
     val googleDriveAccountEmail: String = "",
     val googleDriveAccessToken: String = "",
     val lastCloudBackupTime: String = "",
@@ -74,13 +77,6 @@ data class AppSettingsSnapshot(
 
 /**
  * مستودع الإعدادات والأسرار الموحد (AppPreferencesRepository).
- *
- * الضمانات المعمارية والأمنية:
- * 1. مستقل تماماً عن طبقة واجهة المستخدم (`com.smartledger.pro.ui.*`)؛ لا يستورد أي كائنات Compose أو Theme،
- *    بل يبث التغييرات عبر `settings: StateFlow<AppSettingsSnapshot>` ومراقبي الحالة المسجلين (`registerRuntimeStateObserver`).
- * 2. يحصل على `AppPreferenceDao` ديناميكياً من `SmartLedgerDatabase.getInstance(appContext)` ويراقب
- *    `SmartLedgerDatabase.databaseEpoch` لإعادة قراءة التفضيلات المحمولة تلقائياً فور استعادة أي نسخة احتياطية.
- * 3. يستخدم `CoroutineScope(SupervisorJob() + Dispatchers.IO)` لضمان عدم تعطل المزامنة الخلفية عند حدوث أي استثناء عابر.
  */
 class AppPreferencesRepository private constructor(context: Context) {
 
@@ -117,10 +113,6 @@ class AppPreferencesRepository private constructor(context: Context) {
         }
     }
 
-    /**
-     * تسجيل مراقب لتغييرات الإعدادات (تستخدمه طبقة العرض/الحاوية لمزامنة `AppDesignState` و`AppSensoryConfig`
-     * دون كسر حدود الطبقات بين `data` و`ui`).
-     */
     fun registerRuntimeStateObserver(observer: (AppSettingsSnapshot) -> Unit) {
         runtimeObservers.add(observer)
         observer(_settings.value)
@@ -132,17 +124,10 @@ class AppPreferencesRepository private constructor(context: Context) {
         }
     }
 
-    /**
-     * يُستدعى فور نجاح استعادة قاعدة البيانات لإعادة قراءة التفضيلات المحمولة من القاعدة المستعادة الجديدة
-     */
     fun onDatabaseRestored() {
         syncPortablePreferencesFromRoomIfNeeded(forceReloadFromRoom = true)
     }
 
-    /**
-     * ترحيل آمن ومتحقق منه لأي رمز PIN صريح أو رمز Google Drive قديم إلى الصيغة المحمية الجديدة،
-     * مع التحقق من صحة فك التشفير/المطابقة قبل حذف القيمة القديمة.
-     */
     private fun migrateLegacyPlaintextSecretsIfNeeded() {
         val legacyPin = prefs.getString("appPinCode", null)
         if (!legacyPin.isNullOrBlank()) {
@@ -188,6 +173,8 @@ class AppPreferencesRepository private constructor(context: Context) {
                     val editor = prefs.edit().putBoolean("_initialized", true)
                     roomPrefs["currency_symbol"]?.takeIf { it.isNotBlank() }?.let { editor.putString("currencySymbol", it) }
                     roomPrefs["decimal_places"]?.toIntOrNull()?.let { editor.putInt("decimalPlaces", it) }
+                    roomPrefs["onboarding_completed"]?.toBooleanStrictOrNull()?.let { editor.putBoolean("onboardingCompleted", it) }
+                    roomPrefs["default_country_code"]?.takeIf { it.isNotBlank() }?.let { editor.putString("defaultCountryCode", it) }
                     roomPrefs["invoice_prefix"]?.takeIf { it.isNotBlank() }?.let { editor.putString("invoicePrefix", it) }
                     roomPrefs["purchase_prefix"]?.takeIf { it.isNotBlank() }?.let { editor.putString("purchasePrefix", it) }
                     roomPrefs["allow_negative_stock"]?.toBooleanStrictOrNull()?.let { editor.putBoolean("allowNegativeStock", it) }
@@ -220,6 +207,8 @@ class AppPreferencesRepository private constructor(context: Context) {
             currencySymbol = prefs.getString("currencySymbol", "ر.ي") ?: "ر.ي",
             decimalPlaces = prefs.getInt("decimalPlaces", 0),
             dateFormat = prefs.getString("dateFormat", "yyyy-MM-dd") ?: "yyyy-MM-dd",
+            onboardingCompleted = prefs.getBoolean("onboardingCompleted", false),
+            defaultCountryCode = prefs.getString("defaultCountryCode", "+967") ?: "+967",
             defaultSmallUnit = prefs.getString("defaultSmallUnit", "قطعة") ?: "قطعة",
             defaultLargeUnit = prefs.getString("defaultLargeUnit", "كرتون") ?: "كرتون",
             defaultUnitFactor = prefs.getFloat("defaultUnitFactor", 24f).toDouble(),
@@ -244,6 +233,7 @@ class AppPreferencesRepository private constructor(context: Context) {
             lastLocalBackupTime = prefs.getString("lastLocalBackupTime", "") ?: "",
             lastLocalBackupSize = prefs.getLong("lastLocalBackupSize", 0L),
             lastLocalBackupSha256 = prefs.getString("lastLocalBackupSha256", "") ?: "",
+            lastRestoreTime = prefs.getString("lastRestoreTime", "") ?: "",
             googleDriveAccountEmail = prefs.getString("googleDriveAccountEmail", "") ?: "",
             googleDriveAccessToken = decryptedToken,
             lastCloudBackupTime = prefs.getString("lastCloudBackupTime", "") ?: "",
@@ -295,6 +285,8 @@ class AppPreferencesRepository private constructor(context: Context) {
             .putString("currencySymbol", s.currencySymbol)
             .putInt("decimalPlaces", s.decimalPlaces)
             .putString("dateFormat", s.dateFormat)
+            .putBoolean("onboardingCompleted", s.onboardingCompleted)
+            .putString("defaultCountryCode", s.defaultCountryCode)
             .putString("defaultSmallUnit", s.defaultSmallUnit)
             .putString("defaultLargeUnit", s.defaultLargeUnit)
             .putFloat("defaultUnitFactor", s.defaultUnitFactor.toFloat())
@@ -319,6 +311,7 @@ class AppPreferencesRepository private constructor(context: Context) {
             .putString("lastLocalBackupTime", s.lastLocalBackupTime)
             .putLong("lastLocalBackupSize", s.lastLocalBackupSize)
             .putString("lastLocalBackupSha256", s.lastLocalBackupSha256)
+            .putString("lastRestoreTime", s.lastRestoreTime)
             .putString("googleDriveAccountEmail", s.googleDriveAccountEmail)
             .putString("lastCloudBackupTime", s.lastCloudBackupTime)
             .putLong("lastCloudBackupSize", s.lastCloudBackupSize)
@@ -338,6 +331,8 @@ class AppPreferencesRepository private constructor(context: Context) {
                 val activePrefDao = prefDao
                 activePrefDao.setPreference(AppPreferenceEntity("currency_symbol", s.currencySymbol))
                 activePrefDao.setPreference(AppPreferenceEntity("decimal_places", s.decimalPlaces.toString()))
+                activePrefDao.setPreference(AppPreferenceEntity("onboarding_completed", s.onboardingCompleted.toString()))
+                activePrefDao.setPreference(AppPreferenceEntity("default_country_code", s.defaultCountryCode))
                 activePrefDao.setPreference(AppPreferenceEntity("invoice_prefix", s.invoicePrefix))
                 activePrefDao.setPreference(AppPreferenceEntity("purchase_prefix", s.purchasePrefix))
                 activePrefDao.setPreference(AppPreferenceEntity("allow_negative_stock", s.allowNegativeStock.toString()))
@@ -354,9 +349,11 @@ class AppPreferencesRepository private constructor(context: Context) {
     fun resetToDefaultsPreservingBackupHistory() {
         val current = _settings.value
         val resetSnapshot = AppSettingsSnapshot(
+            onboardingCompleted = current.onboardingCompleted,
             lastLocalBackupTime = current.lastLocalBackupTime,
             lastLocalBackupSize = current.lastLocalBackupSize,
             lastLocalBackupSha256 = current.lastLocalBackupSha256,
+            lastRestoreTime = current.lastRestoreTime,
             googleDriveAccountEmail = current.googleDriveAccountEmail,
             googleDriveAccessToken = current.googleDriveAccessToken,
             lastCloudBackupTime = current.lastCloudBackupTime,

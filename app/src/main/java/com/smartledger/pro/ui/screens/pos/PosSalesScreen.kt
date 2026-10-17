@@ -27,6 +27,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smartledger.pro.data.local.dao.AccountBalanceSummary
+import com.smartledger.pro.data.local.dao.ProductStockItem
 import com.smartledger.pro.data.local.entity.InvoiceEntity
 import com.smartledger.pro.data.local.entity.InvoiceLineEntity
 import com.smartledger.pro.domain.model.UnitConversionEngine
@@ -43,40 +44,53 @@ import kotlin.math.abs
 
 @Composable
 fun PosSalesScreen(
+    onNavigateToInventory: (() -> Unit)? = null,
     viewModel: PosViewModel = viewModel()
 ) {
     val products by viewModel.products.collectAsState()
     val customers by viewModel.customers.collectAsState()
     val recentInvoices by viewModel.recentInvoices.collectAsState()
     val identity by viewModel.businessIdentity.collectAsState()
-    val cartLines = viewModel.cartLines
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
     val settings by viewModel.settings.collectAsState()
+    val financialAccounts by viewModel.financialAccounts.collectAsState()
 
-    var quickSearchQuery by rememberSaveable { mutableStateOf("") }
+    val cartLines = viewModel.cartLines
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
     var showProductPickerSheet by rememberSaveable { mutableStateOf(false) }
     var showCustomerPickerSheet by rememberSaveable { mutableStateOf(false) }
     var showCheckoutSheet by rememberSaveable { mutableStateOf(false) }
     var showInvoicesHistorySheet by rememberSaveable { mutableStateOf(false) }
-    var showBarcodeScanner by rememberSaveable { mutableStateOf(false) }
     var showClearCartConfirm by rememberSaveable { mutableStateOf(false) }
+    var showBarcodeScanner by rememberSaveable { mutableStateOf(false) }
 
     var editingLineProductId by rememberSaveable { mutableStateOf<Long?>(null) }
-    val lineToEditQuantityOrPrice = editingLineProductId?.let { id -> cartLines.firstOrNull { it.productId == id } }
-    val btPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (!granted) {
-            isStatusError = true
-            statusMessage = "يلزم منح إذن البلوتوث (الأجهزة القريبة) للاتصال بالطابعة الحرارية."
-        }
+    val lineToEditQuantityOrPrice = remember(cartLines.toList(), editingLineProductId) {
+        editingLineProductId?.let { pId -> cartLines.firstOrNull { it.productId == pId } }
     }
     var lastRemovedItem by remember { mutableStateOf<CartLineItem?>(null) }
+    var lastUnmatchedBarcode by rememberSaveable { mutableStateOf<String?>(null) }
     var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var isStatusError by rememberSaveable { mutableStateOf(false) }
+    var quickSearchQuery by rememberSaveable { mutableStateOf("") }
 
-    var completedInvoiceResult by remember { mutableStateOf<Pair<InvoiceEntity, List<Triple<String, String, Double>>>?>(null) }
+    var completedInvoiceResult by remember {
+        mutableStateOf<Pair<InvoiceEntity, List<Triple<String, String, Double>>>?>(null)
+    }
 
-    val subtotal = NumberFormatter.roundCurrency(cartLines.sumOf { it.calculatedLineTotal })
+    val btPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            isStatusError = true
+            statusMessage = "تم رفض إذن البلوتوث؛ يلزم منح الإذن للاتصال بالطابعة الحرارية."
+        }
+    }
+
+    val subtotal = remember(cartLines.toList()) {
+        NumberFormatter.roundCurrency(cartLines.sumOf { it.calculatedLineTotal })
+    }
 
     val knownBarcodes = remember(products) {
         products.mapNotNull { p ->
@@ -85,10 +99,14 @@ fun PosSalesScreen(
     }
 
     val filteredQuickProducts = remember(products, quickSearchQuery) {
-        if (quickSearchQuery.isBlank()) products.take(12)
-        else products.filter {
-            it.Name.contains(quickSearchQuery, ignoreCase = true) ||
-                (it.Barcode?.contains(quickSearchQuery, ignoreCase = true) == true)
+        if (quickSearchQuery.isBlank()) {
+            products.take(16)
+        } else {
+            val q = quickSearchQuery.trim()
+            products.filter {
+                it.Name.contains(q, ignoreCase = true) ||
+                    (it.Barcode?.contains(q, ignoreCase = true) == true)
+            }.take(20)
         }
     }
 
@@ -114,23 +132,27 @@ fun PosSalesScreen(
                             color = SmartLedgerColors.TextPrimary
                         )
                         Text(
-                            text = "بيع بالوحدة الصغرى والكبرى • نقدي وآجل",
+                            text = "دعم البيع بالوحدة الكبرى والصغرى مع احتساب تلقائي للربح والمخزون",
                             style = MaterialTheme.typography.labelSmall,
                             color = SmartLedgerColors.TextMuted
                         )
                     }
+
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         OutlinedButton(
                             onClick = { showInvoicesHistorySheet = true },
                             shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                             border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.height(36.dp).pressScaleEffect()
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .heightIn(min = 36.dp)
+                                .pressScaleEffect()
                         ) {
                             Icon(Icons.Default.History, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("الفواتير والمرتجع", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
+                            Text("الفواتير (${recentInvoices.count { it.Type == "Sale" }})", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextPrimary)
                         }
+
                         if (cartLines.isNotEmpty()) {
                             IconButton(
                                 onClick = { showClearCartConfirm = true },
@@ -139,23 +161,19 @@ fun PosSalesScreen(
                                     .clip(RoundedCornerShape(SmartLedgerTokens.buttonCorner))
                                     .background(SmartLedgerColors.StateDangerSubtle)
                             ) {
-                                Icon(
-                                    Icons.Default.DeleteSweep,
-                                    contentDescription = "إفراغ السلة",
-                                    tint = SmartLedgerColors.StateDanger,
-                                    modifier = Modifier.size(18.dp)
-                                )
+                                Icon(Icons.Default.DeleteSweep, contentDescription = "إفراغ السلة", tint = SmartLedgerColors.StateDanger, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
                 }
 
+                // شريط اختيار العميل السريع
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(SmartLedgerTokens.inputCorner))
+                        .clip(RoundedCornerShape(10.dp))
                         .background(SmartLedgerColors.SurfaceCard)
-                        .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(SmartLedgerTokens.inputCorner))
+                        .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(10.dp))
                         .clickable { showCustomerPickerSheet = true }
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -289,7 +307,7 @@ fun PosSalesScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
                                 onClick = { showProductPickerSheet = true },
-                                modifier = Modifier.height(42.dp).pressScaleEffect(),
+                                modifier = Modifier.heightIn(min = 42.dp).pressScaleEffect(),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
                                 contentPadding = PaddingValues(horizontal = 12.dp)
@@ -305,7 +323,7 @@ fun PosSalesScreen(
                                 },
                                 enabled = cartLines.isNotEmpty(),
                                 modifier = Modifier
-                                    .height(42.dp)
+                                    .heightIn(min = 42.dp)
                                     .pressScaleEffect(enabled = cartLines.isNotEmpty()),
                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
@@ -333,18 +351,33 @@ fun PosSalesScreen(
                 StatusFeedbackBanner(
                     message = statusMessage,
                     isError = isStatusError,
-                    actionLabel = if (lastRemovedItem != null) "تراجع عن الحذف" else null,
-                    onAction = if (lastRemovedItem != null) {
-                        {
-                            val restored = lastRemovedItem!!
-                            viewModel.cartLines.add(restored)
-                            lastRemovedItem = null
-                            statusMessage = null
+                    actionLabel = when {
+                        lastRemovedItem != null -> "تراجع عن الحذف"
+                        lastUnmatchedBarcode != null && onNavigateToInventory != null -> "تعريف بالمخزون"
+                        else -> null
+                    },
+                    onAction = when {
+                        lastRemovedItem != null -> {
+                            {
+                                val restored = lastRemovedItem!!
+                                viewModel.restoreRemovedCartItem(restored)
+                                lastRemovedItem = null
+                                statusMessage = null
+                            }
                         }
-                    } else null,
+                        lastUnmatchedBarcode != null && onNavigateToInventory != null -> {
+                            {
+                                lastUnmatchedBarcode = null
+                                statusMessage = null
+                                onNavigateToInventory()
+                            }
+                        }
+                        else -> null
+                    },
                     onDismiss = {
                         statusMessage = null
                         lastRemovedItem = null
+                        lastUnmatchedBarcode = null
                     }
                 )
             }
@@ -371,6 +404,7 @@ fun PosSalesScreen(
                         },
                         onRemoveLine = {
                             lastRemovedItem = line
+                            lastUnmatchedBarcode = null
                             viewModel.removeItemFromCart(line.productId)
                             isStatusError = false
                             statusMessage = "تمت إزالة «${line.name}» من السلة."
@@ -393,9 +427,12 @@ fun PosSalesScreen(
                     val match = products.firstOrNull { it.Barcode.equals(code, ignoreCase = true) }
                     if (match != null) {
                         viewModel.addItemToCart(match, asMajorUnit = false)
+                        lastUnmatchedBarcode = null
                         isStatusError = false
                         statusMessage = "تمت إضافة «${match.Name}» إلى السلة."
                     } else {
+                        lastRemovedItem = null
+                        lastUnmatchedBarcode = code
                         isStatusError = true
                         statusMessage = "الباركود ($code) غير مسجل في المخزن. يمكنك تعريفه من شاشة المخزون."
                     }
@@ -404,7 +441,7 @@ fun PosSalesScreen(
             )
         }
 
-        // نافذة تعديل كمية وسعر بند في السلة العائمة فوق لوحة المفاتيح
+        // نافذة تعديل كمية وسعر بند في السلة العائمة فوق لوحة المفاتيح مع حماية هامش الربح (UX-003)
         if (lineToEditQuantityOrPrice != null) {
             val targetLine = lineToEditQuantityOrPrice!!
             FloatingModalDialog(onDismissRequest = { editingLineProductId = null }) {
@@ -414,9 +451,15 @@ fun PosSalesScreen(
                 var majorPriceText by rememberSaveable(targetLine.productId) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.majorUnitPrice)) }
                 val hasMajor = !targetLine.largeUnit.isNullOrBlank() && targetLine.unitFactor > 1.0
 
+                val enteredMinorPrice = NumberFormatter.parseDouble(minorPriceText, targetLine.minorUnitPrice)
+                val enteredMajorPrice = NumberFormatter.parseDouble(majorPriceText, targetLine.majorUnitPrice)
+                val isMinorBelowCost = enteredMinorPrice > 0.0 && targetLine.minorUnitCost > 0.0 && enteredMinorPrice < targetLine.minorUnitCost
+                val isMajorBelowCost = hasMajor && enteredMajorPrice > 0.0 && targetLine.minorUnitCost > 0.0 &&
+                    enteredMajorPrice < (targetLine.minorUnitCost * targetLine.unitFactor)
+
                 FormSheetContainer(
                     title = "تعديل الكمية والسعر للبند",
-                    subtitle = targetLine.name,
+                    subtitle = "${targetLine.name} • التكلفة المسجلة: ${NumberFormatter.formatCurrency(targetLine.minorUnitCost, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} / ${targetLine.smallUnit}",
                     headerIcon = Icons.Default.EditNote,
                     onDismiss = { editingLineProductId = null },
                     primaryButtonText = "تحديث البند",
@@ -430,6 +473,27 @@ fun PosSalesScreen(
                         editingLineProductId = null
                     }
                 ) {
+                    if (isMinorBelowCost || isMajorBelowCost) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(SmartLedgerColors.StateDangerSubtle)
+                                .border(1.dp, SmartLedgerColors.StateDangerBorder, RoundedCornerShape(10.dp))
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.WarningAmber, contentDescription = null, tint = SmartLedgerColors.StateDanger, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "تنبيه: السعر المدخل أقل من تكلفة شراء الصنف المسجلة (${NumberFormatter.formatCurrency(targetLine.minorUnitCost, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} للـ ${targetLine.smallUnit}).",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SmartLedgerColors.StateDangerText,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
                     FormSectionGroup(title = "الوحدة الصغرى (${targetLine.smallUnit})") {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             SmartTextField(
@@ -670,14 +734,15 @@ fun PosSalesScreen(
                         showCheckoutSheet = false
                         showCustomerPickerSheet = true
                     },
-                    onCommit = { payType, discountAmt, paidAmt, notes ->
+                    financialAccounts = financialAccounts,
+                    onCommit = { payType, discountAmt, paidAmt, notes, finAccId ->
                         val itemsSnapshot = cartLines.map {
                             Triple(it.name, it.formattedBreakdown, it.calculatedLineTotal)
                         }
                         isCheckingOut = true
                         checkoutError = null
                         scope.launch {
-                            val res = viewModel.checkout(payType, discountAmt, paidAmt, notes)
+                            val res = viewModel.checkout(payType, discountAmt, paidAmt, notes, finAccId)
                             isCheckingOut = false
                             if (res.isSuccess) {
                                 val savedInvoice = res.getOrThrow()
@@ -914,7 +979,7 @@ fun PosSalesScreen(
                                                     border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateDangerBorder)),
                                                     shape = RoundedCornerShape(6.dp),
                                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                                    modifier = Modifier.height(32.dp).pressScaleEffect()
+                                                    modifier = Modifier.heightIn(min = 32.dp).pressScaleEffect()
                                                 ) {
                                                     Text("إرجاع الفاتورة", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                                 }
@@ -953,10 +1018,15 @@ fun PosSalesScreen(
                     reasonLabel = "سبب المرتجع",
                     onConfirm = { reason ->
                         scope.launch {
-                            viewModel.reverseInvoice(targetInv.Id, reason ?: "مرتجع مبيعات معتمد")
+                            val res = viewModel.reverseInvoice(targetInv.Id, reason ?: "مرتجع مبيعات معتمد")
                             invoiceIdToReverse = null
-                            isStatusError = false
-                            statusMessage = "تم إرجاع الفاتورة ${targetInv.InvoiceNumber} واستعادة المخزون بنجاح."
+                            if (res.isSuccess) {
+                                isStatusError = false
+                                statusMessage = "تم إرجاع الفاتورة ${targetInv.InvoiceNumber} واستعادة المخزون بنجاح."
+                            } else {
+                                isStatusError = true
+                                statusMessage = res.exceptionOrNull()?.message ?: "تعذر إرجاع الفاتورة."
+                            }
                         }
                     },
                     onDismiss = { invoiceIdToReverse = null }
@@ -1129,8 +1199,9 @@ fun CheckoutSheetContent(
     selectedCustomer: AccountBalanceSummary?,
     isSaving: Boolean,
     errorMessage: String?,
+    financialAccounts: List<com.smartledger.pro.data.local.dao.FinancialAccountBalanceSummary> = emptyList(),
     onSelectCustomerClick: () -> Unit,
-    onCommit: (payType: String, discount: Double, paid: Double, notes: String?) -> Unit,
+    onCommit: (payType: String, discount: Double, paid: Double, notes: String?, financialAccountId: Long?) -> Unit,
     onClose: () -> Unit
 ) {
     var paymentType by rememberSaveable { mutableStateOf("Cash") }
@@ -1138,15 +1209,21 @@ fun CheckoutSheetContent(
     var paidAmountText by rememberSaveable { mutableStateOf("") }
     var receivedCashText by rememberSaveable { mutableStateOf("") }
     var notes by rememberSaveable { mutableStateOf("") }
+    var selectedFinAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
 
-    val discountVal = NumberFormatter.roundCurrency(NumberFormatter.parseDouble(discountText, 0.0).coerceIn(0.0, subtotalAmount))
+    val rawDiscount = NumberFormatter.parseDouble(discountText, 0.0)
+    val isDiscountExceeding = rawDiscount > subtotalAmount
+    val discountVal = NumberFormatter.roundCurrency(rawDiscount.coerceIn(0.0, subtotalAmount))
     val finalTotal = NumberFormatter.roundCurrency((subtotalAmount - discountVal).coerceAtLeast(0.0))
+
+    val rawPaidInput = NumberFormatter.parseDouble(paidAmountText, 0.0)
+    val isPartialInvalid = paymentType == "Partial" && (rawPaidInput <= 0.0 || rawPaidInput >= finalTotal)
 
     val paidAmount = NumberFormatter.roundCurrency(
         when (paymentType) {
             "Cash" -> finalTotal
             "Credit" -> 0.0
-            else -> NumberFormatter.parseDouble(paidAmountText, 0.0).coerceIn(0.0, finalTotal)
+            else -> rawPaidInput.coerceIn(0.0, finalTotal)
         }
     )
     val remaining = NumberFormatter.roundCurrency((finalTotal - paidAmount).coerceAtLeast(0.0))
@@ -1159,19 +1236,21 @@ fun CheckoutSheetContent(
         selectedCustomer.CreditLimit > 0.0 &&
         (selectedCustomer.NetBalance + remaining) > selectedCustomer.CreditLimit
 
+    val canSubmit = finalTotal > 0.0 && !requiresNamedCustomer && !isDiscountExceeding && !isPartialInvalid
+
     FormSheetContainer(
         title = "سداد وترحيل الفاتورة",
         subtitle = "العميل: ${selectedCustomer?.PersonName ?: "عميل نقدي عام"}",
         headerIcon = Icons.Default.PointOfSale,
         onDismiss = onClose,
         primaryButtonText = "تأكيد وترحيل الفاتورة",
-        isPrimaryEnabled = finalTotal > 0.0 && !requiresNamedCustomer,
+        isPrimaryEnabled = canSubmit,
         isSaving = isSaving,
         errorMessage = errorMessage,
         hasUnsavedChanges = discountText.isNotBlank() || paidAmountText.isNotBlank() || notes.isNotBlank(),
         onPrimaryClick = {
-            if (!requiresNamedCustomer) {
-                onCommit(paymentType, discountVal, paidAmount, notes)
+            if (canSubmit) {
+                onCommit(paymentType, discountVal, paidAmount, notes, selectedFinAccountId)
             }
         }
     ) {
@@ -1207,7 +1286,7 @@ fun CheckoutSheetContent(
                         colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.height(32.dp).pressScaleEffect()
+                        modifier = Modifier.heightIn(min = 32.dp).pressScaleEffect()
                     ) {
                         Text("اختيار عميل", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                     }
@@ -1230,6 +1309,16 @@ fun CheckoutSheetContent(
             }
         }
 
+        if (paymentType != "Credit" && financialAccounts.isNotEmpty()) {
+            FormSectionGroup(title = "الصندوق / المحفظة المستلمة للنقد") {
+                FilterChipRow(
+                    items = listOf<Pair<Long?, String>>(null to "الصندوق الافتراضي") + financialAccounts.map { it.Id as Long? to it.Name },
+                    selectedItem = selectedFinAccountId,
+                    onItemSelected = { selectedFinAccountId = it }
+                )
+            }
+        }
+
         FormSectionGroup(title = "الخصم والمبالغ المستلمة") {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 SmartTextField(
@@ -1237,6 +1326,7 @@ fun CheckoutSheetContent(
                     onValueChange = { discountText = it },
                     label = "الخصم (${AppDesignState.currencySymbol})",
                     placeholder = "0",
+                    errorText = if (isDiscountExceeding) "الخصم يتجاوز إجمالي الفاتورة" else null,
                     keyboardType = KeyboardType.Decimal,
                     modifier = Modifier.weight(1f)
                 )
@@ -1248,6 +1338,7 @@ fun CheckoutSheetContent(
                         label = "المسدد نقداً الآن",
                         placeholder = "0",
                         isRequired = true,
+                        errorText = if (paidAmountText.isNotEmpty() && isPartialInvalid) "أدخل مبلغاً أكبر من 0 وأقل من الصافي" else null,
                         keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f)
                     )
@@ -1260,6 +1351,27 @@ fun CheckoutSheetContent(
                         keyboardType = KeyboardType.Decimal,
                         modifier = Modifier.weight(1f)
                     )
+                }
+            }
+
+            if (paymentType == "Partial" && finalTotal > 0.0) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { paidAmountText = NumberFormatter.formatQuantity(NumberFormatter.roundCurrency(finalTotal * 0.5)) },
+                        modifier = Modifier.weight(1f).heightIn(min = 30.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("نصف الصافي (50%)", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
+                    }
+                    OutlinedButton(
+                        onClick = { paidAmountText = NumberFormatter.formatQuantity(NumberFormatter.roundCurrency(finalTotal * 0.25)) },
+                        modifier = Modifier.weight(1f).heightIn(min = 30.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("ربع الصافي (25%)", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
+                    }
                 }
             }
         }

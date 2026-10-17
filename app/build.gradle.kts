@@ -12,8 +12,8 @@ android {
         applicationId = "com.smartledger.pro"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "2.4.0"
+        versionCode = 5
+        versionName = "3.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
@@ -107,6 +107,8 @@ dependencies {
 
     // Unit & Room Instrumentation Testing
     testImplementation("junit:junit:4.13.2")
+    // Use a real JSON implementation in local JVM unit tests
+    testImplementation("org.json:json:20240303")
     androidTestImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:core-ktx:1.5.0")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

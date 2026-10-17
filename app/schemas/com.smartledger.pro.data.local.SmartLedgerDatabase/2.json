@@ -1,0 +1,1511 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "3aa86505533d0295fe5b0e2a16d65799",
+    "entities": [
+      {
+        "tableName": "Books",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `Name` TEXT NOT NULL, `IsSystem` INTEGER NOT NULL, `SortOrder` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Name",
+            "columnName": "Name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "IsSystem",
+            "columnName": "IsSystem",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "SortOrder",
+            "columnName": "SortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "People",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `BookId` INTEGER NOT NULL, `Name` TEXT NOT NULL, `Phone` TEXT, `AccountCode` TEXT, `CreditLimit` REAL NOT NULL, `Note` TEXT, `IsActive` INTEGER NOT NULL, `CreatedAt` TEXT NOT NULL, `LastOperationAt` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "BookId",
+            "columnName": "BookId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Name",
+            "columnName": "Name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Phone",
+            "columnName": "Phone",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "AccountCode",
+            "columnName": "AccountCode",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "CreditLimit",
+            "columnName": "CreditLimit",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Note",
+            "columnName": "Note",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "IsActive",
+            "columnName": "IsActive",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "CreatedAt",
+            "columnName": "CreatedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "LastOperationAt",
+            "columnName": "LastOperationAt",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_People_Name",
+            "unique": false,
+            "columnNames": [
+              "Name"
+            ]
+          },
+          {
+            "name": "index_People_Phone",
+            "unique": false,
+            "columnNames": [
+              "Phone"
+            ]
+          },
+          {
+            "name": "index_People_BookId_Name",
+            "unique": false,
+            "columnNames": [
+              "BookId",
+              "Name"
+            ]
+          },
+          {
+            "name": "index_People_AccountCode",
+            "unique": true,
+            "columnNames": [
+              "AccountCode"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "Operations",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `PersonId` INTEGER NOT NULL, `Type` TEXT NOT NULL, `Amount` REAL NOT NULL, `OccurredAt` TEXT NOT NULL, `Note` TEXT, `ReferenceNumber` TEXT, `SourceInvoiceId` INTEGER, `SourceStockMovementId` INTEGER, `CreatedAt` TEXT NOT NULL, `FinancialAccountId` INTEGER, `TargetInvoiceId` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "PersonId",
+            "columnName": "PersonId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Type",
+            "columnName": "Type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Amount",
+            "columnName": "Amount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "OccurredAt",
+            "columnName": "OccurredAt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Note",
+            "columnName": "Note",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "ReferenceNumber",
+            "columnName": "ReferenceNumber",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "SourceInvoiceId",
+            "columnName": "SourceInvoiceId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "SourceStockMovementId",
+            "columnName": "SourceStockMovementId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "CreatedAt",
+            "columnName": "CreatedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "FinancialAccountId",
+            "columnName": "FinancialAccountId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "TargetInvoiceId",
+            "columnName": "TargetInvoiceId",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_Operations_PersonId_OccurredAt",
+            "unique": false,
+            "columnNames": [
+              "PersonId",
+              "OccurredAt"
+            ]
+          },
+          {
+            "name": "index_Operations_OccurredAt",
+            "unique": false,
+            "columnNames": [
+              "OccurredAt"
+            ]
+          },
+          {
+            "name": "index_Operations_PersonId_Type_Amount_OccurredAt",
+            "unique": false,
+            "columnNames": [
+              "PersonId",
+              "Type",
+              "Amount",
+              "OccurredAt"
+            ]
+          },
+          {
+            "name": "index_Operations_SourceInvoiceId",
+            "unique": false,
+            "columnNames": [
+              "SourceInvoiceId"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "Products",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `Barcode` TEXT, `Name` TEXT NOT NULL, `CategoryId` INTEGER, `Warehouse` TEXT NOT NULL, `ShelfLocation` TEXT, `SmallUnit` TEXT NOT NULL, `LargeUnit` TEXT, `UnitFactor` REAL NOT NULL, `CostPrice` REAL NOT NULL, `RetailPrice` REAL NOT NULL, `WholesalePrice` REAL NOT NULL, `AlertThreshold` REAL NOT NULL, `OpeningQuantityMinor` REAL NOT NULL, `OpeningCost` REAL NOT NULL, `SupplierId` INTEGER, `IsActive` INTEGER NOT NULL, `CreatedAt` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Barcode",
+            "columnName": "Barcode",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "Name",
+            "columnName": "Name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "CategoryId",
+            "columnName": "CategoryId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "Warehouse",
+            "columnName": "Warehouse",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ShelfLocation",
+            "columnName": "ShelfLocation",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "SmallUnit",
+            "columnName": "SmallUnit",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "LargeUnit",
+            "columnName": "LargeUnit",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "UnitFactor",
+            "columnName": "UnitFactor",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "CostPrice",
+            "columnName": "CostPrice",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "RetailPrice",
+            "columnName": "RetailPrice",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "WholesalePrice",
+            "columnName": "WholesalePrice",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "AlertThreshold",
+            "columnName": "AlertThreshold",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "OpeningQuantityMinor",
+            "columnName": "OpeningQuantityMinor",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "OpeningCost",
+            "columnName": "OpeningCost",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "SupplierId",
+            "columnName": "SupplierId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "IsActive",
+            "columnName": "IsActive",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "CreatedAt",
+            "columnName": "CreatedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_Products_Name",
+            "unique": false,
+            "columnNames": [
+              "Name"
+            ]
+          },
+          {
+            "name": "index_Products_CategoryId",
+            "unique": false,
+            "columnNames": [
+              "CategoryId"
+            ]
+          },
+          {
+            "name": "index_Products_Warehouse_CategoryId",
+            "unique": false,
+            "columnNames": [
+              "Warehouse",
+              "CategoryId"
+            ]
+          },
+          {
+            "name": "index_Products_Barcode",
+            "unique": true,
+            "columnNames": [
+              "Barcode"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "Invoices",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `InvoiceNumber` TEXT NOT NULL, `Type` TEXT NOT NULL, `PersonId` INTEGER NOT NULL, `PersonNameSnapshot` TEXT NOT NULL, `IssuedAt` TEXT NOT NULL, `Subtotal` REAL NOT NULL, `DiscountAmount` REAL NOT NULL, `TaxAmount` REAL NOT NULL, `FinalTotal` REAL NOT NULL, `PaidAmount` REAL NOT NULL, `RemainingAmount` REAL NOT NULL, `PaymentType` TEXT NOT NULL, `Notes` TEXT, `Status` TEXT NOT NULL, `CreatedAt` TEXT NOT NULL, `FinancialAccountId` INTEGER, `WarehouseId` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "InvoiceNumber",
+            "columnName": "InvoiceNumber",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Type",
+            "columnName": "Type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "PersonId",
+            "columnName": "PersonId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "PersonNameSnapshot",
+            "columnName": "PersonNameSnapshot",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "IssuedAt",
+            "columnName": "IssuedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Subtotal",
+            "columnName": "Subtotal",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "DiscountAmount",
+            "columnName": "DiscountAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "TaxAmount",
+            "columnName": "TaxAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "FinalTotal",
+            "columnName": "FinalTotal",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "PaidAmount",
+            "columnName": "PaidAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "RemainingAmount",
+            "columnName": "RemainingAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "PaymentType",
+            "columnName": "PaymentType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Notes",
+            "columnName": "Notes",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "Status",
+            "columnName": "Status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "CreatedAt",
+            "columnName": "CreatedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "FinancialAccountId",
+            "columnName": "FinancialAccountId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "WarehouseId",
+            "columnName": "WarehouseId",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_Invoices_InvoiceNumber",
+            "unique": true,
+            "columnNames": [
+              "InvoiceNumber"
+            ]
+          },
+          {
+            "name": "index_Invoices_PersonId",
+            "unique": false,
+            "columnNames": [
+              "PersonId"
+            ]
+          },
+          {
+            "name": "index_Invoices_IssuedAt_Type",
+            "unique": false,
+            "columnNames": [
+              "IssuedAt",
+              "Type"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "InvoiceLines",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `InvoiceId` INTEGER NOT NULL, `ProductId` INTEGER NOT NULL, `ProductNameSnapshot` TEXT NOT NULL, `BarcodeSnapshot` TEXT, `UnitName` TEXT NOT NULL, `IsMajorUnit` INTEGER NOT NULL, `ConversionFactor` REAL NOT NULL, `QuantityMinor` REAL NOT NULL, `UnitPrice` REAL NOT NULL, `LineDiscount` REAL NOT NULL, `LineTotal` REAL NOT NULL, `LineCost` REAL NOT NULL, `SortOrder` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "InvoiceId",
+            "columnName": "InvoiceId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ProductId",
+            "columnName": "ProductId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ProductNameSnapshot",
+            "columnName": "ProductNameSnapshot",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "BarcodeSnapshot",
+            "columnName": "BarcodeSnapshot",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "UnitName",
+            "columnName": "UnitName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "IsMajorUnit",
+            "columnName": "IsMajorUnit",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ConversionFactor",
+            "columnName": "ConversionFactor",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "QuantityMinor",
+            "columnName": "QuantityMinor",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "UnitPrice",
+            "columnName": "UnitPrice",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "LineDiscount",
+            "columnName": "LineDiscount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "LineTotal",
+            "columnName": "LineTotal",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "LineCost",
+            "columnName": "LineCost",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "SortOrder",
+            "columnName": "SortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_InvoiceLines_InvoiceId",
+            "unique": false,
+            "columnNames": [
+              "InvoiceId"
+            ]
+          },
+          {
+            "name": "index_InvoiceLines_ProductId",
+            "unique": false,
+            "columnNames": [
+              "ProductId"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "StockMovements",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `ProductId` INTEGER NOT NULL, `OccurredAt` TEXT NOT NULL, `Type` TEXT NOT NULL, `QuantityMinor` REAL NOT NULL, `UnitCost` REAL NOT NULL, `Notes` TEXT, `InvoiceId` INTEGER, `BatchId` INTEGER, `CreatedAt` TEXT NOT NULL, `WarehouseId` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ProductId",
+            "columnName": "ProductId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "OccurredAt",
+            "columnName": "OccurredAt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Type",
+            "columnName": "Type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "QuantityMinor",
+            "columnName": "QuantityMinor",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "UnitCost",
+            "columnName": "UnitCost",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Notes",
+            "columnName": "Notes",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "InvoiceId",
+            "columnName": "InvoiceId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "BatchId",
+            "columnName": "BatchId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "CreatedAt",
+            "columnName": "CreatedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "WarehouseId",
+            "columnName": "WarehouseId",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_StockMovements_ProductId_OccurredAt",
+            "unique": false,
+            "columnNames": [
+              "ProductId",
+              "OccurredAt"
+            ]
+          },
+          {
+            "name": "index_StockMovements_InvoiceId",
+            "unique": false,
+            "columnNames": [
+              "InvoiceId"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "Expenses",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `ExpenseDate` TEXT NOT NULL, `CategoryId` INTEGER, `Amount` REAL NOT NULL, `Statement` TEXT NOT NULL, `PaymentSource` TEXT NOT NULL, `ReceiptPhotoUri` TEXT, `CreatedAt` TEXT NOT NULL, `EntryType` TEXT, `FinancialAccountId` INTEGER, `BeneficiaryName` TEXT, `ReferenceNumber` TEXT, `Notes` TEXT, `IsArchived` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ExpenseDate",
+            "columnName": "ExpenseDate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "CategoryId",
+            "columnName": "CategoryId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "Amount",
+            "columnName": "Amount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Statement",
+            "columnName": "Statement",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "PaymentSource",
+            "columnName": "PaymentSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ReceiptPhotoUri",
+            "columnName": "ReceiptPhotoUri",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "CreatedAt",
+            "columnName": "CreatedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "EntryType",
+            "columnName": "EntryType",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "FinancialAccountId",
+            "columnName": "FinancialAccountId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "BeneficiaryName",
+            "columnName": "BeneficiaryName",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "ReferenceNumber",
+            "columnName": "ReferenceNumber",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "Notes",
+            "columnName": "Notes",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "IsArchived",
+            "columnName": "IsArchived",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_Expenses_ExpenseDate",
+            "unique": false,
+            "columnNames": [
+              "ExpenseDate"
+            ]
+          },
+          {
+            "name": "index_Expenses_CategoryId_ExpenseDate",
+            "unique": false,
+            "columnNames": [
+              "CategoryId",
+              "ExpenseDate"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "DeletedItems",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `EntityType` TEXT NOT NULL, `OriginalId` INTEGER NOT NULL, `Title` TEXT NOT NULL, `SnapshotJson` TEXT NOT NULL, `DeletedAt` TEXT NOT NULL, `Reason` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "EntityType",
+            "columnName": "EntityType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "OriginalId",
+            "columnName": "OriginalId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Title",
+            "columnName": "Title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "SnapshotJson",
+            "columnName": "SnapshotJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "DeletedAt",
+            "columnName": "DeletedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Reason",
+            "columnName": "Reason",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_DeletedItems_DeletedAt",
+            "unique": false,
+            "columnNames": [
+              "DeletedAt"
+            ]
+          },
+          {
+            "name": "index_DeletedItems_EntityType_DeletedAt",
+            "unique": false,
+            "columnNames": [
+              "EntityType",
+              "DeletedAt"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "BusinessIdentity",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER NOT NULL, `TradeName` TEXT NOT NULL, `LegalName` TEXT NOT NULL, `TaxNumber` TEXT, `CommercialRegistration` TEXT, `Phone1` TEXT NOT NULL, `Phone2` TEXT, `Address` TEXT NOT NULL, `ReceiptHeader` TEXT NOT NULL, `ReceiptFooter` TEXT NOT NULL, PRIMARY KEY(`Id`))",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "TradeName",
+            "columnName": "TradeName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "LegalName",
+            "columnName": "LegalName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "TaxNumber",
+            "columnName": "TaxNumber",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "CommercialRegistration",
+            "columnName": "CommercialRegistration",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "Phone1",
+            "columnName": "Phone1",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Phone2",
+            "columnName": "Phone2",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "Address",
+            "columnName": "Address",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ReceiptHeader",
+            "columnName": "ReceiptHeader",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ReceiptFooter",
+            "columnName": "ReceiptFooter",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "AppPreferences",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Key` TEXT NOT NULL, `Value` TEXT, PRIMARY KEY(`Key`))",
+        "fields": [
+          {
+            "fieldPath": "Key",
+            "columnName": "Key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Value",
+            "columnName": "Value",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "Key"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "Categories",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `Domain` TEXT NOT NULL, `Name` TEXT NOT NULL, `ParentId` INTEGER, `Description` TEXT, `ColorHex` TEXT, `IsActive` INTEGER NOT NULL, `SortOrder` INTEGER NOT NULL, `CreatedAt` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Domain",
+            "columnName": "Domain",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Name",
+            "columnName": "Name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ParentId",
+            "columnName": "ParentId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "Description",
+            "columnName": "Description",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "ColorHex",
+            "columnName": "ColorHex",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "IsActive",
+            "columnName": "IsActive",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "SortOrder",
+            "columnName": "SortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "CreatedAt",
+            "columnName": "CreatedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_Categories_Domain_ParentId",
+            "unique": false,
+            "columnNames": [
+              "Domain",
+              "ParentId"
+            ]
+          },
+          {
+            "name": "index_Categories_ParentId",
+            "unique": false,
+            "columnNames": [
+              "ParentId"
+            ]
+          },
+          {
+            "name": "index_Categories_Name",
+            "unique": false,
+            "columnNames": [
+              "Name"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "MeasurementUnits",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `Name` TEXT NOT NULL, `Symbol` TEXT NOT NULL, `DecimalPrecision` INTEGER NOT NULL, `BaseUnitId` INTEGER, `ConversionFactorToBase` REAL NOT NULL, `IsActive` INTEGER NOT NULL, `CreatedAt` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Name",
+            "columnName": "Name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Symbol",
+            "columnName": "Symbol",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "DecimalPrecision",
+            "columnName": "DecimalPrecision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "BaseUnitId",
+            "columnName": "BaseUnitId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "ConversionFactorToBase",
+            "columnName": "ConversionFactorToBase",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "IsActive",
+            "columnName": "IsActive",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "CreatedAt",
+            "columnName": "CreatedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_MeasurementUnits_Name",
+            "unique": true,
+            "columnNames": [
+              "Name"
+            ]
+          },
+          {
+            "name": "index_MeasurementUnits_BaseUnitId",
+            "unique": false,
+            "columnNames": [
+              "BaseUnitId"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "FinancialAccounts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `Name` TEXT NOT NULL, `AccountType` TEXT NOT NULL, `ParentGroupId` INTEGER, `CurrencySymbol` TEXT NOT NULL, `AccountNumberOrPhone` TEXT, `OpeningBalance` REAL NOT NULL, `AllowNegativeBalance` INTEGER NOT NULL, `IsDefault` INTEGER NOT NULL, `IsActive` INTEGER NOT NULL, `Notes` TEXT, `CreatedAt` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Name",
+            "columnName": "Name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "AccountType",
+            "columnName": "AccountType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ParentGroupId",
+            "columnName": "ParentGroupId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "CurrencySymbol",
+            "columnName": "CurrencySymbol",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "AccountNumberOrPhone",
+            "columnName": "AccountNumberOrPhone",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "OpeningBalance",
+            "columnName": "OpeningBalance",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "AllowNegativeBalance",
+            "columnName": "AllowNegativeBalance",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "IsDefault",
+            "columnName": "IsDefault",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "IsActive",
+            "columnName": "IsActive",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Notes",
+            "columnName": "Notes",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "CreatedAt",
+            "columnName": "CreatedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_FinancialAccounts_AccountType",
+            "unique": false,
+            "columnNames": [
+              "AccountType"
+            ]
+          },
+          {
+            "name": "index_FinancialAccounts_ParentGroupId",
+            "unique": false,
+            "columnNames": [
+              "ParentGroupId"
+            ]
+          },
+          {
+            "name": "index_FinancialAccounts_Name",
+            "unique": false,
+            "columnNames": [
+              "Name"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "FinancialTransfers",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `FromAccountId` INTEGER NOT NULL, `ToAccountId` INTEGER NOT NULL, `Amount` REAL NOT NULL, `FeeAmount` REAL NOT NULL, `OccurredAt` TEXT NOT NULL, `ReferenceNumber` TEXT, `Notes` TEXT, `Status` TEXT NOT NULL, `CreatedAt` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "FromAccountId",
+            "columnName": "FromAccountId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ToAccountId",
+            "columnName": "ToAccountId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Amount",
+            "columnName": "Amount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "FeeAmount",
+            "columnName": "FeeAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "OccurredAt",
+            "columnName": "OccurredAt",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ReferenceNumber",
+            "columnName": "ReferenceNumber",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "Notes",
+            "columnName": "Notes",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "Status",
+            "columnName": "Status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "CreatedAt",
+            "columnName": "CreatedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_FinancialTransfers_FromAccountId_OccurredAt",
+            "unique": false,
+            "columnNames": [
+              "FromAccountId",
+              "OccurredAt"
+            ]
+          },
+          {
+            "name": "index_FinancialTransfers_ToAccountId_OccurredAt",
+            "unique": false,
+            "columnNames": [
+              "ToAccountId",
+              "OccurredAt"
+            ]
+          },
+          {
+            "name": "index_FinancialTransfers_OccurredAt",
+            "unique": false,
+            "columnNames": [
+              "OccurredAt"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "Warehouses",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`Id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `Name` TEXT NOT NULL, `Code` TEXT, `Location` TEXT, `Description` TEXT, `IsDefault` INTEGER NOT NULL, `IsActive` INTEGER NOT NULL, `CreatedAt` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "Id",
+            "columnName": "Id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Name",
+            "columnName": "Name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Code",
+            "columnName": "Code",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "Location",
+            "columnName": "Location",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "Description",
+            "columnName": "Description",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "IsDefault",
+            "columnName": "IsDefault",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "IsActive",
+            "columnName": "IsActive",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "CreatedAt",
+            "columnName": "CreatedAt",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "Id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_Warehouses_Name",
+            "unique": true,
+            "columnNames": [
+              "Name"
+            ]
+          }
+        ],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3aa86505533d0295fe5b0e2a16d65799')"
+    ]
+  }
+}

@@ -476,11 +476,12 @@ fun FormSheetContainer(
                 enabled = !isSaving && lifecycleState != FormWindowLifecycleState.SAVING,
                 modifier = Modifier
                     .weight(1.65f)
-                    .height(46.dp)
+                    .heightIn(min = 46.dp)
                     .pressScaleEffect(
                         enabled = !isSaving && lifecycleState != FormWindowLifecycleState.SAVING,
                         hapticType = null
                     ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isPrimaryEnabled) primaryButtonColor else SmartLedgerColors.SurfaceCardElevated,
                     disabledContainerColor = SmartLedgerColors.SurfaceCardElevated
@@ -498,14 +499,18 @@ fun FormSheetContainer(
                         text = "جارٍ الحفظ...",
                         fontWeight = FontWeight.Bold,
                         color = SmartLedgerColors.TextInverse,
-                        style = MaterialTheme.typography.bodyLarge
+                        style = MaterialTheme.typography.bodyLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 } else {
                     Text(
                         text = primaryButtonText,
                         fontWeight = FontWeight.Bold,
                         color = if (isPrimaryEnabled) SmartLedgerColors.TextInverse else SmartLedgerColors.TextSecondary,
-                        style = MaterialTheme.typography.bodyLarge
+                        style = MaterialTheme.typography.bodyLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -515,11 +520,12 @@ fun FormSheetContainer(
                 enabled = !isSaving && lifecycleState != FormWindowLifecycleState.SAVING,
                 modifier = Modifier
                     .weight(1f)
-                    .height(46.dp)
+                    .heightIn(min = 46.dp)
                     .pressScaleEffect(
                         enabled = !isSaving && lifecycleState != FormWindowLifecycleState.SAVING,
                         hapticType = AppHapticType.CLICK
                     ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = SmartLedgerColors.TextSecondary),
                 border = ButtonDefaults.outlinedButtonBorder.copy(
                     brush = SolidColor(SmartLedgerColors.BorderSubtle)
@@ -529,7 +535,9 @@ fun FormSheetContainer(
                 Text(
                     text = secondaryButtonText,
                     fontWeight = FontWeight.SemiBold,
-                    color = SmartLedgerColors.TextSecondary
+                    color = SmartLedgerColors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }

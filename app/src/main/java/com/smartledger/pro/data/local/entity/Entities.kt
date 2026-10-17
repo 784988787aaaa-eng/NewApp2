@@ -43,7 +43,7 @@ data class PersonEntity(
 /**
  * جدول القيود والحركات المالية اليومية (سندات قبض، سندات صرف، قيود افتتاحية، مبيعات، مشتريات)
  * اتجاه التأثير:
- *  - مدين (عليه): DebtOnUs, Sale, Payment  (+Amount)
+ *  - مدين (عليه): DebtOnUs, Sale, Payment, PurchaseReturn (+Amount)
  *  - دائن (له):   DebtToUs, Purchase, Receive, SaleReturn (-Amount)
  */
 @Entity(
@@ -58,14 +58,16 @@ data class PersonEntity(
 data class OperationEntity(
     @PrimaryKey(autoGenerate = true) val Id: Long = 0,
     val PersonId: Long,
-    val Type: String, // Receive, Payment, DebtOnUs, DebtToUs, Sale, Purchase, SaleReturn, Adjustment
+    val Type: String, // Receive, Payment, DebtOnUs, DebtToUs, Sale, Purchase, SaleReturn, PurchaseReturn, Adjustment
     val Amount: Double,
     val OccurredAt: String,
     val Note: String? = null,
     val ReferenceNumber: String? = null,
     val SourceInvoiceId: Long? = null,
     val SourceStockMovementId: Long? = null,
-    val CreatedAt: String
+    val CreatedAt: String,
+    val FinancialAccountId: Long? = null,
+    val TargetInvoiceId: Long? = null
 )
 
 /**
@@ -128,7 +130,9 @@ data class InvoiceEntity(
     val PaymentType: String = "Cash", // Cash, Credit, Partial
     val Notes: String? = null,
     val Status: String = "Completed", // Completed, Suspended, Reversed
-    val CreatedAt: String
+    val CreatedAt: String,
+    val FinancialAccountId: Long? = null,
+    val WarehouseId: Long? = null
 )
 
 /**
@@ -159,7 +163,7 @@ data class InvoiceLineEntity(
 )
 
 /**
- * جدول حركات وتغييرات المخزون المستنديه (وارد، صادر، تسوية جرد)
+ * جدول حركات وتغييرات المخزون المستندية (وارد، صادر، تسوية جرد، تحويل مخزني)
  */
 @Entity(
     tableName = "StockMovements",
@@ -172,17 +176,20 @@ data class StockMovementEntity(
     @PrimaryKey(autoGenerate = true) val Id: Long = 0,
     val ProductId: Long,
     val OccurredAt: String,
-    val Type: String, // In, Out, AdjustmentIn, AdjustmentOut, Sale, Purchase, ReturnIn, ReturnOut
+    val Type: String, // In, Out, AdjustmentIn, AdjustmentOut, Sale, Purchase, ReturnIn, ReturnOut, TransferIn, TransferOut
     val QuantityMinor: Double,
     val UnitCost: Double,
     val Notes: String? = null,
     val InvoiceId: Long? = null,
     val BatchId: Long? = null,
-    val CreatedAt: String
+    val CreatedAt: String,
+    val WarehouseId: Long? = null
 )
 
 /**
- * جدول المصروفات والنفقات التشغيلية
+ * جدول المصروفات والنفقات التشغيلية والإيرادات الأخرى
+ * - يدعم `EntryType`: `"EXPENSE"` (مصروف) أو `"REVENUE"` (إيراد تشغيلي آخر)
+ * - يدعم `IsArchived`: `0` (نشط) أو `1` (مؤرشف في سلة المحذوفات مع الحفاظ على ثبات `Id`)
  */
 @Entity(
     tableName = "Expenses",
@@ -199,7 +206,13 @@ data class ExpenseEntity(
     val Statement: String,
     val PaymentSource: String = "الخزينة الرئيسية",
     val ReceiptPhotoUri: String? = null,
-    val CreatedAt: String
+    val CreatedAt: String,
+    val EntryType: String? = "EXPENSE", // EXPENSE or REVENUE
+    val FinancialAccountId: Long? = null,
+    val BeneficiaryName: String? = null,
+    val ReferenceNumber: String? = null,
+    val Notes: String? = null,
+    val IsArchived: Int? = 0
 )
 
 /**
@@ -214,7 +227,7 @@ data class ExpenseEntity(
 )
 data class DeletedItemEntity(
     @PrimaryKey(autoGenerate = true) val Id: Long = 0,
-    val EntityType: String, // Operation, Product, Account, Expense, Invoice
+    val EntityType: String, // OperationReversal, Product, Account, Expense, Invoice
     val OriginalId: Long,
     val Title: String,
     val SnapshotJson: String,
@@ -223,20 +236,20 @@ data class DeletedItemEntity(
 )
 
 /**
- * جدول هوية المنشأة ورأس وتذييل الفواتير المطبوعة
+ * جدول هوية المنشأة ورأس وتذييل الفواتير المطبوعة (يُضبط بواسطة المستخدم دون فرض بيانات وهمية)
  */
 @Entity(tableName = "BusinessIdentity")
 data class BusinessIdentityEntity(
     @PrimaryKey val Id: Int = 1,
-    val TradeName: String = "الدفتر الذكي للتجارة العامة",
-    val LegalName: String = "الدفتر الذكي",
+    val TradeName: String = "نشاطي التجاري",
+    val LegalName: String = "",
     val TaxNumber: String? = null,
     val CommercialRegistration: String? = null,
-    val Phone1: String = "777000000",
+    val Phone1: String = "",
     val Phone2: String? = null,
-    val Address: String = "صنعاء - شارع الزبيري",
-    val ReceiptHeader: String = "أهلاً وسهلاً بكم في متجرنا",
-    val ReceiptFooter: String = "البضاعة المباعة ترد وتستبدل خلال 3 أيام بفاتورة الشراء"
+    val Address: String = "",
+    val ReceiptHeader: String = "",
+    val ReceiptFooter: String = ""
 )
 
 /**
@@ -246,4 +259,121 @@ data class BusinessIdentityEntity(
 data class AppPreferenceEntity(
     @PrimaryKey val Key: String,
     val Value: String?
+)
+
+/**
+ * جدول التصنيفات الهرمية المرنة متعدد المجالات (Categories)
+ * يدعم شجرة غير محدودة المستويات (`ParentId`) للمصروفات، الإيرادات، الأصناف، العملاء، والموردين.
+ */
+@Entity(
+    tableName = "Categories",
+    indices = [
+        Index("Domain", "ParentId"),
+        Index("ParentId"),
+        Index("Name")
+    ]
+)
+data class CategoryEntity(
+    @PrimaryKey(autoGenerate = true) val Id: Long = 0,
+    val Domain: String, // EXPENSE, REVENUE, PRODUCT, CUSTOMER, SUPPLIER, ACCOUNT
+    val Name: String,
+    val ParentId: Long? = null,
+    val Description: String? = null,
+    val ColorHex: String? = null,
+    val IsActive: Boolean = true,
+    val SortOrder: Int = 0,
+    val CreatedAt: String
+)
+
+/**
+ * جدول وحدات القياس المرنة وقواعد التحويل (MeasurementUnits)
+ */
+@Entity(
+    tableName = "MeasurementUnits",
+    indices = [
+        Index(value = ["Name"], unique = true),
+        Index("BaseUnitId")
+    ]
+)
+data class MeasurementUnitEntity(
+    @PrimaryKey(autoGenerate = true) val Id: Long = 0,
+    val Name: String,
+    val Symbol: String = "",
+    val DecimalPrecision: Int = 0,
+    val BaseUnitId: Long? = null,
+    val ConversionFactorToBase: Double = 1.0,
+    val IsActive: Boolean = true,
+    val CreatedAt: String
+)
+
+/**
+ * جدول الصناديق والحسابات المالية والمحافظ والبنوك (FinancialAccounts)
+ * يشتق رصيده الفعلي من الحركات المرتبطة به كمصدر حقيقة واحد بالإضافة إلى الرصيد الافتتاحي الموثق.
+ */
+@Entity(
+    tableName = "FinancialAccounts",
+    indices = [
+        Index("AccountType"),
+        Index("ParentGroupId"),
+        Index("Name")
+    ]
+)
+data class FinancialAccountEntity(
+    @PrimaryKey(autoGenerate = true) val Id: Long = 0,
+    val Name: String,
+    val AccountType: String = "CASH_BOX", // CASH_BOX, E_WALLET, BANK_ACCOUNT, POS_TERMINAL, FUND_GROUP
+    val ParentGroupId: Long? = null,
+    val CurrencySymbol: String = "ر.ي",
+    val AccountNumberOrPhone: String? = null,
+    val OpeningBalance: Double = 0.0,
+    val AllowNegativeBalance: Boolean = false,
+    val IsDefault: Boolean = false,
+    val IsActive: Boolean = true,
+    val Notes: String? = null,
+    val CreatedAt: String
+)
+
+/**
+ * جدول التحويلات المالية الداخلية الذرية بين الصناديق والمحافظ والبنوك (FinancialTransfers)
+ * لا يُصنف إيراداً ولا مصروفاً (ما عدا رسوم التحويل إن وُجدت).
+ */
+@Entity(
+    tableName = "FinancialTransfers",
+    indices = [
+        Index("FromAccountId", "OccurredAt"),
+        Index("ToAccountId", "OccurredAt"),
+        Index("OccurredAt")
+    ]
+)
+data class FinancialTransferEntity(
+    @PrimaryKey(autoGenerate = true) val Id: Long = 0,
+    val FromAccountId: Long,
+    val ToAccountId: Long,
+    val Amount: Double,
+    val FeeAmount: Double = 0.0,
+    val OccurredAt: String,
+    val ReferenceNumber: String? = null,
+    val Notes: String? = null,
+    val Status: String = "Completed", // Completed, Reversed
+    val CreatedAt: String
+)
+
+/**
+ * جدول المخازن والفروع المستقلة (Warehouses)
+ */
+@Entity(
+    tableName = "Warehouses",
+    indices = [
+        Index(value = ["Name"], unique = true)
+    ]
+)
+data class WarehouseEntity(
+    @PrimaryKey(autoGenerate = true) val Id: Long = 0,
+    val Name: String,
+    val Code: String? = null,
+    val Location: String? = null,
+    val Description: String? = null,
+    val IsDefault: Boolean = false,
+    val IsActive: Boolean = true,
+    val CreatedAt: String
 )

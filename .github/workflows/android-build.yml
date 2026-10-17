@@ -35,7 +35,7 @@ jobs:
       - name: Grant Execute Permission to Gradlew
         run: chmod +x gradlew
 
-      - name: Verify Non-Destructive Database Policy & Baseline Schema (AST/Comment-Aware)
+      - name: Verify Non-Destructive Database Policy & Schemas v1/v2 (AST/Comment-Aware)
         run: |
           python3 -c '
           import json, os, re, sys
@@ -48,17 +48,25 @@ jobs:
           if "exportSchema = true" not in code_no_comments:
               print("ERROR: exportSchema = true is not enabled in SmartLedgerDatabase.kt!")
               sys.exit(1)
-          schema_file = "app/schemas/com.smartledger.pro.data.local.SmartLedgerDatabase/1.json"
-          if not os.path.exists(schema_file):
-              print("ERROR: Room schema file 1.json is missing!")
+          if "MIGRATION_1_2" not in code_no_comments:
+              print("ERROR: Explicit MIGRATION_1_2 is missing in SmartLedgerDatabase.kt!")
               sys.exit(1)
-          with open(schema_file, "r", encoding="utf-8") as sf:
-              schema = json.load(sf)
-          entities = schema.get("database", {}).get("entities", [])
-          if len(entities) != 11:
-              print(f"ERROR: Expected 11 Room entities in schema, found {len(entities)}")
+          schema_v1 = "app/schemas/com.smartledger.pro.data.local.SmartLedgerDatabase/1.json"
+          schema_v2 = "app/schemas/com.smartledger.pro.data.local.SmartLedgerDatabase/2.json"
+          if not os.path.exists(schema_v1) or not os.path.exists(schema_v2):
+              print("ERROR: Room schema files 1.json or 2.json are missing!")
               sys.exit(1)
-          print("SUCCESS: Non-destructive migration policy and 11-table Room schema verified.")
+          with open(schema_v1, "r", encoding="utf-8") as sf1:
+              s1 = json.load(sf1)
+          with open(schema_v2, "r", encoding="utf-8") as sf2:
+              s2 = json.load(sf2)
+          if len(s1.get("database", {}).get("entities", [])) != 11:
+              print("ERROR: Expected 11 Room entities in v1 schema")
+              sys.exit(1)
+          if len(s2.get("database", {}).get("entities", [])) != 16:
+              print("ERROR: Expected 16 Room entities in v2 schema")
+              sys.exit(1)
+          print("SUCCESS: Non-destructive migration policy (MIGRATION_1_2) and Room schemas v1 (11 tables) & v2 (16 tables) verified.")
           '
 
       - name: Run Unit, Security & Accounting Business Flow Tests
@@ -68,6 +76,7 @@ jobs:
         run: |
           ./gradlew kaptDebugKotlin --stacktrace --no-daemon
           test -f app/schemas/com.smartledger.pro.data.local.SmartLedgerDatabase/1.json
+          test -f app/schemas/com.smartledger.pro.data.local.SmartLedgerDatabase/2.json
 
       - name: Run Android Lint Static Analysis
         run: ./gradlew lintDebug --stacktrace --no-daemon
@@ -86,7 +95,7 @@ jobs:
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmartLedger-Pro-v2.4.0-Debug-APK
+          name: SmartLedger-Pro-v3.0.0-Debug-APK
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
           if-no-files-found: error
@@ -94,7 +103,7 @@ jobs:
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmartLedger-Pro-v2.4.0-Release-APK
+          name: SmartLedger-Pro-v3.0.0-Release-APK
           path: app/build/outputs/apk/release/*.apk
           retention-days: 30
           if-no-files-found: error

@@ -21,7 +21,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.smartledger.pro.data.local.dao.FinancialAccountBalanceSummary
+import com.smartledger.pro.data.local.entity.CategoryEntity
 import com.smartledger.pro.data.local.entity.ExpenseEntity
+import com.smartledger.pro.domain.usecase.HierarchicalCategoryValidator
 import com.smartledger.pro.ui.components.*
 import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
@@ -36,26 +39,48 @@ fun ExpensesScreen(
     viewModel: ExpensesViewModel = viewModel()
 ) {
     val allExpenses by viewModel.expenses.collectAsState()
+    val userCategories by viewModel.categories.collectAsState()
+    val financialAccounts by viewModel.financialAccounts.collectAsState()
     val scope = rememberCoroutineScope()
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
-    var selectedCategory by rememberSaveable { mutableStateOf("ALL") }
+    var selectedTypeFilter by rememberSaveable { mutableStateOf("ALL") } // ALL, EXPENSE, REVENUE
+    var selectedCategoryFilter by rememberSaveable { mutableStateOf("ALL") }
     var showAddExpenseDialog by rememberSaveable { mutableStateOf(false) }
     var expenseIdToDelete by rememberSaveable { mutableStateOf<Long?>(null) }
     val expenseToDelete = remember(allExpenses, expenseIdToDelete) { expenseIdToDelete?.let { id -> allExpenses.firstOrNull { it.Id == id } } }
+    var lastDeletedExpense by remember { mutableStateOf<ExpenseEntity?>(null) }
     var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
-    val filteredExpenses = remember(allExpenses, searchQuery, selectedCategory) {
+    val dynamicCategoryChips = remember(userCategories, allExpenses) {
+        val fromEntities = userCategories.map { it.Name }
+        val fromStatements = allExpenses.mapNotNull { exp ->
+            if (exp.Statement.startsWith("[") && exp.Statement.contains("]")) {
+                exp.Statement.substringAfter("[").substringBefore("]").trim().takeIf { it.isNotEmpty() }
+            } else null
+        }
+        val combined = (fromEntities + fromStatements).distinct()
+        listOf("ALL" to "كل التصنيفات") + combined.map { it to it }
+    }
+
+    val filteredExpenses = remember(allExpenses, searchQuery, selectedTypeFilter, selectedCategoryFilter) {
         allExpenses.filter { exp ->
+            val entryType = exp.EntryType ?: "EXPENSE"
+            val matchesType = selectedTypeFilter == "ALL" || entryType.equals(selectedTypeFilter, ignoreCase = true)
             val matchesQuery = searchQuery.isBlank() ||
                 exp.Statement.contains(searchQuery, ignoreCase = true) ||
                 exp.PaymentSource.contains(searchQuery, ignoreCase = true)
-            val matchesCat = selectedCategory == "ALL" || exp.Statement.contains(selectedCategory)
-            matchesQuery && matchesCat
+            val matchesCat = selectedCategoryFilter == "ALL" || exp.Statement.contains(selectedCategoryFilter, ignoreCase = true)
+            matchesType && matchesQuery && matchesCat
         }
     }
 
-    val totalExpenses = remember(filteredExpenses) { filteredExpenses.sumOf { it.Amount } }
+    val totalExpenses = remember(filteredExpenses) {
+        filteredExpenses.filter { (it.EntryType ?: "EXPENSE") == "EXPENSE" }.sumOf { it.Amount }
+    }
+    val totalRevenues = remember(filteredExpenses) {
+        filteredExpenses.filter { it.EntryType == "REVENUE" }.sumOf { it.Amount }
+    }
 
     Scaffold(
         containerColor = SmartLedgerColors.SurfaceWindow,
@@ -83,52 +108,58 @@ fun ExpensesScreen(
                         }
                         Column {
                             Text(
-                                text = "المصروفات والنفقات التشغيلية",
+                                text = "المصروفات والإيرادات التشغيلية",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = SmartLedgerColors.TextPrimary
                             )
                             Text(
-                                text = "إجمالي النفقات المعروضة: ${NumberFormatter.formatCurrency(totalExpenses, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}",
+                                text = "مصروفات: ${NumberFormatter.formatCurrency(totalExpenses, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}" +
+                                    if (totalRevenues > 0.0) " • إيرادات: ${NumberFormatter.formatCurrency(totalRevenues, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}" else "",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = SmartLedgerColors.StateDangerText
+                                color = SmartLedgerColors.TextSecondary
                             )
                         }
                     }
 
                     Button(
                         onClick = { showAddExpenseDialog = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.StateDanger),
+                        colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                         modifier = Modifier
-                            .height(38.dp)
+                            .heightIn(min = 38.dp)
                             .pressScaleEffect()
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = SmartLedgerColors.TextInverse)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("تسجيل نفقة", color = SmartLedgerColors.TextInverse, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                        Text("قيد جديد", color = SmartLedgerColors.TextInverse, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                     }
                 }
 
                 CompactSearchBar(
                     query = searchQuery,
                     onQueryChange = { searchQuery = it },
-                    placeholder = "ابحث في بيان المصروف أو مصدر الدفع...",
+                    placeholder = "ابحث في البيان أو التصنيف أو الصندوق...",
                     resultCount = filteredExpenses.size
                 )
 
-                FilterChipRow(
-                    items = listOf(
-                        "ALL" to "كل التصنيفات",
-                        "إيجار ومرافق" to "إيجار ومرافق",
-                        "رواتب وأجور" to "رواتب وأجور",
-                        "نقل وشحن" to "نقل وشحن",
-                        "ضيافة ونثريات" to "ضيافة ونثريات",
-                        "صيانة" to "صيانة"
+                SegmentedOptionRow(
+                    options = listOf(
+                        "ALL" to "الكل",
+                        "EXPENSE" to "مصروفات تشغيلية",
+                        "REVENUE" to "إيرادات أخرى"
                     ),
-                    selectedItem = selectedCategory,
-                    onItemSelected = { selectedCategory = it }
+                    selectedOption = selectedTypeFilter,
+                    onOptionSelected = { selectedTypeFilter = it }
                 )
+
+                if (dynamicCategoryChips.size > 1) {
+                    FilterChipRow(
+                        items = dynamicCategoryChips,
+                        selectedItem = selectedCategoryFilter,
+                        onItemSelected = { selectedCategoryFilter = it }
+                    )
+                }
             }
         }
     ) { innerPadding ->
@@ -143,28 +174,42 @@ fun ExpensesScreen(
                 Spacer(modifier = Modifier.height(4.dp))
                 StatusFeedbackBanner(
                     message = statusMessage,
-                    onDismiss = { statusMessage = null }
+                    actionLabel = if (lastDeletedExpense != null) "تراجع عن الأرشفة" else null,
+                    onAction = if (lastDeletedExpense != null) {
+                        {
+                            val exp = lastDeletedExpense!!
+                            viewModel.restoreExpenseSnapshot(exp)
+                            lastDeletedExpense = null
+                            statusMessage = "تمت استعادة السجل «${exp.Statement}» بمعرفه الأصلي (#${exp.Id}) بنجاح."
+                        }
+                    } else null,
+                    onDismiss = {
+                        statusMessage = null
+                        lastDeletedExpense = null
+                    }
                 )
             }
 
             if (filteredExpenses.isEmpty()) {
                 item {
-                    val isFiltered = searchQuery.isNotBlank() || selectedCategory != "ALL"
+                    val isFiltered = searchQuery.isNotBlank() || selectedCategoryFilter != "ALL" || selectedTypeFilter != "ALL"
                     SmartEmptyState(
                         icon = Icons.Default.TrendingDown,
-                        title = "لا توجد مصروفات مسجلة",
-                        subtitle = "سجّل الإيجار، الكهرباء، أجور النقل، والنثريات لحساب صافي الربح الحقيقي في قائمة الدخل.",
-                        actionText = "تسجيل أول نفقة",
+                        title = "لا توجد سجلات مصروفات أو إيرادات بعد",
+                        subtitle = "سجّل المصروفات أو الإيرادات التشغيلية بتصنيفاتك وصناديقك الخاصة دون أي قوائم مفروضة.",
+                        actionText = "تسجيل أول عملية",
                         onActionClick = { showAddExpenseDialog = true },
                         isFiltered = isFiltered,
                         onClearFilters = {
                             searchQuery = ""
-                            selectedCategory = "ALL"
+                            selectedCategoryFilter = "ALL"
+                            selectedTypeFilter = "ALL"
                         }
                     )
                 }
             } else {
                 items(filteredExpenses, key = { it.Id }) { expense ->
+                    val isRevenue = expense.EntryType == "REVENUE"
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
@@ -185,10 +230,10 @@ fun ExpensesScreen(
                                     modifier = Modifier.weight(1f)
                                 )
                                 Text(
-                                    text = NumberFormatter.formatCurrency(expense.Amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces),
+                                    text = (if (isRevenue) "+" else "-") + NumberFormatter.formatCurrency(expense.Amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = SmartLedgerColors.StateDanger
+                                    color = if (isRevenue) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger
                                 )
                             }
 
@@ -199,17 +244,32 @@ fun ExpensesScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(SmartLedgerColors.SurfaceCardElevated)
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Text(
-                                        text = expense.PaymentSource,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = SmartLedgerColors.AccentLight
-                                    )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isRevenue) SmartLedgerColors.StateSuccessSubtle else SmartLedgerColors.StateDangerSubtle)
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isRevenue) "إيراد آخر" else "مصروف",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isRevenue) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(SmartLedgerColors.SurfaceCardElevated)
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Text(
+                                            text = expense.PaymentSource,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SmartLedgerColors.AccentLight
+                                        )
+                                    }
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -223,7 +283,7 @@ fun ExpensesScreen(
                                         onClick = { expenseIdToDelete = expense.Id },
                                         modifier = Modifier.size(26.dp)
                                     ) {
-                                        Icon(Icons.Default.DeleteOutline, contentDescription = "حذف النفقة", tint = SmartLedgerColors.StateDanger, modifier = Modifier.size(16.dp))
+                                        Icon(Icons.Default.DeleteOutline, contentDescription = "أرشفة", tint = SmartLedgerColors.StateDanger, modifier = Modifier.size(16.dp))
                                     }
                                 }
                             }
@@ -235,27 +295,41 @@ fun ExpensesScreen(
             item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
-        // نافذة تسجيل نفقة تشغيلية عائمة فوق لوحة المفاتيح مع حماية كاملة من الإغلاق عند الخطأ
         if (showAddExpenseDialog) {
             FloatingModalDialog(onDismissRequest = { showAddExpenseDialog = false }) {
                 var isSavingExpense by remember { mutableStateOf(false) }
                 var saveExpenseError by remember { mutableStateOf<String?>(null) }
 
                 AddExpenseDialog(
+                    categories = userCategories,
+                    financialAccounts = financialAccounts,
                     isSaving = isSavingExpense,
                     errorMessage = saveExpenseError,
                     onDismiss = { showAddExpenseDialog = false },
-                    onSave = { amount, statement, category, source ->
+                    onSave = { entryType, amount, statement, category, source, categoryId, financialAccountId ->
                         isSavingExpense = true
                         saveExpenseError = null
                         scope.launch {
-                            val res = viewModel.saveExpenseAsync(amount, statement, category, source)
+                            val res = viewModel.saveExpenseAsync(
+                                amount = amount,
+                                statement = statement,
+                                category = category,
+                                source = source,
+                                entryType = entryType,
+                                categoryId = categoryId,
+                                financialAccountId = financialAccountId
+                            )
                             isSavingExpense = false
                             if (res.isSuccess) {
                                 showAddExpenseDialog = false
-                                statusMessage = "تم تسجيل النفقة التشغيلية وخصمها من قائمة الدخل."
+                                lastDeletedExpense = null
+                                statusMessage = if (entryType == "REVENUE") {
+                                    "تم تسجيل الإيراد التشغيلي وإضافته إلى قائمة الدخل والسيولة."
+                                } else {
+                                    "تم تسجيل النفقة التشغيلية وخصمها من قائمة الدخل والسيولة."
+                                }
                             } else {
-                                saveExpenseError = res.exceptionOrNull()?.message ?: "تعذر حفظ النفقة التشغيلية؛ يرجى التحقق والمحاولة مرة أخرى."
+                                saveExpenseError = res.exceptionOrNull()?.message ?: "تعذر حفظ السجل؛ يرجى التحقق والمحاولة مرة أخرى."
                             }
                         }
                     }
@@ -266,14 +340,15 @@ fun ExpensesScreen(
         if (expenseToDelete != null) {
             val target = expenseToDelete!!
             ConfirmActionDialog(
-                title = "حذف النفقة التشغيلية؟",
-                message = "سيتم حذف المصروف «${target.Statement}» بقيمة ${NumberFormatter.formatCurrency(target.Amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} ونقله إلى سجل المحذوفات.",
-                confirmText = "حذف النفقة",
+                title = "أرشفة السجل المالي؟",
+                message = "سيتم أرشفة «${target.Statement}» بقيمة ${NumberFormatter.formatCurrency(target.Amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} ونقله إلى سلة المحذوفات مع الحفاظ على معرفه الأصلي (#${target.Id}) عند الاستعادة.",
+                confirmText = "أرشفة السجل",
                 requireReason = true,
                 onConfirm = { reason ->
+                    lastDeletedExpense = target
                     viewModel.deleteExpense(target.Id, reason)
                     expenseIdToDelete = null
-                    statusMessage = "تم حذف النفقة التشغيلية."
+                    statusMessage = "تمت أرشفة «${target.Statement}»."
                 },
                 onDismiss = { expenseIdToDelete = null }
             )
@@ -283,81 +358,135 @@ fun ExpensesScreen(
 
 @Composable
 fun AddExpenseDialog(
+    categories: List<CategoryEntity> = emptyList(),
+    financialAccounts: List<FinancialAccountBalanceSummary> = emptyList(),
     isSaving: Boolean = false,
     errorMessage: String? = null,
     onDismiss: () -> Unit,
-    onSave: (amount: Double, statement: String, category: String, source: String) -> Unit
+    onSave: (
+        entryType: String,
+        amount: Double,
+        statement: String,
+        category: String,
+        source: String,
+        categoryId: Long?,
+        financialAccountId: Long?
+    ) -> Unit
 ) {
+    var entryType by rememberSaveable { mutableStateOf("EXPENSE") } // EXPENSE or REVENUE
     var amountText by rememberSaveable { mutableStateOf("") }
     var statement by rememberSaveable { mutableStateOf("") }
-    var category by rememberSaveable { mutableStateOf("إيجار ومرافق") }
-    var source by rememberSaveable { mutableStateOf("الخزينة الرئيسية") }
+    var categoryText by rememberSaveable { mutableStateOf("") }
+    var selectedCategoryId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var sourceText by rememberSaveable {
+        mutableStateOf(financialAccounts.firstOrNull { it.IsDefault }?.Name ?: financialAccounts.firstOrNull()?.Name ?: "")
+    }
+    var selectedAccountId by rememberSaveable {
+        mutableStateOf(financialAccounts.firstOrNull { it.IsDefault }?.Id ?: financialAccounts.firstOrNull()?.Id)
+    }
+
+    val domainCategories = remember(categories, entryType) {
+        categories.filter { it.Domain.equals(entryType, ignoreCase = true) && it.IsActive }
+    }
+    val categorySuggestions = remember(domainCategories) {
+        domainCategories.map { HierarchicalCategoryValidator.formatCategoryPath(it.Id, domainCategories) }
+    }
+    val sourceSuggestions = remember(financialAccounts) {
+        financialAccounts.map { it.Name }
+    }
 
     val focusStatement = remember { FocusRequester() }
     val amount = NumberFormatter.parseDouble(amountText, 0.0)
     val isFormValid = amount > 0.0 && statement.trim().isNotEmpty()
 
     FormSheetContainer(
-        title = "تسجيل نفقة تشغيلية",
-        subtitle = "توثيق المصروفات التشغيلية لحساب صافي الربح بدقة",
-        headerIcon = Icons.Default.TrendingDown,
+        title = if (entryType == "REVENUE") "تسجيل إيراد تشغيلي آخر" else "تسجيل نفقة تشغيلية",
+        subtitle = "اختر من تصنيفاتك وصناديقك الخاصة أو اكتب اسماً جديداً ليُحفظ تلقائياً",
+        headerIcon = if (entryType == "REVENUE") Icons.Default.TrendingUp else Icons.Default.TrendingDown,
         onDismiss = onDismiss,
-        primaryButtonText = "تأكيد وقيد المصروف",
-        primaryButtonColor = SmartLedgerColors.StateDanger,
+        primaryButtonText = if (entryType == "REVENUE") "تأكيد وقيد الإيراد" else "تأكيد وقيد المصروف",
+        primaryButtonColor = if (entryType == "REVENUE") SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger,
         isPrimaryEnabled = isFormValid,
         isSaving = isSaving,
         errorMessage = errorMessage,
         hasUnsavedChanges = amountText.isNotBlank() || statement.isNotBlank(),
         onPrimaryClick = {
             if (isFormValid) {
-                onSave(amount, statement.trim(), category, source)
+                onSave(
+                    entryType,
+                    amount,
+                    statement.trim(),
+                    categoryText.trim(),
+                    sourceText.trim().ifBlank { "صندوق عام" },
+                    selectedCategoryId,
+                    selectedAccountId
+                )
             }
         }
     ) {
-        FormSectionGroup(title = "1. تصنيف النفقة ومبلغها") {
-            FilterChipRow(
-                items = listOf(
-                    "إيجار ومرافق" to "إيجار ومرافق",
-                    "رواتب وأجور" to "رواتب وأجور",
-                    "نقل وشحن" to "نقل وشحن",
-                    "ضيافة ونثريات" to "ضيافة ونثريات",
-                    "صيانة" to "صيانة"
+        FormSectionGroup(title = "1. نوع العملية والمبلغ والتصنيف") {
+            SegmentedOptionRow(
+                options = listOf(
+                    "EXPENSE" to "مصروف تشغيلي (-)",
+                    "REVENUE" to "إيراد آخر (+)"
                 ),
-                selectedItem = category,
-                onItemSelected = { category = it }
+                selectedOption = entryType,
+                onOptionSelected = {
+                    entryType = it
+                    selectedCategoryId = null
+                },
+                activeColor = if (entryType == "REVENUE") SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger
             )
 
             SmartTextField(
                 value = amountText,
                 onValueChange = { amountText = it },
-                label = "مبلغ النفقة (${AppDesignState.currencySymbol})",
-                placeholder = "مثال: 15000",
+                label = "المبلغ (${AppDesignState.currencySymbol})",
+                placeholder = "0",
                 isRequired = true,
                 keyboardType = KeyboardType.Decimal,
                 autoFocusOnAppear = amountText.isBlank(),
                 nextFocusRequester = focusStatement
             )
+
+            SmartAutocompleteField(
+                value = categoryText,
+                onValueChange = { typed ->
+                    categoryText = typed
+                    selectedCategoryId = domainCategories.firstOrNull {
+                        it.Name.equals(typed.trim(), ignoreCase = true) ||
+                            HierarchicalCategoryValidator.formatCategoryPath(it.Id, domainCategories).equals(typed.trim(), ignoreCase = true)
+                    }?.Id
+                },
+                label = "التصنيف (اختر من تصنيفاتك أو اكتب تصنيفاً جديداً)",
+                placeholder = if (entryType == "REVENUE") "مثال: إيراد خدمات، عمولات..." else "مثال: إيجار، كهرباء، رواتب...",
+                suggestions = categorySuggestions,
+                leadingIcon = Icons.Default.AccountTree
+            )
         }
 
-        FormSectionGroup(title = "2. بيان الصرف ومصدر الدفع") {
+        FormSectionGroup(title = "2. البيان والحساب المالي (الصندوق / المحفظة)") {
             SmartTextField(
                 value = statement,
                 onValueChange = { statement = it },
-                label = "بيان سبب الصرف ومبرره",
-                placeholder = "مثال: سداد فاتورة كهرباء شهر أكتوبر...",
+                label = "البيان والوصف التفصيلي",
+                placeholder = "أدخل تفاصيل العملية...",
                 isRequired = true,
                 focusRequester = focusStatement,
-                imeAction = ImeAction.Done
+                imeAction = ImeAction.Next
             )
 
-            SegmentedOptionRow(
-                options = listOf(
-                    "الخزينة الرئيسية" to "الخزينة الرئيسية",
-                    "الحساب البنكي" to "الحساب البنكي",
-                    "عهدة نقدية" to "عهدة نقدية"
-                ),
-                selectedOption = source,
-                onOptionSelected = { source = it }
+            SmartAutocompleteField(
+                value = sourceText,
+                onValueChange = { typed ->
+                    sourceText = typed
+                    selectedAccountId = financialAccounts.firstOrNull { it.Name.equals(typed.trim(), ignoreCase = true) }?.Id
+                },
+                label = if (entryType == "REVENUE") "الحساب المالي المستلم (صندوق / محفظة / بنك)" else "الحساب المالي المسدد منه (صندوق / محفظة / بنك)",
+                placeholder = "اكتب أو اختر الصندوق أو المحفظة...",
+                suggestions = sourceSuggestions,
+                leadingIcon = Icons.Default.AccountBalanceWallet,
+                imeAction = ImeAction.Done
             )
         }
     }

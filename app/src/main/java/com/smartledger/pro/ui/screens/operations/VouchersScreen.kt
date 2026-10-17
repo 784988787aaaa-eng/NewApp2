@@ -41,6 +41,7 @@ fun VouchersScreen(
     viewModel: VouchersViewModel = viewModel()
 ) {
     val accounts by viewModel.accounts.collectAsState()
+    val financialAccounts by viewModel.financialAccounts.collectAsState()
     val recentVouchers by viewModel.recentVouchers.collectAsState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -50,6 +51,8 @@ fun VouchersScreen(
     var selectedAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
     var statementText by rememberSaveable { mutableStateOf("") }
     var refNumberText by rememberSaveable { mutableStateOf("") }
+    var selectedFinancialAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var selectedTargetInvoiceId by rememberSaveable { mutableStateOf<Long?>(null) }
 
     var showAccountPickerSheet by rememberSaveable { mutableStateOf(false) }
     var showConfirmPostDialog by rememberSaveable { mutableStateOf(false) }
@@ -60,6 +63,10 @@ fun VouchersScreen(
     val selectedAccount = remember(accounts, selectedAccountId) {
         selectedAccountId?.let { id -> accounts.firstOrNull { it.PersonId == id } }
     }
+    val openInvoicesFlow = remember(selectedAccountId) {
+        if (selectedAccountId != null && selectedAccountId!! > 0L) viewModel.getOpenInvoicesForPerson(selectedAccountId!!) else kotlinx.coroutines.flow.flowOf(emptyList())
+    }
+    val openInvoices by openInvoicesFlow.collectAsState(initial = emptyList())
 
     val focusStatement = remember { FocusRequester() }
     val amountVal = NumberFormatter.parseDouble(amountText, 0.0)
@@ -263,6 +270,41 @@ fun VouchersScreen(
                             }
                         }
 
+                        if (financialAccounts.isNotEmpty()) {
+                            Text("الصندوق / المحفظة المالية:", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary)
+                            val accOptions = remember(financialAccounts) {
+                                listOf<Pair<Long?, String>>(null to "الصندوق الافتراضي") +
+                                    financialAccounts.map { it.Id as Long? to it.Name }
+                            }
+                            FilterChipRow(
+                                items = accOptions,
+                                selectedItem = selectedFinancialAccountId,
+                                onItemSelected = { selectedFinancialAccountId = it }
+                            )
+                        }
+
+                        if (openInvoices.isNotEmpty()) {
+                            Text("تخصيص الدفعة لفاتورة مفتوحة (اختياري):", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary)
+                            val invOptions = remember(openInvoices) {
+                                listOf<Pair<Long?, String>>(null to "دفعة عامة على الحساب / مقدمة") +
+                                    openInvoices.map { it.Id as Long? to "${it.InvoiceNumber} (متبقي: ${NumberFormatter.formatCurrency(it.RemainingAmount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)})" }
+                            }
+                            FilterChipRow(
+                                items = invOptions,
+                                selectedItem = selectedTargetInvoiceId,
+                                onItemSelected = { invId ->
+                                    selectedTargetInvoiceId = invId
+                                    val chosen = openInvoices.firstOrNull { it.Id == invId }
+                                    if (chosen != null && amountText.isBlank()) {
+                                        amountText = NumberFormatter.formatQuantity(chosen.RemainingAmount)
+                                        if (statementText.isBlank()) {
+                                            statementText = "سداد فاتورة #${chosen.InvoiceNumber}"
+                                        }
+                                    }
+                                }
+                            )
+                        }
+
                         SmartTextField(
                             value = statementText,
                             onValueChange = { statementText = it },
@@ -285,7 +327,7 @@ fun VouchersScreen(
                             enabled = isFormValid,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(46.dp)
+                                .heightIn(min = 46.dp)
                                 .pressScaleEffect(enabled = isFormValid),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = if (isReceiptMode) SmartLedgerColors.StateSuccess else SmartLedgerColors.AccentPrimary
@@ -442,7 +484,7 @@ fun VouchersScreen(
                     scope.launch {
                         val type = if (isReceiptMode) "Receive" else "Payment"
                         val st = statementText.trim().ifBlank { if (isReceiptMode) "سند قبض نقدية" else "سند صرف نقدية" }
-                        val res = viewModel.createVoucher(acc.PersonId, type, amountVal, st, refNumberText.trim().ifBlank { null })
+                        val res = viewModel.createVoucher(acc.PersonId, type, amountVal, st, refNumberText.trim().ifBlank { null }, selectedFinancialAccountId, selectedTargetInvoiceId)
                         isPostingVoucher = false
                         if (res.isSuccess) {
                             isStatusError = false

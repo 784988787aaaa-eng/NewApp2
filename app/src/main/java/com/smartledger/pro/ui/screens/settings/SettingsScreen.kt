@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -45,6 +46,7 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsState()
     val identity by viewModel.businessIdentity.collectAsState()
     val indexedBackups by viewModel.indexedBackups.collectAsState()
+    val deletedItems by viewModel.deletedItems.collectAsState()
     val biometricCapability = remember { BiometricLockHelper.checkBiometricSupport(context) }
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -56,7 +58,11 @@ fun SettingsScreen(
     var showPrinterPickerSheet by rememberSaveable { mutableStateOf(false) }
     var showPinSetupSheet by rememberSaveable { mutableStateOf(false) }
     var showBackupsArchiveSheet by rememberSaveable { mutableStateOf(false) }
+    var showTrashRecoverySheet by rememberSaveable { mutableStateOf(false) }
     var showResetConfirmDialog by rememberSaveable { mutableStateOf(false) }
+    var showCategoriesSheet by rememberSaveable { mutableStateOf(false) }
+    var showFinancialAccountsSheet by rememberSaveable { mutableStateOf(false) }
+    var showUnitsWarehousesSheet by rememberSaveable { mutableStateOf(false) }
 
     var isWorkingOnBackup by remember { mutableStateOf(false) }
     var driveState by remember(settings.googleDriveAccountEmail, settings.googleDriveAccessToken, settings.lastCloudBackupTime) {
@@ -154,7 +160,7 @@ fun SettingsScreen(
                             color = SmartLedgerColors.TextPrimary
                         )
                         Text(
-                            text = "الدفتر الذكي Pro — الإصدار 2.4.0 • حفظ دائم ومشفر",
+                            text = "الدفتر الذكي Pro — الإصدار 3.0.0 • حفظ دائم ومشفر",
                             style = MaterialTheme.typography.labelSmall,
                             color = SmartLedgerColors.TextMuted
                         )
@@ -165,7 +171,7 @@ fun SettingsScreen(
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                         border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.height(34.dp).pressScaleEffect()
+                        modifier = Modifier.heightIn(min = 34.dp).pressScaleEffect()
                     ) {
                         Icon(Icons.Default.RestartAlt, contentDescription = null, tint = SmartLedgerColors.TextSecondary, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -176,7 +182,7 @@ fun SettingsScreen(
                 CompactSearchBar(
                     query = searchQuery,
                     onQueryChange = { searchQuery = it },
-                    placeholder = "ابحث في الإعدادات (منشأة، عملة، مظهر، نسخ، طابعة، بصمة)..."
+                    placeholder = "ابحث في الإعدادات (منشأة، عملة، مظهر، نسخ، طابعة، بصمة، محذوفات)..."
                 )
             }
         }
@@ -197,6 +203,50 @@ fun SettingsScreen(
                 )
             }
 
+            if (matchesSearch("التصنيفات الهرمية الصناديق المحافظ البنوك التحويلات الوحدات المخازن المستودعات الفروع")) {
+                item {
+                    SettingsSectionCard(
+                        icon = Icons.Default.AccountTree,
+                        title = "0. الفهارس المرنة والصناديق والمحافظ والمخازن",
+                        statusSummary = "شجرة التصنيفات • الصناديق والتحويلات • الوحدات والمخازن"
+                    ) {
+                        Text(
+                            text = "أدِر تصنيفاتك الهرمية، وصناديقك ومحافظك المالية والتحويلات الداخلية، ووحدات القياس والمخازن بمرونة كاملة دون بيانات مفروضة.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SmartLedgerColors.TextMuted
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { showCategoriesSheet = true },
+                                modifier = Modifier.weight(1f).heightIn(min = 38.dp).pressScaleEffect(),
+                                colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
+                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
+                            ) {
+                                Text("التصنيفات الهرمية", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
+                            Button(
+                                onClick = { showFinancialAccountsSheet = true },
+                                modifier = Modifier.weight(1f).heightIn(min = 38.dp).pressScaleEffect(),
+                                colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
+                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
+                            ) {
+                                Text("الصناديق والمحافظ", color = SmartLedgerColors.AccentLight, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = { showUnitsWarehousesSheet = true },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp).pressScaleEffect(),
+                            shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
+                            border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
+                        ) {
+                            Icon(Icons.Default.Straighten, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("إدارة وحدات القياس والمخازن والفروع", color = SmartLedgerColors.AccentLight, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
             if (matchesSearch("بيانات المنشأة الفواتير الاسم التجاري الهاتف العنوان الضريبي الترويسة التذييل تسلسل الأرقام INV PUR")) {
                 item {
                     SettingsSectionCard(
@@ -205,7 +255,7 @@ fun SettingsScreen(
                         statusSummary = "${identity?.TradeName ?: "الدفتر الذكي"} • بادئة: ${settings.invoicePrefix}"
                     ) {
                         Text(
-                            text = "الهاتف: ${identity?.Phone1 ?: "777000000"} • العنوان: ${identity?.Address ?: "صنعاء"}",
+                            text = "الهاتف: ${identity?.Phone1 ?: ""} • العنوان: ${identity?.Address ?: "صنعاء"}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = SmartLedgerColors.TextSecondary
                         )
@@ -221,7 +271,7 @@ fun SettingsScreen(
                             onClick = { showEditIdentitySheet = true },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(40.dp)
+                                .heightIn(min = 40.dp)
                                 .pressScaleEffect(),
                             colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
                             shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
@@ -279,7 +329,7 @@ fun SettingsScreen(
                                     }
                                 },
                                 enabled = !isWorkingOnBackup,
-                                modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
+                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                             ) {
@@ -290,7 +340,7 @@ fun SettingsScreen(
 
                             OutlinedButton(
                                 onClick = { showBackupsArchiveSheet = true },
-                                modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(),
+                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
                             ) {
@@ -306,7 +356,7 @@ fun SettingsScreen(
                                     exportSafLauncher.launch(BackupRestoreHelper.generateBackupFileName())
                                 },
                                 enabled = !isWorkingOnBackup,
-                                modifier = Modifier.weight(1f).height(38.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
+                                modifier = Modifier.weight(1f).heightIn(min = 38.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle))
                             ) {
@@ -320,7 +370,7 @@ fun SettingsScreen(
                                     importSafLauncher.launch(arrayOf("*/*"))
                                 },
                                 enabled = !isWorkingOnBackup,
-                                modifier = Modifier.weight(1f).height(38.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
+                                modifier = Modifier.weight(1f).heightIn(min = 38.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle))
                             ) {
@@ -374,7 +424,7 @@ fun SettingsScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
                                 onClick = { showGoogleDriveConfigSheet = true },
-                                modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(),
+                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
                             ) {
@@ -413,7 +463,7 @@ fun SettingsScreen(
                                     }
                                 },
                                 enabled = driveState != DriveConnectionState.UPLOADING,
-                                modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(enabled = driveState != DriveConnectionState.UPLOADING),
+                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(enabled = driveState != DriveConnectionState.UPLOADING),
                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                             ) {
@@ -542,12 +592,12 @@ fun SettingsScreen(
                 }
             }
 
-            if (matchesSearch("المخزون الباركود موقع الرف البيع بالسالب الحد الأدنى تنبيه الائتمان الهاتف")) {
+            if (matchesSearch("المخزون الباركود موقع الرف البيع بالسالب الحد الأدنى تنبيه الائتمان الهاتف الوحدات قطعة كرتون")) {
                 item {
                     SettingsSectionCard(
                         icon = Icons.Default.Inventory2,
                         title = "6. سياسات المخزون ونقطة البيع والحقول",
-                        statusSummary = "البيع بالسالب: ${if (settings.allowNegativeStock) "مسموح" else "ممنوع"} • الباركود: ${if (settings.showBarcodeField) "ظاهر" else "مخفي"}"
+                        statusSummary = "البيع بالسالب: ${if (settings.allowNegativeStock) "مسموح" else "ممنوع"} • الوحدات الافتراضية: ${settings.defaultSmallUnit} / ${settings.defaultLargeUnit} (${NumberFormatter.formatQuantity(settings.defaultUnitFactor)})"
                     ) {
                         SettingSwitchRow(
                             title = "السماح بالبيع عند نفاد الكمية (الرصيد السالب)",
@@ -591,6 +641,26 @@ fun SettingsScreen(
                             checked = settings.showPhoneInAccounts,
                             onCheckedChange = { show ->
                                 viewModel.updateSettings { it.copy(showPhoneInAccounts = show) }
+                            }
+                        )
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        Text(
+                            text = "مفتاح الدولة الافتراضي لرسائل واتساب (${settings.defaultCountryCode}):",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = SmartLedgerColors.TextSecondary
+                        )
+                        FilterChipRow(
+                            items = listOf(
+                                "+967" to "اليمن (+967)",
+                                "+966" to "السعودية (+966)",
+                                "+20" to "مصر (+20)",
+                                "+971" to "الإمارات (+971)",
+                                "+964" to "العراق (+964)",
+                                "+962" to "الأردن (+962)"
+                            ),
+                            selectedItem = settings.defaultCountryCode,
+                            onItemSelected = { code ->
+                                viewModel.updateSettings { it.copy(defaultCountryCode = code) }
                             }
                         )
                     }
@@ -657,7 +727,7 @@ fun SettingsScreen(
                                         showPrinterPickerSheet = true
                                     }
                                 },
-                                modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(),
+                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
                             ) {
@@ -693,7 +763,7 @@ fun SettingsScreen(
                                     }
                                 },
                                 enabled = !isTestingPrinter,
-                                modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(enabled = !isTestingPrinter),
+                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(enabled = !isTestingPrinter),
                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                             ) {
@@ -753,7 +823,7 @@ fun SettingsScreen(
 
                             OutlinedButton(
                                 onClick = { showPinSetupSheet = true },
-                                modifier = Modifier.fillMaxWidth().height(38.dp).pressScaleEffect(),
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp).pressScaleEffect(),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
                             ) {
@@ -782,15 +852,71 @@ fun SettingsScreen(
                 }
             }
 
+            if (matchesSearch("سلة المحذوفات الأرشيف استعادة حساب مؤرشف صنف محذوف نفقة استرجاع سجل التدقيق")) {
+                item {
+                    val restorableCount = deletedItems.count { it.EntityType in listOf("Account", "Product", "Expense") }
+                    SettingsSectionCard(
+                        icon = Icons.Default.RestoreFromTrash,
+                        title = "9. سلة المحذوفات والأرشيف واستعادة السجلات",
+                        statusSummary = "${deletedItems.size} سجل محفوظ • $restorableCount قابل للاستعادة المباشرة"
+                    ) {
+                        Text(
+                            text = "يعرض الحسابات والأصناف المؤرشفة والنفقات المحذوفة والقيود العكسية الموثقة، ويتيح استعادة أي حساب أو صنف أو نفقة بضغطة واحدة.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SmartLedgerColors.TextMuted
+                        )
+                        Button(
+                            onClick = { showTrashRecoverySheet = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 40.dp)
+                                .pressScaleEffect(),
+                            colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
+                            shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
+                        ) {
+                            Icon(Icons.Default.RestoreFromTrash, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "فتح سلة المحذوفات والأرشيف (${deletedItems.size})",
+                                color = SmartLedgerColors.AccentLight,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                    }
+                }
+            }
+
             item { Spacer(modifier = Modifier.height(24.dp)) }
+        }
+
+        if (showCategoriesSheet) {
+            CategoryHierarchyManagerSheet(
+                viewModel = viewModel,
+                onClose = { showCategoriesSheet = false }
+            )
+        }
+
+        if (showFinancialAccountsSheet) {
+            FinancialAccountsAndTransfersSheet(
+                viewModel = viewModel,
+                onClose = { showFinancialAccountsSheet = false }
+            )
+        }
+
+        if (showUnitsWarehousesSheet) {
+            UnitsAndWarehousesManagerSheet(
+                viewModel = viewModel,
+                onClose = { showUnitsWarehousesSheet = false }
+            )
         }
 
         // نافذة تعديل هوية المنشأة والفواتير العائمة فوق لوحة المفاتيح
         if (showEditIdentitySheet) {
             FloatingModalDialog(onDismissRequest = { showEditIdentitySheet = false }) {
-                var tradeName by rememberSaveable { mutableStateOf(identity?.TradeName ?: "الدفتر الذكي للتجارة العامة") }
-                var phone by rememberSaveable { mutableStateOf(identity?.Phone1 ?: "777000000") }
-                var address by rememberSaveable { mutableStateOf(identity?.Address ?: "صنعاء - شارع الزبيري") }
+                var tradeName by rememberSaveable { mutableStateOf(identity?.TradeName ?: "نشاطي التجاري") }
+                var phone by rememberSaveable { mutableStateOf(identity?.Phone1 ?: "") }
+                var address by rememberSaveable { mutableStateOf(identity?.Address ?: "") }
                 var taxNo by rememberSaveable { mutableStateOf(identity?.TaxNumber ?: "") }
                 var header by rememberSaveable { mutableStateOf(identity?.ReceiptHeader ?: "أهلاً وسهلاً بكم في متجرنا") }
                 var footer by rememberSaveable { mutableStateOf(identity?.ReceiptFooter ?: "البضاعة المباعة ترد وتستبدل خلال 3 أيام بفاتورة الشراء") }
@@ -804,8 +930,8 @@ fun SettingsScreen(
                     onDismiss = { showEditIdentitySheet = false },
                     primaryButtonText = "حفظ بيانات المنشأة",
                     isPrimaryEnabled = tradeName.trim().isNotEmpty(),
-                    hasUnsavedChanges = tradeName != (identity?.TradeName ?: "الدفتر الذكي للتجارة العامة") ||
-                        phone != (identity?.Phone1 ?: "777000000"),
+                    hasUnsavedChanges = tradeName != (identity?.TradeName ?: "نشاطي التجاري") ||
+                        phone != (identity?.Phone1 ?: ""),
                     onPrimaryClick = {
                         viewModel.saveBusinessIdentity(
                             tradeName = tradeName,
@@ -1213,6 +1339,157 @@ fun SettingsScreen(
                         }
                     },
                     onDismiss = { recordIdToDelete = null }
+                )
+            }
+        }
+
+        // نافذة سلة المحذوفات والأرشيف واستعادة السجلات العائمة (UX-001)
+        if (showTrashRecoverySheet) {
+            var trashFilter by rememberSaveable { mutableStateOf("ALL") }
+            var trashItemIdToDeletePermanently by rememberSaveable { mutableStateOf<Long?>(null) }
+            val itemToDeleteForever = remember(deletedItems, trashItemIdToDeletePermanently) {
+                trashItemIdToDeletePermanently?.let { id -> deletedItems.firstOrNull { it.Id == id } }
+            }
+            val filteredDeleted = remember(deletedItems, trashFilter) {
+                when (trashFilter) {
+                    "Account" -> deletedItems.filter { it.EntityType == "Account" }
+                    "Product" -> deletedItems.filter { it.EntityType == "Product" }
+                    "Expense" -> deletedItems.filter { it.EntityType == "Expense" }
+                    else -> deletedItems
+                }
+            }
+
+            FloatingModalDialog(onDismissRequest = { showTrashRecoverySheet = false }) {
+                FormSheetContainer(
+                    title = "سلة المحذوفات والأرشيف",
+                    subtitle = "استعادة الحسابات والأصناف المؤرشفة والمصروفات المحذوفة",
+                    headerIcon = Icons.Default.RestoreFromTrash,
+                    onDismiss = { showTrashRecoverySheet = false },
+                    primaryButtonText = "إغلاق السلة",
+                    onPrimaryClick = { showTrashRecoverySheet = false }
+                ) {
+                    FilterChipRow(
+                        items = listOf(
+                            "ALL" to "الكل (${deletedItems.size})",
+                            "Account" to "الحسابات",
+                            "Product" to "الأصناف",
+                            "Expense" to "المصروفات"
+                        ),
+                        selectedItem = trashFilter,
+                        onItemSelected = { trashFilter = it }
+                    )
+
+                    if (filteredDeleted.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                            Text("لا توجد سجلات مؤرشفة أو محذوفة ضمن هذا التصنيف.", color = SmartLedgerColors.TextMuted)
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 340.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(filteredDeleted, key = { it.Id }) { item ->
+                                val canRestore = item.EntityType in listOf("Account", "Product", "Expense")
+                                val typeLabel = when (item.EntityType) {
+                                    "Account" -> "حساب مؤرشف"
+                                    "Product" -> "صنف مؤرشف"
+                                    "Expense" -> "نفقة محذوفة"
+                                    "OperationReversal" -> "قيد عكسي محاسبي موثق"
+                                    else -> item.EntityType
+                                }
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
+                                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle))
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = typeLabel,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (canRestore) SmartLedgerColors.AccentLight else SmartLedgerColors.StateWarning,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = item.DeletedAt.take(16),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = SmartLedgerColors.TextMuted
+                                            )
+                                        }
+
+                                        Text(
+                                            text = item.Title,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SmartLedgerColors.TextPrimary
+                                        )
+                                        if (!item.Reason.isNullOrBlank()) {
+                                            Text(
+                                                text = "السبب: ${item.Reason}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = SmartLedgerColors.TextSecondary
+                                            )
+                                        }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.End
+                                        ) {
+                                            TextButton(
+                                                onClick = { trashItemIdToDeletePermanently = item.Id },
+                                                contentPadding = PaddingValues(horizontal = 8.dp)
+                                            ) {
+                                                Text("حذف نهائي", color = SmartLedgerColors.StateDanger, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                            }
+                                            if (canRestore) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Button(
+                                                    onClick = {
+                                                        viewModel.restoreDeletedItem(item) { res ->
+                                                            if (res.isSuccess) {
+                                                                isBannerError = false
+                                                                statusBannerText = res.getOrThrow()
+                                                            } else {
+                                                                isBannerError = true
+                                                                statusBannerText = res.exceptionOrNull()?.message ?: "تعذر استعادة السجل"
+                                                            }
+                                                        }
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.StateSuccess),
+                                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    modifier = Modifier.height(32.dp).pressScaleEffect()
+                                                ) {
+                                                    Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("استعادة", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (itemToDeleteForever != null) {
+                val targetDel = itemToDeleteForever!!
+                ConfirmActionDialog(
+                    title = "حذف السجل نهائياً من سلة المحذوفات؟",
+                    message = "سيتم مسح النسخة المؤرشفة لـ «${targetDel.Title}» من سجل المحذوفات.",
+                    confirmText = "حذف نهائي",
+                    onConfirm = {
+                        viewModel.deleteDeletedItemPermanently(targetDel.Id) {
+                            trashItemIdToDeletePermanently = null
+                        }
+                    },
+                    onDismiss = { trashItemIdToDeletePermanently = null }
                 )
             }
         }

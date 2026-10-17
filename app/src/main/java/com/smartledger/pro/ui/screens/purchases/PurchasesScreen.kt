@@ -42,6 +42,7 @@ fun PurchasesScreen(
     val allInvoices by viewModel.recentPurchases.collectAsState()
     val suppliers by viewModel.suppliers.collectAsState()
     val products by viewModel.products.collectAsState()
+    val financialAccounts by viewModel.financialAccounts.collectAsState()
     val scope = rememberCoroutineScope()
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -109,7 +110,7 @@ fun PurchasesScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                         modifier = Modifier
-                            .height(38.dp)
+                            .heightIn(min = 38.dp)
                             .pressScaleEffect()
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -242,13 +243,14 @@ fun PurchasesScreen(
                 AddPurchaseSheetContent(
                     suppliers = suppliers,
                     products = products,
+                    financialAccounts = financialAccounts,
                     isSaving = isSavingPurchase,
                     errorMessage = formError,
-                    onCommit = { supplier, product, useMajor, qty, cost, paid, notes ->
+                    onCommit = { supplier, product, useMajor, qty, cost, paid, notes, finAccId ->
                         isSavingPurchase = true
                         formError = null
                         scope.launch {
-                            val res = viewModel.createPurchase(supplier, product, useMajor, qty, cost, paid, notes)
+                            val res = viewModel.createPurchase(supplier, product, useMajor, qty, cost, paid, notes, finAccId)
                             isSavingPurchase = false
                             if (res.isSuccess) {
                                 showAddPurchaseSheet = false
@@ -264,7 +266,7 @@ fun PurchasesScreen(
             }
         }
 
-        // تأكيد مرتجع المشتريات
+        // تأكيد مرتجع المشتريات مع التحقق الفعلي من نجاح العكس (UX-008)
         if (purchaseToReverse != null) {
             val target = purchaseToReverse!!
             ConfirmActionDialog(
@@ -274,10 +276,15 @@ fun PurchasesScreen(
                 requireReason = true,
                 onConfirm = { reason ->
                     scope.launch {
-                        viewModel.reversePurchaseInvoice(target.Id, reason)
+                        val res = viewModel.reversePurchaseInvoice(target.Id, reason)
                         purchaseIdToReverse = null
-                        isStatusError = false
-                        statusMessage = "تم عكس فاتورة المشتريات ${target.InvoiceNumber}."
+                        if (res.isSuccess) {
+                            isStatusError = false
+                            statusMessage = "تم عكس فاتورة المشتريات ${target.InvoiceNumber} وخصم البضاعة المرتجعة بنجاح."
+                        } else {
+                            isStatusError = true
+                            statusMessage = res.exceptionOrNull()?.message ?: "تعذر عكس فاتورة المشتريات."
+                        }
                     }
                 },
                 onDismiss = { purchaseIdToReverse = null }
@@ -290,6 +297,7 @@ fun PurchasesScreen(
 fun AddPurchaseSheetContent(
     suppliers: List<AccountBalanceSummary>,
     products: List<ProductStockItem>,
+    financialAccounts: List<com.smartledger.pro.data.local.dao.FinancialAccountBalanceSummary> = emptyList(),
     isSaving: Boolean = false,
     errorMessage: String?,
     onCommit: (
@@ -299,7 +307,8 @@ fun AddPurchaseSheetContent(
         quantity: Double,
         costPrice: Double,
         paidCash: Double,
-        notes: String?
+        notes: String?,
+        financialAccountId: Long?
     ) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -317,21 +326,24 @@ fun AddPurchaseSheetContent(
     var paymentType by rememberSaveable { mutableStateOf("Cash") }
     var paidCashText by rememberSaveable { mutableStateOf("") }
     var notes by rememberSaveable { mutableStateOf("") }
+    var selectedFinAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
 
     val qty = NumberFormatter.parseDouble(quantityText, 0.0)
     val unitCost = NumberFormatter.parseDouble(costPriceText, 0.0)
     val total = NumberFormatter.roundCurrency(qty * unitCost)
+    val rawPaidInput = NumberFormatter.parseDouble(paidCashText, 0.0)
+    val isPartialInvalid = paymentType == "Partial" && (rawPaidInput <= 0.0 || rawPaidInput >= total)
     val paid = NumberFormatter.roundCurrency(
         when (paymentType) {
             "Cash" -> total
             "Credit" -> 0.0
-            else -> NumberFormatter.parseDouble(paidCashText, 0.0).coerceIn(0.0, total)
+            else -> rawPaidInput.coerceIn(0.0, total)
         }
     )
     val remaining = NumberFormatter.roundCurrency((total - paid).coerceAtLeast(0.0))
 
     val requiresSupplier = remaining > 0.0 && selectedSupplier == null
-    val isFormValid = selectedProduct != null && qty > 0.0 && unitCost > 0.0 && !requiresSupplier
+    val isFormValid = selectedProduct != null && qty > 0.0 && unitCost > 0.0 && !requiresSupplier && !isPartialInvalid
 
     FormSheetContainer(
         title = "تسجيل فاتورة مشتريات وتوريد",
@@ -346,7 +358,7 @@ fun AddPurchaseSheetContent(
         onPrimaryClick = {
             val prod = selectedProduct
             if (isFormValid && prod != null) {
-                onCommit(selectedSupplier, prod, useMajorUnit, qty, unitCost, paid, notes)
+                onCommit(selectedSupplier, prod, useMajorUnit, qty, unitCost, paid, notes, selectedFinAccountId)
             }
         }
     ) {
@@ -421,7 +433,10 @@ fun AddPurchaseSheetContent(
             }
         }
 
-        FormSectionGroup(title = "3. طريقة السداد للمورد") {
+        FormSectionGroup(
+            title = "3. طريقة السداد للمورد",
+            badgeText = if (total > 0.0) "الإجمالي: ${NumberFormatter.formatCurrency(total, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}" else null
+        ) {
             SegmentedOptionRow(
                 options = listOf(
                     "Cash" to "نقدي كامل",
@@ -432,11 +447,21 @@ fun AddPurchaseSheetContent(
                 onOptionSelected = { paymentType = it }
             )
 
+            if (paymentType != "Credit" && financialAccounts.isNotEmpty()) {
+                FilterChipRow(
+                    items = listOf<Pair<Long?, String>>(null to "الصندوق الافتراضي") + financialAccounts.map { it.Id as Long? to it.Name },
+                    selectedItem = selectedFinAccountId,
+                    onItemSelected = { selectedFinAccountId = it }
+                )
+            }
+
             if (paymentType == "Partial") {
                 SmartTextField(
                     value = paidCashText,
                     onValueChange = { paidCashText = it },
                     label = "المبلغ المسدد نقداً للمورد الآن",
+                    isRequired = true,
+                    errorText = if (paidCashText.isNotEmpty() && isPartialInvalid) "في الدفعة الجزئية يجب أن يكون المسدد أكبر من صفر وأقل من إجمالي الفاتورة" else null,
                     keyboardType = KeyboardType.Decimal
                 )
             }

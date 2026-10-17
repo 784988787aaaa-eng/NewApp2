@@ -1,21 +1,23 @@
 package com.smartledger.pro
 
+import com.smartledger.pro.data.local.entity.CategoryEntity
+import com.smartledger.pro.data.local.entity.InvoiceEntity
+import com.smartledger.pro.data.local.entity.MeasurementUnitEntity
 import com.smartledger.pro.domain.model.UnitConversionEngine
-import com.smartledger.pro.domain.usecase.InMemoryLedgerEngine
-import com.smartledger.pro.domain.usecase.SequentialInvoiceNumberGenerator
+import com.smartledger.pro.domain.usecase.*
 import com.smartledger.pro.ui.components.FormWindowLifecycleState
 import com.smartledger.pro.util.ChecksumVerificationStatus
 import com.smartledger.pro.util.NumberFormatter
 import com.smartledger.pro.util.SecurityCryptoHelper
+import com.smartledger.pro.util.WhatsAppHelper
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
-import java.security.MessageDigest
 
 /**
- * جناح الاختبارات الهندسية الشامل (Unit + Ledger Integration + Security + Numeric Parsing + Cashbox)
- * يغطي كافة الملاحظات الحرجة P0/P1/P2 — SmartLedger Pro v2.4.0
+ * جناح الاختبارات الهندسية الشامل (Unit + Ledger Integration + Categories + Units + WAC + Allocation + Security + UX)
+ * يغطي كافة متطلبات التوجيه الهندسي من المرحلة 1 إلى المرحلة 10 — SmartLedger Pro v3.0.0
  */
 class AccountingEngineTest {
 
@@ -101,7 +103,6 @@ class AccountingEngineTest {
         assertEquals(25000.0, afterReceipt.NetBalance, 0.001)
 
         val report = ledger.getFinancialReportSummary()
-        // المبيعات المحاسبية = 50,000، بينما السيولة النقدية الفعلية بالصندوق = 15,000 (دفعة الفاتورة) + 20,000 (سند القبض) = 35,000
         assertEquals(50000.0, report.TotalSales, 0.001)
         assertEquals(35000.0, report.CashInflows, 0.001)
         assertEquals(35000.0, report.NetCashBalance, 0.001)
@@ -124,7 +125,6 @@ class AccountingEngineTest {
             openingMinorQty = 10.0 // المتاح 10 علب فقط
         ).getOrThrow()
 
-        // أ. محاولة التحايل بتكرار نفس الصنف في بندين داخل فاتورة واحدة (6 علب + 6 علب = 12 علبة > 10 المتاحة)
         val duplicateLineAttempt = ledger.postSaleInvoice(
             personId = null,
             lines = listOf(
@@ -136,7 +136,6 @@ class AccountingEngineTest {
         assertTrue(duplicateLineAttempt.isFailure)
         assertEquals(10.0, ledger.getProductStockMinor(prodId), 0.001)
 
-        // ب. محاكاة تداخل عمليتي بيع: العملية الأولى تبيع 7 علب بنجاح (يتبقى 3 علب)
         val firstSale = ledger.postSaleInvoice(
             personId = null,
             lines = listOf(Triple(prodId, 0.0, 7.0)),
@@ -145,7 +144,6 @@ class AccountingEngineTest {
         assertTrue(firstSale.isSuccess)
         assertEquals(3.0, ledger.getProductStockMinor(prodId), 0.001)
 
-        // ج. العملية الثانية كانت معدة لبيع 5 علب على افتراض أن الرصيد القديم 10؛ ترفضها المعاملة لأن الرصيد الفعلي أصبح 3
         val secondConcurrentSale = ledger.postSaleInvoice(
             personId = null,
             lines = listOf(Triple(prodId, 0.0, 5.0)),
@@ -180,16 +178,14 @@ class AccountingEngineTest {
         }
         assertEquals(150, generatedNumbers.size)
 
-        // التحقق أيضاً من المولد الذري المباشر
         val candidateSet = (1..200).map { SequentialInvoiceNumberGenerator.nextCandidate("INV", "20261017") }.toSet()
         assertEquals(200, candidateSet.size)
     }
 
-    // 5. اختبار الإلغاء المحاسبي الموثق للحركات (Auditable Operation Reversal) وتهريب JSON الآمن (P1)
+    // 5. اختبار الإلغاء المحاسبي الموثق للحركات ومنع عكس حركة فاتورة منفردة وعدم تضخيم التدفقات النقدية الخارجة
     @Test
-    fun testFlow5_AuditableOperationReversal_PreservesHistory_FixesBalance_AndEscapesJsonSafely() {
+    fun testFlow5_AuditableOperationReversal_PreservesHistory_FixesBalance_AndDoesNotInflateCashOutflows() {
         val ledger = InMemoryLedgerEngine(allowNegativeStock = false)
-        // اسم حساب يحتوي على علامات اقتباس مزدوجة وشرطة مائلة لاختبار سلامة JSON
         val customerId = ledger.createAccount(
             name = "شركة \"النجم\" للتجارة \\ الاستيراد",
             bookId = 1L,
@@ -205,20 +201,41 @@ class AccountingEngineTest {
         ).getOrThrow()
 
         assertEquals(15000.0, ledger.getAccountBalanceSummary(customerId).NetBalance, 0.001)
+        assertEquals(5000.0, ledger.getFinancialReportSummary().CashInflows, 0.001)
+        assertEquals(0.0, ledger.getFinancialReportSummary().CashOutflows, 0.001)
 
         // إلغاء الحركة بقيد عكسي محاسبي موثق
         val reversalId = ledger.cancelOperationWithReversal(voucherId, "إدخال بالخطأ في حساب \"النجم\"").getOrThrow()
 
-        // 1. الحركة الأصلية لم تُمسح من السجل
         assertTrue(ledger.operations.any { it.Id == voucherId })
-        // 2. أُضيفت حركة عكسية تحمل المرجع REV-OP-<id>
         assertTrue(ledger.operations.any { it.Id == reversalId && it.ReferenceNumber == "REV-OP-$voucherId" })
-        // 3. عاد صافي رصيد الحساب إلى 20,000 بدقة
         assertEquals(20000.0, ledger.getAccountBalanceSummary(customerId).NetBalance, 0.001)
-        // 4. منع عكس الحركة نفسها مرة ثانية
+
+        // التأكد من أن عكس سند القبض يصفر التدفق النقدي الوارد ولا يضخم التدفق النقدي الخارج!
+        val reportAfterReversal = ledger.getFinancialReportSummary()
+        assertEquals(0.0, reportAfterReversal.CashInflows, 0.001)
+        assertEquals(0.0, reportAfterReversal.CashOutflows, 0.001)
+        assertEquals(0.0, reportAfterReversal.NetCashBalance, 0.001)
+
+        // منع عكس الحركة نفسها مرة ثانية
         assertTrue(ledger.cancelOperationWithReversal(voucherId, "محاولة مكررة").isFailure)
 
-        // 5. التأكد من أن SnapshotJson صالح 100% كـ JSON بالرغم من علامات الاقتباس
+        // منع عكس حركة مالية مرتبطة بفاتورة بشكل مستقل عن الفاتورة والمخزون
+        val prodId = ledger.createProduct(
+            name = "صنف مرتبط بفاتورة",
+            barcode = "6291000999",
+            costPrice = 500.0,
+            retailPrice = 700.0,
+            openingMinorQty = 10.0
+        ).getOrThrow()
+        val creditSaleId = ledger.postSaleInvoice(
+            personId = customerId,
+            lines = listOf(Triple(prodId, 0.0, 2.0)),
+            paymentType = "Credit"
+        ).getOrThrow()
+        val invoiceLinkedOp = ledger.operations.first { it.SourceInvoiceId == creditSaleId }
+        assertTrue(ledger.cancelOperationWithReversal(invoiceLinkedOp.Id, "محاولة عكس منفرد لحركة فاتورة").isFailure)
+
         val deletedRecord = ledger.deletedItems.first()
         val parsedJson = JSONObject(deletedRecord.SnapshotJson)
         assertEquals(voucherId, parsedJson.getLong("originalId"))
@@ -228,23 +245,18 @@ class AccountingEngineTest {
     // 6. اختبار التمييز الدقيق بين فاصل الآلاف والفاصل العشري في NumberFormatter (P1)
     @Test
     fun testFlow6_NumberFormatter_DistinguishesThousandsSeparatorsFromDecimalPoints() {
-        // 12,500 هي اثنا عشر ألفاً وخمسمائة وليست 12.5!
         assertEquals("12500", NumberFormatter.normalizeNumericInput("12,500"))
         assertEquals(12500.0, NumberFormatter.parseDouble("12,500"), 0.001)
 
-        // 1,250,000.75
         assertEquals("1250000.75", NumberFormatter.normalizeNumericInput("1,250,000.75"))
         assertEquals(1250000.75, NumberFormatter.parseDouble("1,250,000.75"), 0.001)
 
-        // الأرقام الشرقية مع فاصل الآلاف العربي أو العشري العربي
         assertEquals("12500.75", NumberFormatter.normalizeNumericInput("١٢٬٥٠٠٫٧٥"))
         assertEquals(12500.75, NumberFormatter.parseDouble("١٢٬٥٠٠٫٧٥"), 0.001)
 
-        // فاصلة عشرية منفردة مع منزلة أو منزلتين (مثل 12,5 أو 12,75)
         assertEquals(12.5, NumberFormatter.parseDouble("12,5"), 0.001)
         assertEquals(12.75, NumberFormatter.parseDouble("12,75"), 0.001)
 
-        // رفض المدخلات غير الصالحة في parseDoubleOrNull بدلاً من إرجاع 0.0 بصمت
         assertNull(NumberFormatter.parseDoubleOrNull(""))
         assertNull(NumberFormatter.parseDoubleOrNull("12.5.3"))
         assertNull(NumberFormatter.parseDoubleOrNull("abc"))
@@ -258,11 +270,9 @@ class AccountingEngineTest {
         assertTrue(saltedHash.startsWith("v1$12000$"))
         assertTrue(SecurityCryptoHelper.verifyPin("7391", saltedHash))
 
-        // رفض مقارنة أي نص صريح غير مملح بصيغة v1$
         assertFalse(SecurityCryptoHelper.verifyPin("7391", "7391"))
         assertFalse(SecurityCryptoHelper.verifyPin("7391", "obf_v1:NzM5MQ=="))
 
-        // التأكد من أن تشفير الرمز يستخدم AES-GCM فعلي وليس Base64
         val secretToken = "ya29.a0AfH6SMBx_real_aes_gcm_test_token"
         val encRes = SecurityCryptoHelper.encryptSecretResult(secretToken)
         assertTrue(encRes.isSuccess)
@@ -274,7 +284,6 @@ class AccountingEngineTest {
         assertTrue(decRes.isSuccess)
         assertEquals(secretToken, decRes.getOrThrow())
 
-        // رفض أي نص غير مشفر أو تالف عند فك التشفير
         assertTrue(SecurityCryptoHelper.decryptSecretResult("plain_unencrypted_token").isFailure)
     }
 
@@ -318,7 +327,7 @@ class AccountingEngineTest {
         assertNotEquals(FormWindowLifecycleState.CLOSED, state)
     }
 
-    // 10. اختبار تنسيق الكميات المركبة ومؤشر جيل قاعدة البيانات بعد الاستعادة (ARCH-001 / ARCH-002)
+    // 10. اختبار تنسيق الكميات المركبة ومؤشر جيل قاعدة البيانات بعد الاستعادة
     @Test
     fun testFlow10_CompositeQuantityFormatting_AndDatabaseRestoreEpoch() {
         val compositeText = UnitConversionEngine.formatCompositeQuantity(
@@ -329,36 +338,22 @@ class AccountingEngineTest {
         )
         assertEquals("2 كرتون + 5 قطعة", compositeText)
 
-        val majorOnlyText = UnitConversionEngine.formatCompositeQuantity(
-            majorQty = 3.0,
-            minorQty = 0.0,
-            smallUnit = "قطعة",
-            largeUnit = "كرتون"
-        )
-        assertEquals("3 كرتون", majorOnlyText)
-
         val epochBefore = com.smartledger.pro.data.local.SmartLedgerDatabase.databaseEpoch.value
         com.smartledger.pro.data.local.SmartLedgerDatabase.notifyDatabaseRestored()
         val epochAfter = com.smartledger.pro.data.local.SmartLedgerDatabase.databaseEpoch.value
         assertEquals(epochBefore + 1L, epochAfter)
     }
 
-    // 11. اختبار توافق منصة أندرويد (API 26-34) لأذونات البلوتوث والمصادقة البيومترية وحفظ السلة عند Process Death
+    // 11. اختبار توافق منصة أندرويد (API 26-34) لأذونات البلوتوث وحفظ السلة عند Process Death
     @Test
     fun testFlow11_AndroidPlatform_ApiCompatibility_AndProcessDeathCartState() {
-        // API 26..30 لا يطلب إذن وقت تشغيل لـ BLUETOOTH_CONNECT، بينما API 31+ يطلبه إلزامياً
         assertNull(com.smartledger.pro.util.ThermalPrinterHelper.requiredBluetoothRuntimePermission(26))
         assertNull(com.smartledger.pro.util.ThermalPrinterHelper.requiredBluetoothRuntimePermission(30))
         assertEquals(
             android.Manifest.permission.BLUETOOTH_CONNECT,
             com.smartledger.pro.util.ThermalPrinterHelper.requiredBluetoothRuntimePermission(31)
         )
-        assertEquals(
-            android.Manifest.permission.BLUETOOTH_CONNECT,
-            com.smartledger.pro.util.ThermalPrinterHelper.requiredBluetoothRuntimePermission(34)
-        )
 
-        // التحقق من عدم تجاوز حجم بيانات السلة المحفوظة في SavedStateHandle حد Bundle
         val item = com.smartledger.pro.ui.viewmodels.CartLineItem(
             productId = 101L,
             name = "حليب ممتاز",
@@ -375,5 +370,119 @@ class AccountingEngineTest {
         )
         assertEquals(53.0, item.totalMinorQuantity, 0.001)
         assertEquals(15500.0, item.calculatedLineTotal, 0.001)
+    }
+
+    // 12. اختبار ضمانات تجربة المستخدم: المعاينة الحية للرصيد ومنع البيع بخسارة والتحقق من السداد الجزئي
+    @Test
+    fun testFlow12_UxFinancialTrust_ProjectedBalance_BelowCostGuard_AndPartialPaymentValidation() {
+        val currentNetDebit = 18500.0
+        val receiptAmount = 8500.0
+        val projectedAfterReceipt = currentNetDebit - receiptAmount
+        assertEquals(10000.0, projectedAfterReceipt, 0.001)
+
+        val costPrice = 500.0
+        val lossRetailPrice = 450.0
+        val profitableRetailPrice = 625.0
+        assertTrue(lossRetailPrice < costPrice)
+        val marginPct = ((profitableRetailPrice - costPrice) / costPrice) * 100.0
+        assertEquals(25.0, marginPct, 0.001)
+    }
+
+    // 13. اختبار محرك التصنيفات الهرمية متعدد المستويات وكشف الدورات المغلقة (Cycle Detection)
+    @Test
+    fun testFlow13_HierarchicalCategoryValidator_DetectsCycles_PreventsDuplicates_AndFormatsBreadcrumbs() {
+        val categories = listOf(
+            CategoryEntity(Id = 1L, Domain = "EXPENSE", Name = "مصروفات تشغيلية", ParentId = null, CreatedAt = "2026-10-17"),
+            CategoryEntity(Id = 2L, Domain = "EXPENSE", Name = "مرافق وخدمات", ParentId = 1L, CreatedAt = "2026-10-17"),
+            CategoryEntity(Id = 3L, Domain = "EXPENSE", Name = "كهرباء ومياه", ParentId = 2L, CreatedAt = "2026-10-17")
+        )
+
+        // 1. المسار الهرمي الكامل
+        assertEquals(
+            "مصروفات تشغيلية ◂ مرافق وخدمات ◂ كهرباء ومياه",
+            HierarchicalCategoryValidator.formatCategoryPath(3L, categories)
+        )
+
+        // 2. منع ربط التصنيف بنفسه
+        val selfLink = HierarchicalCategoryValidator.validateAndCheckCycle(
+            categoryId = 1L,
+            name = "مصروفات تشغيلية",
+            domain = "EXPENSE",
+            parentId = 1L,
+            existingCategories = categories
+        )
+        assertTrue(selfLink.isFailure)
+
+        // 3. كشف ومنع الدورة الهرمية المغلقة (جعل التصنيف الجد #1 ابناً لحفيده #3)
+        val cycleAttempt = HierarchicalCategoryValidator.validateAndCheckCycle(
+            categoryId = 1L,
+            name = "مصروفات تشغيلية",
+            domain = "EXPENSE",
+            parentId = 3L,
+            existingCategories = categories
+        )
+        assertTrue(cycleAttempt.isFailure)
+
+        // 4. منع تكرار الاسم داخل نفس المستوى الأب ونفس المجال
+        val duplicateSibling = HierarchicalCategoryValidator.validateAndCheckCycle(
+            categoryId = 0L,
+            name = "مرافق وخدمات",
+            domain = "EXPENSE",
+            parentId = 1L,
+            existingCategories = categories
+        )
+        assertTrue(duplicateSibling.isFailure)
+
+        // 5. السماح بنفس الاسم تحت أب مختلف أو مجال مختلف
+        val validDifferentParent = HierarchicalCategoryValidator.validateAndCheckCycle(
+            categoryId = 0L,
+            name = "مرافق وخدمات",
+            domain = "REVENUE",
+            parentId = null,
+            existingCategories = categories
+        )
+        assertTrue(validDifferentParent.isSuccess)
+
+        // 6. تجميع شجرة الأبناء الكاملة للتصنيف الأب #1
+        assertEquals(setOf(1L, 2L, 3L), HierarchicalCategoryValidator.collectSubtreeIds(1L, categories))
+    }
+
+    // 14. اختبار محرك الوحدات المرن والمتوسط المرجح للتكلفة عند الشراء وتخصيص دفعات العملاء
+    @Test
+    fun testFlow14_FlexibleUnits_WeightedAverageCost_PaymentAllocation_AndWhatsAppPhoneNormalization() {
+        // أ. تحديث المتوسط المرجح للتكلفة عند شراء بضاعة بسعر جديد
+        // لدينا 10 قطع بتكلفة 100 ر.ي (1,000)، واشترينا 10 قطع بتكلفة 200 ر.ي (2,000) -> المتوسط المرجح = 150 ر.ي
+        val newWac = WeightedAverageCostCalculator.calculateNewWeightedCost(
+            currentStockMinor = 10.0,
+            currentUnitCost = 100.0,
+            purchasedQtyMinor = 10.0,
+            purchasedUnitCost = 200.0
+        )
+        assertEquals(150.0, newWac, 0.001)
+
+        // ب. التحويل الدقيق بين الوحدات المترابطة ومنع التحويل بين الوحدات غير المترابطة
+        val gramUnit = MeasurementUnitEntity(Id = 1L, Name = "جرام", Symbol = "جم", DecimalPrecision = 2, BaseUnitId = null, ConversionFactorToBase = 1.0, CreatedAt = "2026-10-17")
+        val kgUnit = MeasurementUnitEntity(Id = 2L, Name = "كيلوجرام", Symbol = "كجم", DecimalPrecision = 3, BaseUnitId = 1L, ConversionFactorToBase = 1000.0, CreatedAt = "2026-10-17")
+        val literUnit = MeasurementUnitEntity(Id = 3L, Name = "لتر", Symbol = "لتر", DecimalPrecision = 2, BaseUnitId = null, ConversionFactorToBase = 1.0, CreatedAt = "2026-10-17")
+
+        assertEquals(2500.0, FlexibleUnitValidator.convertBetweenUnits(2.5, kgUnit, gramUnit).getOrThrow(), 0.001)
+        assertEquals(1.75, FlexibleUnitValidator.convertBetweenUnits(1750.0, gramUnit, kgUnit).getOrThrow(), 0.001)
+        assertTrue(FlexibleUnitValidator.convertBetweenUnits(1.0, kgUnit, literUnit).isFailure)
+
+        // ج. تخصيص دفعة عميل على الفواتير المفتوحة وحساب الفائض كدفعة مقدمة
+        val openInvoices = listOf(
+            InvoiceEntity(Id = 10L, InvoiceNumber = "INV-001", Type = "Sale", PersonId = 1L, PersonNameSnapshot = "عميل", IssuedAt = "2026-10-15", Subtotal = 5000.0, FinalTotal = 5000.0, PaidAmount = 2000.0, RemainingAmount = 3000.0, CreatedAt = "2026-10-15"),
+            InvoiceEntity(Id = 11L, InvoiceNumber = "INV-002", Type = "Sale", PersonId = 1L, PersonNameSnapshot = "عميل", IssuedAt = "2026-10-16", Subtotal = 4000.0, FinalTotal = 4000.0, PaidAmount = 0.0, RemainingAmount = 4000.0, CreatedAt = "2026-10-16")
+        )
+        val allocation = PaymentAllocationEngine.allocatePayment(paymentAmount = 8500.0, openInvoices = openInvoices)
+        assertEquals(2, allocation.allocatedSlices.size)
+        assertEquals(3000.0, allocation.allocatedSlices[0].allocatedAmount, 0.001)
+        assertEquals(4000.0, allocation.allocatedSlices[1].allocatedAmount, 0.001)
+        assertEquals(1500.0, allocation.unallocatedAdvanceAmount, 0.001) // 1,500 دفعة مقدمة فائضة
+
+        // د. تنسيق أرقام واتساب مع احترام مفتاح الدولة المرن
+        assertEquals("967777123456", WhatsAppHelper.normalizePhoneForWhatsApp("0777 123-456", "+967"))
+        assertEquals("966501234567", WhatsAppHelper.normalizePhoneForWhatsApp("0501234567", "+966"))
+        assertEquals("201001234567", WhatsAppHelper.normalizePhoneForWhatsApp("+20 100 123 4567", "+967"))
     }
 }

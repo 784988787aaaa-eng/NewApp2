@@ -355,7 +355,7 @@ fun ReportsScreen(
                         val successColor = SmartLedgerColors.StateSuccess
                         val dangerColor = SmartLedgerColors.StateDanger
 
-                        Canvas(modifier = Modifier.fillMaxWidth().height(34.dp)) {
+                        Canvas(modifier = Modifier.fillMaxWidth().heightIn(min = 34.dp)) {
                             val w = size.width
                             val h = size.height
                             drawRoundRect(
@@ -409,7 +409,7 @@ fun ReportsScreen(
                         },
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .heightIn(min = 44.dp)
                             .pressScaleEffect(),
                         colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
@@ -426,7 +426,7 @@ fun ReportsScreen(
                         },
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .heightIn(min = 44.dp)
                             .pressScaleEffect(),
                         border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateSuccess)),
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)

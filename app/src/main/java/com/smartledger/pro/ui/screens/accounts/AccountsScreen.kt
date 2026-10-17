@@ -37,6 +37,7 @@ import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.ui.viewmodels.AccountsViewModel
 import com.smartledger.pro.util.NumberFormatter
 import com.smartledger.pro.util.ThermalPrinterHelper
+import com.smartledger.pro.util.WhatsAppPreviewDialog
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -51,6 +52,11 @@ fun AccountsScreen(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedBookId by viewModel.selectedBookId.collectAsState()
     val balanceFilter by viewModel.balanceFilter.collectAsState()
+    val settings by viewModel.settings.collectAsState()
+    val identity by viewModel.businessIdentity.collectAsState()
+    val financialAccounts by viewModel.financialAccounts.collectAsState()
+    var whatsAppTargetAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val whatsAppTargetAccount = remember(accounts, whatsAppTargetAccountId) { whatsAppTargetAccountId?.let { id -> accounts.firstOrNull { it.PersonId == id } } }
     val scope = rememberCoroutineScope()
 
     var showAddOrEditDialog by rememberSaveable { mutableStateOf(false) }
@@ -60,6 +66,8 @@ fun AccountsScreen(
     var quickVoucherInitialReceipt by rememberSaveable { mutableStateOf(true) }
     var accountIdToDelete by rememberSaveable { mutableStateOf<Long?>(null) }
     val accountToDelete = remember(accounts, accountIdToDelete) { accountIdToDelete?.let { id -> accounts.firstOrNull { it.PersonId == id } } }
+    var lastArchivedAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var lastArchivedAccountName by rememberSaveable { mutableStateOf<String?>(null) }
     var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var isStatusError by rememberSaveable { mutableStateOf(false) }
 
@@ -90,31 +98,8 @@ fun AccountsScreen(
         }
     }
 
-    val safeShareWhatsApp: (AccountBalanceSummary) -> Unit = { acc ->
-        val balText = when {
-            acc.NetBalance > 0.001 -> "الرصيد المستحق عليكم: ${NumberFormatter.formatCurrency(acc.NetBalance, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}"
-            acc.NetBalance < -0.001 -> "الرصيد الدائن لكم: ${NumberFormatter.formatCurrency(abs(acc.NetBalance), AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}"
-            else -> "رصيد حسابكم متزن (0)"
-        }
-        val msg = "مرحباً ${acc.PersonName}،\nإشعار رصيد من الدفتر الذكي Pro:\n$balText"
-        val phone = acc.Phone?.trim()
-        if (!phone.isNullOrBlank()) {
-            try {
-                val digitsOnly = phone.filter { it.isDigit() || it == '+' }
-                val cleanPhone = when {
-                    digitsOnly.startsWith("+") -> digitsOnly.removePrefix("+")
-                    digitsOnly.startsWith("00") -> digitsOnly.removePrefix("00")
-                    digitsOnly.startsWith("967") -> digitsOnly
-                    else -> "967" + digitsOnly.trimStart('0')
-                }
-                val url = "https://api.whatsapp.com/send?phone=$cleanPhone&text=${Uri.encode(msg)}"
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-            } catch (_: Exception) {
-                ThermalPrinterHelper.shareTextSafely(context, "إشعار رصيد ${acc.PersonName}", msg)
-            }
-        } else {
-            ThermalPrinterHelper.shareTextSafely(context, "إشعار رصيد ${acc.PersonName}", msg)
-        }
+    val safeShareWhatsApp: (AccountBalanceSummary) -> Unit = { accItem ->
+        whatsAppTargetAccountId = accItem.PersonId
     }
 
     Scaffold(
@@ -152,7 +137,7 @@ fun AccountsScreen(
                             border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                             modifier = Modifier
-                                .height(38.dp)
+                                .heightIn(min = 38.dp)
                                 .pressScaleEffect()
                         ) {
                             Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
@@ -169,7 +154,7 @@ fun AccountsScreen(
                             shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             modifier = Modifier
-                                .height(38.dp)
+                                .heightIn(min = 38.dp)
                                 .pressScaleEffect()
                         ) {
                             Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -219,7 +204,24 @@ fun AccountsScreen(
                 StatusFeedbackBanner(
                     message = statusMessage,
                     isError = isStatusError,
-                    onDismiss = { statusMessage = null }
+                    actionLabel = if (lastArchivedAccountId != null) "تراجع عن الأرشفة" else null,
+                    onAction = if (lastArchivedAccountId != null) {
+                        {
+                            val targetId = lastArchivedAccountId!!
+                            val restoredName = lastArchivedAccountName ?: "الحساب"
+                            viewModel.restoreAccount(targetId) {
+                                lastArchivedAccountId = null
+                                lastArchivedAccountName = null
+                                isStatusError = false
+                                statusMessage = "تمت استعادة الحساب «$restoredName» إلى القائمة النشطة."
+                            }
+                        }
+                    } else null,
+                    onDismiss = {
+                        statusMessage = null
+                        lastArchivedAccountId = null
+                        lastArchivedAccountName = null
+                    }
                 )
             }
 
@@ -282,6 +284,11 @@ fun AccountsScreen(
                         quickVoucherPersonId = liveAccount.PersonId
                         quickVoucherInitialReceipt = isReceipt
                     },
+                    onOperationFeedback = { msg, isErr ->
+                        lastArchivedAccountId = null
+                        isStatusError = isErr
+                        statusMessage = msg
+                    },
                     onShareStatement = { safeShareWhatsApp(liveAccount) },
                     onCall = { safeCallPhone(liveAccount.Phone) },
                     onClose = { selectedAccountIdForStatement = null }
@@ -292,6 +299,8 @@ fun AccountsScreen(
         // نافذة سند قبض/صرف سريع العائمة فوق لوحة المفاتيح مع منع الإغلاق قبل نجاح الحفظ
         if (quickVoucherTargetAccount != null) {
             val targetAcc = quickVoucherTargetAccount
+            val openInvsFlow = remember(targetAcc.PersonId) { viewModel.getOpenInvoicesForAccount(targetAcc.PersonId) }
+            val openInvoices by openInvsFlow.collectAsState(initial = emptyList())
             FloatingModalDialog(onDismissRequest = { quickVoucherPersonId = null }) {
                 var isSavingVoucher by remember { mutableStateOf(false) }
                 var voucherError by remember { mutableStateOf<String?>(null) }
@@ -299,10 +308,12 @@ fun AccountsScreen(
                 QuickAccountVoucherSheet(
                     account = targetAcc,
                     initialIsReceipt = quickVoucherInitialReceipt,
+                    financialAccounts = financialAccounts,
+                    openInvoices = openInvoices,
                     isSaving = isSavingVoucher,
                     errorMessage = voucherError,
                     onDismiss = { quickVoucherPersonId = null },
-                    onConfirm = { isReceipt, amount, statement, refNo ->
+                    onConfirm = { isReceipt, amount, statement, refNo, finAccId, targetInvId ->
                         isSavingVoucher = true
                         voucherError = null
                         scope.launch {
@@ -311,11 +322,14 @@ fun AccountsScreen(
                                 type = if (isReceipt) "Receive" else "Payment",
                                 amount = amount,
                                 statement = statement,
-                                refNumber = refNo
+                                refNumber = refNo,
+                                financialAccountId = finAccId,
+                                targetInvoiceId = targetInvId
                             )
                             isSavingVoucher = false
                             if (res.isSuccess) {
                                 quickVoucherPersonId = null
+                                lastArchivedAccountId = null
                                 isStatusError = false
                                 statusMessage = "تم ترحيل ${if (isReceipt) "سند القبض" else "سند الصرف"} لحساب «${targetAcc.PersonName}» بنجاح."
                             } else {
@@ -357,6 +371,7 @@ fun AccountsScreen(
                             isSavingAccount = false
                             if (res.isSuccess) {
                                 showAddOrEditDialog = false
+                                lastArchivedAccountId = null
                                 isStatusError = false
                                 statusMessage = if (id > 0) "تم تحديث بيانات الحساب «$name» بنجاح." else "تم فتح الحساب «$name» بنجاح."
                             } else {
@@ -368,15 +383,30 @@ fun AccountsScreen(
             }
         }
 
+        if (whatsAppTargetAccount != null) {
+            val targetAcc = whatsAppTargetAccount!!
+            val opsFlow = remember(targetAcc.PersonId) { viewModel.getOperationsForAccount(targetAcc.PersonId) }
+            val recentOps by opsFlow.collectAsState(initial = emptyList())
+            WhatsAppPreviewDialog(
+                account = targetAcc,
+                businessName = identity?.TradeName ?: "نشاطي التجاري",
+                defaultCountryCode = settings.defaultCountryCode,
+                recentOperations = recentOps,
+                onDismiss = { whatsAppTargetAccountId = null }
+            )
+        }
+
         // حوار تأكيد أرشفة الحساب
         if (accountToDelete != null) {
             val target = accountToDelete!!
             ConfirmActionDialog(
                 title = "أرشفة حساب «${target.PersonName}»؟",
-                message = "سيتم نقل الحساب إلى الأرشيف وإخفاؤه من القائمة النشطة مع الاحتفاظ بجميع قيوده وفواتيره السابقة.",
+                message = "سيتم نقل الحساب إلى الأرشيف وإخفاؤه من القائمة النشطة مع الاحتفاظ بجميع قيوده وفواتيره السابقة. يمكنك استعادته فوراً أو من سلة المحذوفات في الإعدادات.",
                 confirmText = "أرشفة الحساب",
                 requireReason = true,
                 onConfirm = { reason ->
+                    lastArchivedAccountId = target.PersonId
+                    lastArchivedAccountName = target.PersonName
                     viewModel.deleteAccount(target.PersonId, reason)
                     accountIdToDelete = null
                     isStatusError = false
@@ -423,7 +453,9 @@ fun AccountCardItem(
             .bounceClick { onOpenStatement() },
         colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
         border = CardDefaults.outlinedCardBorder().copy(
-            brush = SolidColor(if (overCreditLimit) SmartLedgerColors.StateWarningBorder else SmartLedgerColors.BorderSubtle)
+            brush = SolidColor(
+                if (overCreditLimit) SmartLedgerColors.StateWarningBorder else SmartLedgerColors.BorderSubtle
+            )
         ),
         shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
     ) {
@@ -433,61 +465,73 @@ fun AccountCardItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Top
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(SmartLedgerColors.AccentSubtle),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = account.PersonName.trim().take(1).ifBlank { "ح" },
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = SmartLedgerColors.AccentLight
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
                         Text(
                             text = account.PersonName,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = SmartLedgerColors.TextPrimary
+                            color = SmartLedgerColors.TextPrimary,
+                            maxLines = 1
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(5.dp))
-                                .background(SmartLedgerColors.SurfaceCardElevated)
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text(
-                                text = bookName,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SmartLedgerColors.AccentLight
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(SmartLedgerColors.SurfaceCardElevated)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = bookName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SmartLedgerColors.AccentLight
+                                )
+                            }
+                            if (AppDesignState.showPhoneInAccounts && !account.Phone.isNullOrBlank()) {
+                                Text(
+                                    text = account.Phone,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SmartLedgerColors.TextMuted
+                                )
+                            }
                         }
-                    }
-
-                    val subInfo = buildList {
-                        if (!account.Phone.isNullOrBlank()) add(account.Phone)
-                        if (!account.AccountCode.isNullOrBlank()) add(account.AccountCode)
-                        if (overCreditLimit) add("تجاوز حد الائتمان!")
-                    }
-                    if (subInfo.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = subInfo.joinToString("  •  "),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (overCreditLimit) SmartLedgerColors.StateWarning else SmartLedgerColors.TextMuted
-                        )
                     }
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                when {
-                                    isDebit -> SmartLedgerColors.StateDangerSubtle
-                                    isCredit -> SmartLedgerColors.StateSuccessSubtle
-                                    else -> SmartLedgerColors.SurfaceCardElevated
-                                }
-                            )
-                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                    ) {
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = NumberFormatter.formatCurrency(
+                                abs(account.NetBalance),
+                                AppDesignState.currencySymbol,
+                                AppDesignState.decimalPlaces,
+                                privacyMode
+                            ),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = balanceColor
+                        )
                         Text(
                             text = balanceLabel,
                             style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
                             color = balanceColor
                         )
                     }
@@ -495,10 +539,16 @@ fun AccountCardItem(
                     Box {
                         IconButton(
                             onClick = { menuExpanded = true },
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(30.dp)
                         ) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "إجراءات الحساب", tint = SmartLedgerColors.TextMuted, modifier = Modifier.size(18.dp))
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "خيارات الحساب",
+                                tint = SmartLedgerColors.TextMuted,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
+
                         DropdownMenu(
                             expanded = menuExpanded,
                             onDismissRequest = { menuExpanded = false },
@@ -506,39 +556,23 @@ fun AccountCardItem(
                         ) {
                             DropdownMenuItem(
                                 text = { Text("كشف الحساب التفصيلي", color = SmartLedgerColors.TextPrimary) },
-                                leadingIcon = { Icon(Icons.Default.Receipt, contentDescription = null, tint = SmartLedgerColors.AccentLight) },
+                                leadingIcon = { Icon(Icons.Default.ReceiptLong, null, tint = SmartLedgerColors.AccentLight) },
                                 onClick = {
                                     menuExpanded = false
                                     onOpenStatement()
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("سند قبض سريع (له)", color = SmartLedgerColors.TextPrimary) },
-                                leadingIcon = { Icon(Icons.Default.ArrowDownward, contentDescription = null, tint = SmartLedgerColors.StateSuccess) },
-                                onClick = {
-                                    menuExpanded = false
-                                    onQuickReceipt()
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("سند صرف سريع (عليه)", color = SmartLedgerColors.TextPrimary) },
-                                leadingIcon = { Icon(Icons.Default.ArrowUpward, contentDescription = null, tint = SmartLedgerColors.StateDanger) },
-                                onClick = {
-                                    menuExpanded = false
-                                    onQuickPayment()
-                                }
-                            )
-                            DropdownMenuItem(
                                 text = { Text("تعديل بيانات الحساب", color = SmartLedgerColors.TextPrimary) },
-                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = SmartLedgerColors.AccentLight) },
+                                leadingIcon = { Icon(Icons.Default.Edit, null, tint = SmartLedgerColors.TextSecondary) },
                                 onClick = {
                                     menuExpanded = false
                                     onEdit()
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("مشاركة الرصيد / واتساب", color = SmartLedgerColors.TextPrimary) },
-                                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = SmartLedgerColors.StateSuccess) },
+                                text = { Text("مشاركة الرصيد عبر واتساب", color = SmartLedgerColors.TextPrimary) },
+                                leadingIcon = { Icon(Icons.Default.Share, null, tint = SmartLedgerColors.StateSuccess) },
                                 onClick = {
                                     menuExpanded = false
                                     onShare()
@@ -547,7 +581,7 @@ fun AccountCardItem(
                             if (!account.Phone.isNullOrBlank()) {
                                 DropdownMenuItem(
                                     text = { Text("اتصال هاتفي", color = SmartLedgerColors.TextPrimary) },
-                                    leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null, tint = SmartLedgerColors.AccentLight) },
+                                    leadingIcon = { Icon(Icons.Default.Phone, null, tint = SmartLedgerColors.AccentLight) },
                                     onClick = {
                                         menuExpanded = false
                                         onCall()
@@ -557,7 +591,7 @@ fun AccountCardItem(
                             Divider(color = SmartLedgerColors.BorderSubtle)
                             DropdownMenuItem(
                                 text = { Text("أرشفة الحساب", color = SmartLedgerColors.StateDanger) },
-                                leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = SmartLedgerColors.StateDanger) },
+                                leadingIcon = { Icon(Icons.Default.Archive, null, tint = SmartLedgerColors.StateDanger) },
                                 onClick = {
                                     menuExpanded = false
                                     onDelete()
@@ -568,63 +602,88 @@ fun AccountCardItem(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
-            ) {
-                Column {
+            if (overCreditLimit) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SmartLedgerColors.StateWarningSubtle)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.WarningAmber, contentDescription = null, tint = SmartLedgerColors.StateWarning, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "الرصيد الصافي",
+                        text = "تجاوز سقف الائتمان المسموح (${NumberFormatter.formatCurrency(account.CreditLimit, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)})",
                         style = MaterialTheme.typography.labelSmall,
-                        color = SmartLedgerColors.TextMuted
-                    )
-                    Text(
-                        text = NumberFormatter.formatCurrency(
-                            amount = abs(account.NetBalance),
-                            currencySymbol = AppDesignState.currencySymbol,
-                            decimalPlaces = AppDesignState.decimalPlaces,
-                            privacyMode = privacyMode
-                        ),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = balanceColor
+                        color = SmartLedgerColors.StateWarningText,
+                        fontWeight = FontWeight.Bold
                     )
                 }
+            }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (AppDesignState.showPhoneInAccounts && !account.Phone.isNullOrBlank()) {
-                        IconButton(
-                            onClick = onCall,
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SmartLedgerColors.SurfaceCardElevated)
-                        ) {
-                            Icon(Icons.Default.Phone, contentDescription = "اتصال", tint = SmartLedgerColors.TextSecondary, modifier = Modifier.size(16.dp))
-                        }
-                    }
+            Spacer(modifier = Modifier.height(10.dp))
 
-                    OutlinedButton(
-                        onClick = onQuickReceipt,
-                        shape = RoundedCornerShape(8.dp),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.height(34.dp).pressScaleEffect()
+            // شريط الإجراءات السريعة المباشرة على البطاقة
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = onQuickReceipt,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 34.dp)
+                        .pressScaleEffect(),
+                    shape = RoundedCornerShape(8.dp),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateSuccessBorder)),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Icon(Icons.Default.ArrowDownward, contentDescription = null, tint = SmartLedgerColors.StateSuccess, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("قبض (له)", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.StateSuccess, fontWeight = FontWeight.Bold)
+                }
+
+                OutlinedButton(
+                    onClick = onQuickPayment,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 34.dp)
+                        .pressScaleEffect(),
+                    shape = RoundedCornerShape(8.dp),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateDangerBorder)),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Icon(Icons.Default.ArrowUpward, contentDescription = null, tint = SmartLedgerColors.StateDanger, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("صرف (عليه)", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.StateDanger, fontWeight = FontWeight.Bold)
+                }
+
+                OutlinedButton(
+                    onClick = onOpenStatement,
+                    modifier = Modifier
+                        .heightIn(min = 34.dp)
+                        .pressScaleEffect(),
+                    shape = RoundedCornerShape(8.dp),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                ) {
+                    Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("الكشف", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextPrimary)
+                }
+
+                if (AppDesignState.showPhoneInAccounts && !account.Phone.isNullOrBlank()) {
+                    IconButton(
+                        onClick = onCall,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(SmartLedgerColors.SurfaceCardElevated)
                     ) {
-                        Text("سند +", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
-                    }
-
-                    Button(
-                        onClick = onOpenStatement,
-                        colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentSubtle),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.height(34.dp).pressScaleEffect()
-                    ) {
-                        Text("كشف الحساب", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Default.Phone, contentDescription = "اتصال بالحساب", tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(15.dp))
                     }
                 }
             }
@@ -639,6 +698,7 @@ fun AccountStatementSheetContent(
     privacyMode: Boolean,
     viewModel: AccountsViewModel,
     onQuickVoucher: (isReceipt: Boolean) -> Unit,
+    onOperationFeedback: (message: String, isError: Boolean) -> Unit = { _, _ -> },
     onShareStatement: () -> Unit,
     onCall: () -> Unit,
     onClose: () -> Unit
@@ -706,7 +766,7 @@ fun AccountStatementSheetContent(
                         color = SmartLedgerColors.StateDanger
                     )
                 }
-                Box(modifier = Modifier.width(1.dp).height(32.dp).background(SmartLedgerColors.BorderSubtle))
+                Box(modifier = Modifier.width(1.dp).heightIn(min = 32.dp).background(SmartLedgerColors.BorderSubtle))
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("إجمالي دائن (له)", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.StateSuccessText)
                     Text(
@@ -716,7 +776,7 @@ fun AccountStatementSheetContent(
                         color = SmartLedgerColors.StateSuccess
                     )
                 }
-                Box(modifier = Modifier.width(1.dp).height(32.dp).background(SmartLedgerColors.BorderSubtle))
+                Box(modifier = Modifier.width(1.dp).heightIn(min = 32.dp).background(SmartLedgerColors.BorderSubtle))
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = if (account.NetBalance >= 0) "الصافي لنا (عليه)" else "الصافي علينا (له)",
@@ -736,7 +796,7 @@ fun AccountStatementSheetContent(
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { onQuickVoucher(true) },
-                modifier = Modifier.weight(1f).height(38.dp).pressScaleEffect(),
+                modifier = Modifier.weight(1f).heightIn(min = 38.dp).pressScaleEffect(),
                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.StateSuccess),
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 8.dp)
@@ -747,7 +807,7 @@ fun AccountStatementSheetContent(
             }
             Button(
                 onClick = { onQuickVoucher(false) },
-                modifier = Modifier.weight(1f).height(38.dp).pressScaleEffect(),
+                modifier = Modifier.weight(1f).heightIn(min = 38.dp).pressScaleEffect(),
                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.StateDanger),
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 8.dp)
@@ -759,7 +819,7 @@ fun AccountStatementSheetContent(
             if (!account.Phone.isNullOrBlank()) {
                 OutlinedButton(
                     onClick = onCall,
-                    modifier = Modifier.height(38.dp).pressScaleEffect(),
+                    modifier = Modifier.heightIn(min = 38.dp).pressScaleEffect(),
                     shape = RoundedCornerShape(10.dp),
                     border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
                     contentPadding = PaddingValues(horizontal = 10.dp)
@@ -878,8 +938,14 @@ fun AccountStatementSheetContent(
             requireReason = true,
             reasonLabel = "سبب الإلغاء المحاسبي",
             onConfirm = { reason ->
-                viewModel.deleteOperation(targetOp.Id, reason)
-                operationIdToDelete = null
+                viewModel.deleteOperation(targetOp.Id, reason) { res ->
+                    operationIdToDelete = null
+                    if (res.isSuccess) {
+                        onOperationFeedback("تم إدراج القيد العكسي للحركة #${targetOp.Id} وتصحيح رصيد الحساب بنجاح.", false)
+                    } else {
+                        onOperationFeedback(res.exceptionOrNull()?.message ?: "تعذر عكس الحركة المالية.", true)
+                    }
+                }
             },
             onDismiss = { operationIdToDelete = null }
         )
@@ -890,25 +956,31 @@ fun AccountStatementSheetContent(
 fun QuickAccountVoucherSheet(
     account: AccountBalanceSummary,
     initialIsReceipt: Boolean,
+    financialAccounts: List<com.smartledger.pro.data.local.dao.FinancialAccountBalanceSummary> = emptyList(),
+    openInvoices: List<com.smartledger.pro.data.local.entity.InvoiceEntity> = emptyList(),
     isSaving: Boolean = false,
     errorMessage: String? = null,
     onDismiss: () -> Unit,
-    onConfirm: (isReceipt: Boolean, amount: Double, statement: String, refNumber: String?) -> Unit
+    onConfirm: (isReceipt: Boolean, amount: Double, statement: String, refNumber: String?, financialAccountId: Long?, targetInvoiceId: Long?) -> Unit
 ) {
     var isReceipt by rememberSaveable(account.PersonId) { mutableStateOf(initialIsReceipt) }
     var amountText by rememberSaveable(account.PersonId) { mutableStateOf("") }
     var statement by rememberSaveable(account.PersonId) { mutableStateOf("") }
     var refNumber by rememberSaveable(account.PersonId) { mutableStateOf("") }
+    var selectedFinAccountId by rememberSaveable(account.PersonId) { mutableStateOf<Long?>(null) }
+    var selectedTargetInvoiceId by rememberSaveable(account.PersonId) { mutableStateOf<Long?>(null) }
 
     val focusStatement = remember { FocusRequester() }
     val focusRef = remember { FocusRequester() }
 
     val amountVal = NumberFormatter.parseDouble(amountText, 0.0)
     val isValid = amountVal > 0.0
+    val currentNet = account.NetBalance
+    val projectedNet = if (isReceipt) (currentNet - amountVal) else (currentNet + amountVal)
 
     FormSheetContainer(
         title = if (isReceipt) "سند قبض سريع (له)" else "سند صرف سريع (عليه)",
-        subtitle = "الحساب: ${account.PersonName} • الرصيد الحالي: ${NumberFormatter.formatCurrency(abs(account.NetBalance), AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}",
+        subtitle = "الحساب: ${account.PersonName} • الرصيد الحالي: ${NumberFormatter.formatCurrency(abs(currentNet), AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}",
         headerIcon = Icons.Default.ReceiptLong,
         onDismiss = onDismiss,
         primaryButtonText = if (isReceipt) "ترحيل سند القبض" else "ترحيل سند الصرف",
@@ -922,7 +994,7 @@ fun QuickAccountVoucherSheet(
                 val finalStatement = statement.trim().ifBlank {
                     if (isReceipt) "سند قبض نقدية من ${account.PersonName}" else "سند صرف نقدية إلى ${account.PersonName}"
                 }
-                onConfirm(isReceipt, amountVal, finalStatement, refNumber.trim().ifBlank { null })
+                onConfirm(isReceipt, amountVal, finalStatement, refNumber.trim().ifBlank { null }, selectedFinAccountId, selectedTargetInvoiceId)
             }
         }
     ) {
@@ -936,7 +1008,109 @@ fun QuickAccountVoucherSheet(
             activeColor = if (isReceipt) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger
         )
 
+        // بطاقة المعاينة المالية الحية للرصيد قبل وبعد السند (UX-002 Financial Trust)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("الرصيد قبل السند", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
+                        Text(
+                            text = "${NumberFormatter.formatCurrency(abs(currentNet), AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} ${
+                                when {
+                                    currentNet > 0.001 -> "(عليه)"
+                                    currentNet < -0.001 -> "(له)"
+                                    else -> "(متزن)"
+                                }
+                            }",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (currentNet >= 0) SmartLedgerColors.StateDanger else SmartLedgerColors.StateSuccess
+                        )
+                    }
+                    Icon(Icons.Default.ArrowBack, contentDescription = null, tint = SmartLedgerColors.TextMuted, modifier = Modifier.size(16.dp))
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("الرصيد المتوقع بعد الترحيل", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
+                        Text(
+                            text = "${NumberFormatter.formatCurrency(abs(projectedNet), AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} ${
+                                when {
+                                    projectedNet > 0.001 -> "(عليه)"
+                                    projectedNet < -0.001 -> "(له)"
+                                    else -> "(مسدد بالكامل)"
+                                }
+                            }",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = when {
+                                projectedNet > 0.001 -> SmartLedgerColors.StateDanger
+                                projectedNet < -0.001 -> SmartLedgerColors.StateSuccess
+                                else -> SmartLedgerColors.AccentLight
+                            }
+                        )
+                    }
+                }
+
+                if (abs(currentNet) > 0.001) {
+                    OutlinedButton(
+                        onClick = {
+                            isReceipt = currentNet > 0.0
+                            amountText = NumberFormatter.formatQuantity(abs(currentNet))
+                            if (statement.isBlank()) {
+                                statement = if (currentNet > 0.0) {
+                                    "تصفية وسداد كامل الرصيد المستحق من ${account.PersonName}"
+                                } else {
+                                    "تصفية وسداد كامل الرصيد الدائن إلى ${account.PersonName}"
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp).pressScaleEffect(),
+                        shape = RoundedCornerShape(8.dp),
+                        border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary)),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                    ) {
+                        Icon(Icons.Default.DoneAll, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "تعبئة وتصفية كامل الرصيد (${NumberFormatter.formatCurrency(abs(currentNet), AppDesignState.currencySymbol, AppDesignState.decimalPlaces)})",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SmartLedgerColors.AccentLight,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
         FormSectionGroup(title = "تفاصيل السند المالي") {
+            if (financialAccounts.isNotEmpty()) {
+                FilterChipRow(
+                    items = listOf<Pair<Long?, String>>(null to "الصندوق الافتراضي") + financialAccounts.map { it.Id as Long? to it.Name },
+                    selectedItem = selectedFinAccountId,
+                    onItemSelected = { selectedFinAccountId = it }
+                )
+            }
+            if (openInvoices.isNotEmpty()) {
+                FilterChipRow(
+                    items = listOf<Pair<Long?, String>>(null to "دفعة عامة على الحساب") +
+                        openInvoices.map { it.Id as Long? to "${it.InvoiceNumber} (${NumberFormatter.formatCurrency(it.RemainingAmount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)})" },
+                    selectedItem = selectedTargetInvoiceId,
+                    onItemSelected = { invId ->
+                        selectedTargetInvoiceId = invId
+                        val chosen = openInvoices.firstOrNull { it.Id == invId }
+                        if (chosen != null && amountText.isBlank()) {
+                            amountText = NumberFormatter.formatQuantity(chosen.RemainingAmount)
+                            if (statement.isBlank()) statement = "سداد فاتورة #${chosen.InvoiceNumber}"
+                        }
+                    }
+                )
+            }
             SmartTextField(
                 value = amountText,
                 onValueChange = { amountText = it },
@@ -992,7 +1166,9 @@ fun AddEditAccountDialog(
         mutableStateOf(existingAccount?.BookId != 2L && defaultBookId != 2L)
     }
     var creditLimitText by rememberSaveable(stateKey) {
-        mutableStateOf(if (existingAccount != null && existingAccount.CreditLimit > 0) NumberFormatter.formatQuantity(existingAccount.CreditLimit) else "")
+        mutableStateOf(
+            if (existingAccount != null && existingAccount.CreditLimit > 0.0) NumberFormatter.formatQuantity(existingAccount.CreditLimit) else ""
+        )
     }
     var note by rememberSaveable(stateKey) { mutableStateOf(existingAccount?.Note ?: "") }
 
@@ -1008,65 +1184,63 @@ fun AddEditAccountDialog(
         note != (existingAccount?.Note ?: "")
 
     FormSheetContainer(
-        title = if (isEditing) "تعديل بيانات الحساب" else "تعريف حساب جديد",
-        subtitle = if (isEditing) "تحديث الاسم، الدفتر، الهاتف، وسقف الائتمان" else "أضف عميلاً أو مورداً أو حساباً عاماً إلى دفاترك",
+        title = if (isEditing) "تعديل بيانات الحساب" else "فتح حساب مالي جديد",
+        subtitle = "تحديد الدفتر وبيانات التواصل والرصيد الافتتاحي وسقف الائتمان",
         headerIcon = Icons.Default.PersonAdd,
         onDismiss = onDismiss,
-        primaryButtonText = if (isEditing) "حفظ التعديلات" else "تأكيد وحفظ الحساب",
+        primaryButtonText = if (isEditing) "حفظ التعديلات" else "اعتماد وفتح الحساب",
         isPrimaryEnabled = isFormValid,
         isSaving = isSaving,
         hasUnsavedChanges = hasUnsavedChanges,
         errorMessage = errorMessage,
         onPrimaryClick = {
             if (isFormValid) {
-                val limit = NumberFormatter.parseDouble(creditLimitText, 0.0)
-                val opening = if (isEditing) 0.0 else NumberFormatter.parseDouble(openingBalanceText, 0.0)
+                val openVal = NumberFormatter.parseDouble(openingBalanceText, 0.0)
+                val limitVal = NumberFormatter.parseDouble(creditLimitText, 0.0)
                 onSave(
                     existingAccount?.PersonId ?: 0L,
                     name.trim(),
                     selectedBookId,
                     phone.trim().ifBlank { null },
-                    limit,
-                    opening,
+                    limitVal,
+                    openVal,
                     isDebitOpening,
                     note.trim().ifBlank { null }
                 )
             }
         }
     ) {
-        FormSectionGroup(title = "1. تصنيف الدفتر وبيانات الحساب") {
-            val bookOptions = remember(books) {
-                if (books.isNotEmpty()) books.map { it.Id to it.Name }
-                else listOf(1L to "العملاء", 2L to "الموردين", 3L to "الموظفين", 4L to "حسابات عامة")
-            }
-            FilterChipRow(
-                items = bookOptions,
-                selectedItem = selectedBookId,
-                onItemSelected = { bookId ->
-                    selectedBookId = bookId
-                    if (!isEditing) {
-                        isDebitOpening = (bookId != 2L)
+        FormSectionGroup(title = "1. الدفتر والاسم والاتصال") {
+            if (books.isNotEmpty()) {
+                FilterChipRow(
+                    items = books.map { it.Id to it.Name },
+                    selectedItem = selectedBookId,
+                    onItemSelected = { bId ->
+                        selectedBookId = bId
+                        if (!isEditing) {
+                            isDebitOpening = bId != 2L
+                        }
                     }
-                }
-            )
+                )
+            }
 
             SmartTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = "اسم صاحب الحساب / المنشأة",
-                placeholder = "مثال: مؤسسة الأمل للتجارة",
+                label = "الاسم الكامل للعميل / المورد / الحساب",
+                placeholder = "مثال: مؤسسة النور التجارية",
                 isRequired = true,
                 leadingIcon = Icons.Default.Person,
+                errorText = if (name.isNotEmpty() && name.trim().length < 2) "الاسم قصير جداً (حرفان على الأقل)" else null,
                 autoFocusOnAppear = !isEditing && name.isBlank(),
-                errorText = if (name.isNotBlank() && name.trim().length < 2) "الرجاء إدخال اسم واضح للحساب" else null,
                 nextFocusRequester = focusPhone
             )
 
             SmartTextField(
                 value = phone,
                 onValueChange = { phone = it },
-                label = "رقم الهاتف للتواصل والواتساب",
-                placeholder = "مثال: 777000000",
+                label = "رقم الهاتف / واتساب (اختياري)",
+                placeholder = "777000000",
                 leadingIcon = Icons.Default.Phone,
                 keyboardType = KeyboardType.Phone,
                 focusRequester = focusPhone,
@@ -1075,35 +1249,36 @@ fun AddEditAccountDialog(
         }
 
         if (!isEditing) {
-            FormSectionGroup(title = "2. الرصيد الافتتاحي واتجاه المديونية") {
-                SmartTextField(
-                    value = openingBalanceText,
-                    onValueChange = { openingBalanceText = it },
-                    label = "الرصيد الافتتاحي السابق (${AppDesignState.currencySymbol})",
-                    placeholder = "0",
-                    keyboardType = KeyboardType.Decimal,
-                    focusRequester = focusOpening,
-                    nextFocusRequester = focusLimit
-                )
-
+            FormSectionGroup(title = "2. الرصيد الافتتاحي التأسيسي (اختياري)") {
                 SegmentedOptionRow(
                     options = listOf(
-                        true to "عليه / مستحق لنا (مدين)",
-                        false to "له / مستحق علينا (دائن)"
+                        true to "عليه / لنا (مدين)",
+                        false to "له / علينا (دائن)"
                     ),
                     selectedOption = isDebitOpening,
                     onOptionSelected = { isDebitOpening = it },
                     activeColor = if (isDebitOpening) SmartLedgerColors.StateDanger else SmartLedgerColors.StateSuccess
                 )
+
+                SmartTextField(
+                    value = openingBalanceText,
+                    onValueChange = { openingBalanceText = it },
+                    label = "مبلغ الرصيد الافتتاحي (${AppDesignState.currencySymbol})",
+                    placeholder = "0 (اتركه فارغاً إذا كان الرصيد صفراً)",
+                    keyboardType = KeyboardType.Decimal,
+                    focusRequester = focusOpening,
+                    nextFocusRequester = focusLimit
+                )
             }
         }
 
-        FormSectionGroup(title = if (isEditing) "2. سقف الائتمان والملاحظات" else "3. سقف الائتمان والملاحظات") {
+        FormSectionGroup(title = if (isEditing) "2. الضوابط الائتمانية والملاحظات" else "3. الضوابط الائتمانية والملاحظات") {
             SmartTextField(
                 value = creditLimitText,
                 onValueChange = { creditLimitText = it },
-                label = "سقف الدين المسموح به (${AppDesignState.currencySymbol})",
-                placeholder = "0 (بدون حد أقصى)",
+                label = "سقف الائتمان الأقصى المسموح (${AppDesignState.currencySymbol})",
+                placeholder = "0 = بدون سقف ائتماني محدد",
+                helperText = "ينبهك النظام عند تجاوز مديونية الحساب لهذا المبلغ",
                 keyboardType = KeyboardType.Decimal,
                 focusRequester = focusLimit,
                 nextFocusRequester = focusNote
@@ -1112,8 +1287,8 @@ fun AddEditAccountDialog(
             SmartTextField(
                 value = note,
                 onValueChange = { note = it },
-                label = "العنوان أو ملاحظات خاصة بالحساب",
-                placeholder = "الفرع، المندوب، أو شروط التعامل...",
+                label = "عنوان أو ملاحظة تعريفية (اختياري)",
+                placeholder = "العنوان، شروط السداد، أو اسم المندوب...",
                 focusRequester = focusNote,
                 imeAction = ImeAction.Done
             )

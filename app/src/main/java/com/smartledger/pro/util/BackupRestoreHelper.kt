@@ -45,7 +45,7 @@ data class BackupRecord(
 data class BackupInspectionResult(
     val isValid: Boolean,
     val errorMessage: String? = null,
-    val appVersion: String = "2.4.0",
+    val appVersion: String = "3.0.0",
     val schemaVersion: Int = 1,
     val createdAt: String = "",
     val dbSizeBytes: Long = 0L,
@@ -118,7 +118,7 @@ object BackupRestoreHelper {
 
             val accountsCount = db.accountDao().getActiveAccountsCount()
             val productsCount = db.productDao().getActiveProductsCount()
-            val invoicesCount = db.invoiceDao().getInvoicesCount()
+            val invoicesCount = db.invoiceDao().getInvoiceCount()
 
             val now = Date()
             val yearFolder = SimpleDateFormat("yyyy", Locale.US).format(now)
@@ -214,7 +214,7 @@ object BackupRestoreHelper {
             // 1. Metadata JSON Entry
             val metadataJson = JSONObject().apply {
                 put("appName", "SmartLedger Pro")
-                put("appVersion", "2.4.0")
+                put("appVersion", "3.0.0")
                 put("schemaVersion", SmartLedgerDatabase.CURRENT_SCHEMA_VERSION)
                 put("createdAt", createdAt)
                 put("dbFileName", "smartledger.db")
@@ -303,7 +303,7 @@ object BackupRestoreHelper {
             val expectedSha256 = metaObj?.optString("sha256", "") ?: ""
             val schemaVersion = metaObj?.optInt("schemaVersion", 1) ?: 1
             val createdAt = metaObj?.optString("createdAt", "نسخة أرشيف خارجية") ?: "نسخة أرشيف خارجية"
-            val appVersion = metaObj?.optString("appVersion", "2.4.0") ?: "2.4.0"
+            val appVersion = metaObj?.optString("appVersion", "3.0.0") ?: "3.0.0"
             val accountsCount = metaObj?.optInt("accountsCount", 0) ?: 0
             val productsCount = metaObj?.optInt("productsCount", 0) ?: 0
             val invoicesCount = metaObj?.optLong("invoicesCount", 0L) ?: 0L

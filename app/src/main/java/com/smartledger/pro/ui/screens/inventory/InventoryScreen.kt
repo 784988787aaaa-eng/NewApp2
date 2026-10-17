@@ -25,6 +25,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smartledger.pro.data.local.dao.ProductStockItem
+import com.smartledger.pro.data.local.entity.CategoryEntity
+import com.smartledger.pro.data.local.entity.WarehouseEntity
 import com.smartledger.pro.domain.model.UnitConversionEngine
 import com.smartledger.pro.ui.components.*
 import com.smartledger.pro.ui.theme.AppDesignState
@@ -36,11 +38,17 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun InventoryScreen(
+    onNavigateToPurchases: (() -> Unit)? = null,
     viewModel: InventoryViewModel = viewModel()
 ) {
     val products by viewModel.products.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val stockFilter by viewModel.stockFilter.collectAsState()
+    val productCategories by viewModel.productCategories.collectAsState()
+    val units by viewModel.units.collectAsState()
+    val warehouses by viewModel.warehouses.collectAsState()
+    var productIdForWarehouseTransfer by rememberSaveable { mutableStateOf<Long?>(null) }
+    val productForWarehouseTransfer = remember(products, productIdForWarehouseTransfer) { productIdForWarehouseTransfer?.let { id -> products.firstOrNull { it.Id == id } } }
     val scope = rememberCoroutineScope()
 
     var showAddOrEditSheet by rememberSaveable { mutableStateOf(false) }
@@ -50,6 +58,8 @@ fun InventoryScreen(
     var selectedProductIdForDetails by rememberSaveable { mutableStateOf<Long?>(null) }
     var productIdToDelete by rememberSaveable { mutableStateOf<Long?>(null) }
     val productToDelete = remember(products, productIdToDelete) { productIdToDelete?.let { id -> products.firstOrNull { it.Id == id } } }
+    var lastArchivedProductId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var lastArchivedProductName by rememberSaveable { mutableStateOf<String?>(null) }
     var showRapidStockCountSheet by rememberSaveable { mutableStateOf(false) }
     var initialStockCountProductId by rememberSaveable { mutableStateOf<Long?>(null) }
     var showBarcodeScanner by rememberSaveable { mutableStateOf(false) }
@@ -82,7 +92,7 @@ fun InventoryScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "المخزون والأصناف",
                             style = MaterialTheme.typography.titleLarge,
@@ -96,7 +106,26 @@ fun InventoryScreen(
                         )
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (onNavigateToPurchases != null) {
+                            OutlinedButton(
+                                onClick = onNavigateToPurchases,
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = SmartLedgerColors.AccentLight),
+                                border = ButtonDefaults.outlinedButtonBorder.copy(
+                                    brush = SolidColor(SmartLedgerColors.BorderSubtle)
+                                ),
+                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                modifier = Modifier
+                                    .heightIn(min = 38.dp)
+                                    .pressScaleEffect()
+                            ) {
+                                Icon(Icons.Default.LocalShipping, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("توريد", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
                         OutlinedButton(
                             onClick = {
                                 initialStockCountProductId = null
@@ -107,14 +136,14 @@ fun InventoryScreen(
                                 brush = SolidColor(SmartLedgerColors.StateWarningBorder)
                             ),
                             shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                             modifier = Modifier
-                                .height(38.dp)
+                                .heightIn(min = 38.dp)
                                 .pressScaleEffect()
                         ) {
-                            Icon(Icons.Default.FactCheck, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.FactCheck, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("الجرد السريع", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                            Text("جرد", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         }
 
                         Button(
@@ -125,9 +154,9 @@ fun InventoryScreen(
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                             shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                             modifier = Modifier
-                                .height(38.dp)
+                                .heightIn(min = 38.dp)
                                 .pressScaleEffect()
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -171,7 +200,23 @@ fun InventoryScreen(
                 Spacer(modifier = Modifier.height(4.dp))
                 StatusFeedbackBanner(
                     message = statusBanner,
-                    onDismiss = { statusBanner = null }
+                    actionLabel = if (lastArchivedProductId != null) "تراجع عن الأرشفة" else null,
+                    onAction = if (lastArchivedProductId != null) {
+                        {
+                            val targetId = lastArchivedProductId!!
+                            val restoredName = lastArchivedProductName ?: "الصنف"
+                            viewModel.restoreProduct(targetId) {
+                                lastArchivedProductId = null
+                                lastArchivedProductName = null
+                                statusBanner = "تمت استعادة الصنف «$restoredName» إلى المخزن النشط."
+                            }
+                        }
+                    } else null,
+                    onDismiss = {
+                        statusBanner = null
+                        lastArchivedProductId = null
+                        lastArchivedProductName = null
+                    }
                 )
             }
 
@@ -253,6 +298,13 @@ fun InventoryScreen(
                         initialStockCountProductId = pId
                         showRapidStockCountSheet = true
                     },
+                    onTransferWarehouse = if (warehouses.size >= 2) {
+                        {
+                            val pId = selectedProductForDetails.Id
+                            selectedProductIdForDetails = null
+                            productIdForWarehouseTransfer = pId
+                        }
+                    } else null,
                     onClose = { selectedProductIdForDetails = null }
                 )
             }
@@ -276,6 +328,7 @@ fun InventoryScreen(
                             val res = viewModel.commitStockAdjustmentAsync(productId, actual, current, notes)
                             isAdjusting = false
                             if (res.isSuccess) {
+                                lastArchivedProductId = null
                                 statusBanner = "تم تسجيل تسوية الجرد وحفظ أثر الحركة في سجل المخزون."
                                 onSuccessStep()
                             } else {
@@ -298,6 +351,9 @@ fun InventoryScreen(
                     existingProduct = editingProduct,
                     initialBarcode = initialScannedBarcode,
                     allProducts = products,
+                    categories = productCategories,
+                    unitSuggestions = remember(units, products) { (units.map { it.Name } + products.map { it.SmallUnit } + products.mapNotNull { it.LargeUnit }).distinct() },
+                    warehouseSuggestions = remember(warehouses, products) { (warehouses.map { it.Name } + products.map { it.Warehouse }).distinct() },
                     isSaving = isSavingProduct,
                     saveErrorMessage = saveProductError,
                     onOpenExistingProduct = { duplicateProduct ->
@@ -305,7 +361,7 @@ fun InventoryScreen(
                         selectedProductIdForDetails = duplicateProduct.Id
                     },
                     onDismiss = { showAddOrEditSheet = false },
-                    onSave = { id, barcode, name, warehouse, shelf, sUnit, lUnit, factor, cost, retail, wholesale, threshold, openMaj, openMin ->
+                    onSave = { id, barcode, name, categoryId, warehouse, shelf, sUnit, lUnit, factor, cost, retail, wholesale, threshold, openMaj, openMin ->
                         isSavingProduct = true
                         saveProductError = null
                         scope.launch {
@@ -313,7 +369,7 @@ fun InventoryScreen(
                                 id = id,
                                 barcode = barcode,
                                 name = name,
-                                categoryId = null,
+                                categoryId = categoryId,
                                 warehouse = warehouse,
                                 shelfLocation = shelf,
                                 smallUnit = sUnit,
@@ -329,6 +385,7 @@ fun InventoryScreen(
                             isSavingProduct = false
                             if (res.isSuccess) {
                                 showAddOrEditSheet = false
+                                lastArchivedProductId = null
                                 statusBanner = if (id > 0) "تم تحديث بيانات الصنف «$name» بنجاح." else "تمت إضافة الصنف «$name» إلى المخزن بنجاح."
                             } else {
                                 saveProductError = res.exceptionOrNull()?.message ?: "تعذر حفظ بيانات الصنف؛ يرجى التحقق من المدخلات والمحاولة مجدداً."
@@ -339,16 +396,77 @@ fun InventoryScreen(
             }
         }
 
+        if (productForWarehouseTransfer != null && warehouses.size >= 2) {
+            val targetProd = productForWarehouseTransfer!!
+            FloatingModalDialog(onDismissRequest = { productIdForWarehouseTransfer = null }) {
+                var fromWId by rememberSaveable { mutableStateOf<Long?>(warehouses.firstOrNull()?.Id) }
+                var toWId by rememberSaveable { mutableStateOf<Long?>(warehouses.drop(1).firstOrNull()?.Id) }
+                var transferQtyText by rememberSaveable { mutableStateOf("1") }
+                var transferNote by rememberSaveable { mutableStateOf("") }
+                var transferErr by remember { mutableStateOf<String?>(null) }
+
+                FormSheetContainer(
+                    title = "تحويل مخزني بين المخازن",
+                    subtitle = "الصنف: ${targetProd.Name} (${targetProd.SmallUnit})",
+                    headerIcon = Icons.Default.SwapHoriz,
+                    onDismiss = { productIdForWarehouseTransfer = null },
+                    primaryButtonText = "تنفيذ التحويل المخزني",
+                    errorMessage = transferErr,
+                    onPrimaryClick = {
+                        val qtyVal = NumberFormatter.parseDouble(transferQtyText, 0.0)
+                        scope.launch {
+                            val res = viewModel.transferStockBetweenWarehousesAsync(
+                                productId = targetProd.Id,
+                                fromWarehouseId = fromWId ?: 0L,
+                                toWarehouseId = toWId ?: 0L,
+                                quantityMinor = qtyVal,
+                                notes = transferNote
+                            )
+                            if (res.isSuccess) {
+                                productIdForWarehouseTransfer = null
+                                statusBanner = "تم تنفيذ التحويل المخزني للصنف «${targetProd.Name}» بنجاح."
+                            } else {
+                                transferErr = res.exceptionOrNull()?.message
+                            }
+                        }
+                    }
+                ) {
+                    FormSectionGroup(title = "مسار التحويل والكمية") {
+                        val wChips = warehouses.map { it.Id as Long? to it.Name }
+                        Text("من مخزن:", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary)
+                        FilterChipRow(items = wChips, selectedItem = fromWId, onItemSelected = { fromWId = it })
+                        Text("إلى مخزن:", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary)
+                        FilterChipRow(items = wChips, selectedItem = toWId, onItemSelected = { toWId = it })
+                        SmartTextField(
+                            value = transferQtyText,
+                            onValueChange = { transferQtyText = it },
+                            label = "الكمية المحولة (${targetProd.SmallUnit})",
+                            isRequired = true,
+                            keyboardType = KeyboardType.Decimal
+                        )
+                        SmartTextField(
+                            value = transferNote,
+                            onValueChange = { transferNote = it },
+                            label = "ملاحظة التحويل (اختياري)",
+                            imeAction = ImeAction.Done
+                        )
+                    }
+                }
+            }
+        }
+
         // تأكيد أرشفة صنف
         if (productToDelete != null) {
             val target = productToDelete!!
             ConfirmActionDialog(
                 title = "أرشفة الصنف «${target.Name}»؟",
-                message = "سيتم نقل الصنف إلى سلة المحذوفات وإخفاؤه من قوائم البيع مع الحفاظ على الفواتير التاريخية المرتبطة به.",
+                message = "سيتم نقل الصنف إلى سلة المحذوفات وإخفاؤه من قوائم البيع مع الحفاظ على الفواتير التاريخية المرتبطة به. يمكنك التراجع فوراً أو استعادته من سلة المحذوفات.",
                 confirmText = "أرشفة الصنف",
                 requireReason = true,
                 reasonLabel = "سبب الأرشفة (اختياري)",
                 onConfirm = { reason ->
+                    lastArchivedProductId = target.Id
+                    lastArchivedProductName = target.Name
                     viewModel.deleteProduct(target.Id, reason)
                     productIdToDelete = null
                     statusBanner = "تمت أرشفة الصنف «${target.Name}»."
@@ -556,6 +674,7 @@ fun ProductDetailsSheetContent(
     viewModel: InventoryViewModel,
     onEdit: () -> Unit,
     onAdjustStock: () -> Unit,
+    onTransferWarehouse: (() -> Unit)? = null,
     onClose: () -> Unit
 ) {
     val movementsFlow = remember(product.Id) { viewModel.getMovementsForProduct(product.Id) }
@@ -614,15 +733,31 @@ fun ProductDetailsSheetContent(
             }
         }
 
-        OutlinedButton(
-            onClick = onAdjustStock,
-            modifier = Modifier.fillMaxWidth().height(40.dp).pressScaleEffect(),
-            shape = RoundedCornerShape(10.dp),
-            border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateWarning))
-        ) {
-            Icon(Icons.Default.FactCheck, contentDescription = null, tint = SmartLedgerColors.StateWarning, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("تسوية جرد فورية لهذا الصنف", color = SmartLedgerColors.StateWarning, fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = onAdjustStock,
+                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(10.dp),
+                border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateWarning))
+            ) {
+                Icon(Icons.Default.FactCheck, contentDescription = null, tint = SmartLedgerColors.StateWarning, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("تسوية جرد الصنف", color = SmartLedgerColors.StateWarning, fontWeight = FontWeight.Bold, maxLines = 1)
+            }
+            if (onTransferWarehouse != null) {
+                OutlinedButton(
+                    onClick = onTransferWarehouse,
+                    modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
+                ) {
+                    Icon(Icons.Default.SwapHoriz, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("تحويل بين المخازن", color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+            }
         }
 
         Text(
@@ -855,16 +990,18 @@ fun RapidStockCountSheetContent(
 
 /**
  * نافذة تعريف أو تعديل صنف بالمخزن (AddProductDialog)
- * - تحتفظ بجميع حقول نافذة إدخال المخزن الشاملة (اسم الصنف، الباركود، الوحدة الصغرى والكبرى، معامل التحويل،
- *   تكلفة وسعر بيع الوحدة الصغرى، سعر بيع الوحدة الكبرى، الرصيد الافتتاحي بالوحدتين، وحد التنبيه وموقع الرف)
+ * - تستخدم القيم الافتراضية الذكية المحددة في الإعدادات (`AppDesignState.defaultSmallUnit` إلخ - `UX-005`)
+ * - تعرض معاينة حية لهامش الربح وتنبيهاً فورياً عند إدخال سعر بيع أقل من التكلفة (`UX-003`)
  * - تحفظ حالة المدخلات عبر rememberSaveable لمنع ضياع البيانات عند دوران الشاشة أو ظهور لوحة المفاتيح أو حدوث خطأ حفظ
- * - لا تُغلق إلا بعد التأكد من نجاح الحفظ في قاعدة البيانات.
  */
 @Composable
 fun AddProductDialog(
     existingProduct: ProductStockItem?,
     initialBarcode: String?,
     allProducts: List<ProductStockItem>,
+    categories: List<CategoryEntity> = emptyList(),
+    unitSuggestions: List<String> = emptyList(),
+    warehouseSuggestions: List<String> = emptyList(),
     isSaving: Boolean = false,
     saveErrorMessage: String? = null,
     onOpenExistingProduct: (ProductStockItem) -> Unit,
@@ -873,6 +1010,7 @@ fun AddProductDialog(
         id: Long,
         barcode: String?,
         name: String,
+        categoryId: Long?,
         warehouse: String,
         shelfLocation: String?,
         smallUnit: String,
@@ -891,11 +1029,15 @@ fun AddProductDialog(
 
     var name by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.Name ?: "") }
     var barcode by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.Barcode ?: initialBarcode ?: "") }
-    var smallUnit by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.SmallUnit ?: "قطعة") }
-    var largeUnit by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.LargeUnit ?: "كرتون") }
+    var smallUnit by rememberSaveable(stateKey) {
+        mutableStateOf(existingProduct?.SmallUnit ?: AppDesignState.defaultSmallUnit.ifBlank { "قطعة" })
+    }
+    var largeUnit by rememberSaveable(stateKey) {
+        mutableStateOf(existingProduct?.LargeUnit ?: AppDesignState.defaultLargeUnit)
+    }
     var factorText by rememberSaveable(stateKey) {
         mutableStateOf(
-            if (existingProduct != null) NumberFormatter.formatQuantity(existingProduct.UnitFactor) else "24"
+            NumberFormatter.formatQuantity(existingProduct?.UnitFactor ?: AppDesignState.defaultUnitFactor.coerceAtLeast(1.0))
         )
     }
     var costPriceText by rememberSaveable(stateKey) {
@@ -912,9 +1054,10 @@ fun AddProductDialog(
     var openingMajorText by rememberSaveable(stateKey) { mutableStateOf("0") }
     var openingMinorText by rememberSaveable(stateKey) { mutableStateOf("0") }
     var thresholdText by rememberSaveable(stateKey) {
-        mutableStateOf(NumberFormatter.formatQuantity(existingProduct?.AlertThreshold ?: 5.0))
+        mutableStateOf(NumberFormatter.formatQuantity(existingProduct?.AlertThreshold ?: AppDesignState.defaultAlertThreshold.coerceAtLeast(0.0)))
     }
-    var warehouse by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.Warehouse ?: "المستودع الرئيسي") }
+    var selectedCategoryId by rememberSaveable(stateKey) { mutableStateOf<Long?>(existingProduct?.CategoryId) }
+    var warehouse by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.Warehouse ?: warehouseSuggestions.firstOrNull() ?: "المستودع الرئيسي") }
     var shelfLocation by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.ShelfLocation ?: "") }
 
     // مراجع انتقال التركيز السلس عبر لوحة المفاتيح (Next -> Next -> Done)
@@ -943,6 +1086,9 @@ fun AddProductDialog(
     val openMinVal = NumberFormatter.parseDouble(openingMinorText, 0.0)
     val totalOpeningMinor = UnitConversionEngine.toMinorQuantity(openMajVal, openMinVal, factorVal)
     val defaultWholesale = retailVal * factorVal
+    val isBelowCost = retailVal > 0.0 && costVal > 0.0 && retailVal < costVal
+    val unitProfit = retailVal - costVal
+    val marginPct = if (costVal > 0.0 && retailVal > 0.0) ((unitProfit / costVal) * 100.0) else 0.0
 
     val isFormValid = name.trim().isNotEmpty() && costVal >= 0.0 && retailVal > 0.0 && duplicateBarcodeProduct == null
     val hasUnsavedChanges = name != (existingProduct?.Name ?: "") ||
@@ -963,14 +1109,15 @@ fun AddProductDialog(
         onPrimaryClick = {
             if (isFormValid) {
                 val wholesale = NumberFormatter.parseDouble(wholesalePriceText, defaultWholesale)
-                val threshold = NumberFormatter.parseDouble(thresholdText, 5.0)
+                val threshold = NumberFormatter.parseDouble(thresholdText, AppDesignState.defaultAlertThreshold)
                 onSave(
                     existingProduct?.Id ?: 0L,
                     barcode.trim().ifBlank { null },
                     name.trim(),
+                    selectedCategoryId,
                     warehouse.trim().ifBlank { "المستودع الرئيسي" },
                     shelfLocation.trim().ifBlank { null },
-                    smallUnit.trim().ifBlank { "قطعة" },
+                    smallUnit.trim().ifBlank { AppDesignState.defaultSmallUnit.ifBlank { "قطعة" } },
                     largeUnit.trim().ifBlank { null },
                     factorVal,
                     costVal,
@@ -1020,6 +1167,23 @@ fun AddProductDialog(
                     }
                 )
 
+                if (categories.isNotEmpty()) {
+                    FilterChipRow(
+                        items = listOf<Pair<Long?, String>>(null to "بدون تصنيف") + categories.map { it.Id as Long? to it.Name },
+                        selectedItem = selectedCategoryId,
+                        onItemSelected = { selectedCategoryId = it }
+                    )
+                }
+
+                SmartAutocompleteField(
+                    value = warehouse,
+                    onValueChange = { warehouse = it },
+                    label = "المخزن / المستودع",
+                    placeholder = "اختر أو اكتب اسم المخزن...",
+                    suggestions = warehouseSuggestions,
+                    leadingIcon = Icons.Default.Warehouse
+                )
+
                 if (duplicateBarcodeProduct != null) {
                     Row(
                         modifier = Modifier
@@ -1052,21 +1216,23 @@ fun AddProductDialog(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                SmartTextField(
+                SmartAutocompleteField(
                     value = smallUnit,
                     onValueChange = { smallUnit = it },
                     label = "الوحدة الصغرى (الأساسية)",
                     placeholder = "قطعة / حبة",
                     isRequired = true,
+                    suggestions = unitSuggestions,
                     focusRequester = focusSmallUnit,
                     nextFocusRequester = focusLargeUnit,
                     modifier = Modifier.weight(1f)
                 )
-                SmartTextField(
+                SmartAutocompleteField(
                     value = largeUnit,
                     onValueChange = { largeUnit = it },
                     label = "الوحدة الكبرى (العبوة)",
                     placeholder = "كرتون / درزن",
+                    suggestions = unitSuggestions,
                     focusRequester = focusLargeUnit,
                     nextFocusRequester = focusFactor,
                     modifier = Modifier.weight(1f)
@@ -1085,9 +1251,12 @@ fun AddProductDialog(
             )
         }
 
-        // المجموعة 3: التكلفة وأسعار البيع (التجزئة والجملة)
+        // المجموعة 3: التكلفة وأسعار البيع (التجزئة والجملة) مع منع البيع بخسارة غير مقصود (UX-003)
         FormSectionGroup(
-            title = "3. التكلفة وأسعار البيع (${AppDesignState.currencySymbol})"
+            title = "3. التكلفة وأسعار البيع (${AppDesignState.currencySymbol})",
+            badgeText = if (retailVal > 0.0 && costVal > 0.0 && !isBelowCost) {
+                "هامش الربح: +${NumberFormatter.formatCurrency(unitProfit, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} (${NumberFormatter.formatQuantity(marginPct)}%)"
+            } else null
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1115,6 +1284,27 @@ fun AddProductDialog(
                     nextFocusRequester = focusWholesale,
                     modifier = Modifier.weight(1f)
                 )
+            }
+
+            if (isBelowCost) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(SmartLedgerColors.StateDangerSubtle)
+                        .border(1.dp, SmartLedgerColors.StateDangerBorder, RoundedCornerShape(10.dp))
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.WarningAmber, contentDescription = null, tint = SmartLedgerColors.StateDanger, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "تنبيه هام: سعر البيع المدخل (${NumberFormatter.formatCurrency(retailVal, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}) أقل من سعر التكلفة (${NumberFormatter.formatCurrency(costVal, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)})! سيؤدي ذلك لبيع الصنف بخسارة.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SmartLedgerColors.StateDangerText,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             SmartTextField(

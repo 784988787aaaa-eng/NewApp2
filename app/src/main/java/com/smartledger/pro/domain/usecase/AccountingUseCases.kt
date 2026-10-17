@@ -21,8 +21,8 @@ object LedgerDirectionPolicy {
     val DEBIT_TYPES = setOf("DebtOnUs", "Sale", "Payment", "PurchaseReturn")
     val CREDIT_TYPES = setOf("DebtToUs", "Purchase", "Receive", "SaleReturn")
 
-    val STOCK_IN_TYPES = setOf("In", "Purchase", "ReturnIn", "AdjustmentIn")
-    val STOCK_OUT_TYPES = setOf("Out", "Sale", "ReturnOut", "AdjustmentOut")
+    val STOCK_IN_TYPES = setOf("In", "Purchase", "ReturnIn", "AdjustmentIn", "TransferIn")
+    val STOCK_OUT_TYPES = setOf("Out", "Sale", "ReturnOut", "AdjustmentOut", "TransferOut")
 
     fun isCreditOperation(type: String): Boolean = type in CREDIT_TYPES
     fun isDebitOperation(type: String): Boolean = type in DEBIT_TYPES
@@ -86,9 +86,6 @@ data class SaleLineDraft(
 
 /**
  * حالة استخدام إصدار فاتورة المبيعات (CreateSaleUseCase)
- * - تتحقق مبدئياً من المدخلات وتجمع الكميات المكررة للصنف الواحد،
- * - ثم تمرر `allowNegativeStock` إلى `InvoiceRepository.createInvoice` لإعادة فحص المخزون الفعلي
- *   وتخصيص رقم فاتورة تسلسلي فريد داخل معاملة قاعدة البيانات نفسها (`db.withTransaction`).
  */
 class CreateSaleUseCase(private val invoiceRepository: InvoiceRepository) {
 
@@ -100,13 +97,14 @@ class CreateSaleUseCase(private val invoiceRepository: InvoiceRepository) {
         paidAmountInput: Double,
         notes: String?,
         allowNegativeStock: Boolean,
-        invoicePrefix: String = "INV"
+        invoicePrefix: String = "INV",
+        financialAccountId: Long? = null,
+        warehouseId: Long? = null
     ): Result<InvoiceEntity> {
         if (draftLines.isEmpty()) {
             return Result.failure(Exception("السلة فارغة؛ أضف صنفاً واحداً على الأقل لإصدار الفاتورة."))
         }
 
-        // فحص مبدئي لتجميع الأصناف المكررة قبل دخول المعاملة (مع إعادة الفحص الإلزامي داخل معاملة قاعدة البيانات)
         if (!allowNegativeStock) {
             val grouped = draftLines.groupBy { it.productId }
             for ((_, items) in grouped) {
@@ -156,7 +154,9 @@ class CreateSaleUseCase(private val invoiceRepository: InvoiceRepository) {
             RemainingAmount = remaining,
             PaymentType = if (remaining == 0.0) "Cash" else if (effectivePaid == 0.0) "Credit" else "Partial",
             Notes = notes?.trim()?.ifBlank { null },
-            CreatedAt = now
+            CreatedAt = now,
+            FinancialAccountId = financialAccountId,
+            WarehouseId = warehouseId
         )
 
         val lineEntities = draftLines.mapIndexed { idx, item ->
@@ -214,7 +214,9 @@ class CreatePurchaseUseCase(private val invoiceRepository: InvoiceRepository) {
         unitPurchaseCost: Double,
         paidCash: Double,
         notes: String?,
-        purchasePrefix: String = "PUR"
+        purchasePrefix: String = "PUR",
+        financialAccountId: Long? = null,
+        warehouseId: Long? = null
     ): Result<Long> {
         if (quantity <= 0.0) {
             return Result.failure(Exception("يجب أن تكون كمية الشراء أكبر من صفر."))
@@ -265,7 +267,9 @@ class CreatePurchaseUseCase(private val invoiceRepository: InvoiceRepository) {
             RemainingAmount = remaining,
             PaymentType = if (remaining == 0.0) "Cash" else if (safePaid == 0.0) "Credit" else "Partial",
             Notes = notes?.trim()?.ifBlank { null },
-            CreatedAt = now
+            CreatedAt = now,
+            FinancialAccountId = financialAccountId,
+            WarehouseId = warehouseId
         )
 
         val line = InvoiceLineEntity(
@@ -292,8 +296,8 @@ class CreatePurchaseUseCase(private val invoiceRepository: InvoiceRepository) {
  * يطبق نفس القواعد المطبقة في `Repositories` و`SmartLedgerDaos`:
  * - إعادة فحص المخزون الحي وتجميع البنود المكررة داخل المعاملة.
  * - أرقام فواتير تسلسلية فريدة غير قابلة للتكرار.
- * - الإلغاء المحاسبي الموثق (`cancelOperationWithReversal`) بدلاً من الحذف المادي.
- * - حساب حركة الصندوق النقدي (`CashInflows`, `CashOutflows`, `NetCashBalance`) بجانب قائمة الدخل.
+ * - تحديث تكلفة الصنف بالمتوسط المرجح للتكلفة عند الشراء.
+ * - الإلغاء المحاسبي الموثق (`cancelOperationWithReversal`) دون تضخيم التدفقات النقدية الخارجة عند عكس سند قبض.
  */
 class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
     private var nextPersonId = 1L
@@ -474,7 +478,7 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
 
         try {
             if (personId != null && personId > 0L) {
-                val p = people.firstOrNull { it.Id == personId && it.IsActive }
+                people.firstOrNull { it.Id == personId && it.IsActive }
                     ?: throw IllegalStateException("الحساب المرتبط بالفاتورة غير موجود أو مؤرشف")
             }
 
@@ -492,7 +496,6 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
                 Triple(prod, calc, idx + 1)
             }
 
-            // فحص المخزون المجمع داخل المعاملة (يشمل تكرار نفس الصنف في أكثر من بند)
             if (!allowNegativeStock) {
                 val aggregated = preparedLines.groupBy { it.first.Id }
                 for ((prodId, group) in aggregated) {
@@ -612,8 +615,9 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
         unitPurchaseCost: Double,
         paidCash: Double
     ): Result<Long> {
-        val prod = products.firstOrNull { it.Id == productId && it.IsActive }
-            ?: return Result.failure(Exception("الصنف غير موجود"))
+        val prodIdx = products.indexOfFirst { it.Id == productId && it.IsActive }
+        if (prodIdx < 0) return Result.failure(Exception("الصنف غير موجود"))
+        val prod = products[prodIdx]
         if (supplierId != null && supplierId > 0L) {
             if (people.none { it.Id == supplierId && it.IsActive }) {
                 return Result.failure(Exception("حساب المورد غير موجود"))
@@ -632,6 +636,15 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
         if (remaining > 0.0 && (supplierId == null || supplierId <= 0L)) {
             return Result.failure(Exception("المشتريات الآجلة تتطلب اختيار مورد مسجل"))
         }
+
+        val existingStockBefore = getProductStockMinor(prod.Id)
+        val newWeightedCost = WeightedAverageCostCalculator.calculateNewWeightedCost(
+            currentStockMinor = existingStockBefore,
+            currentUnitCost = prod.CostPrice,
+            purchasedQtyMinor = totalMinorQty,
+            purchasedUnitCost = minorCost
+        )
+        products[prodIdx] = prod.copy(CostPrice = NumberFormatter.roundCurrency(newWeightedCost, 2))
 
         val now = "2026-10-17 13:00:00"
         val invoiceId = nextInvoiceId++
@@ -776,6 +789,9 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
     fun cancelOperationWithReversal(operationId: Long, reason: String): Result<Long> {
         val op = operations.firstOrNull { it.Id == operationId }
             ?: return Result.failure(Exception("الحركة غير موجودة"))
+        if (op.SourceInvoiceId != null && op.SourceInvoiceId > 0L) {
+            return Result.failure(Exception("لا يمكن عكس حركة مالية مرتبطة بفاتورة بشكل مستقل؛ يرجى عكس الفاتورة من إدارة الفواتير."))
+        }
         val revRef = "REV-OP-${op.Id}"
         if (op.ReferenceNumber?.startsWith("REV-OP-") == true || operations.any { it.ReferenceNumber == revRef }) {
             return Result.failure(Exception("تم عكس هذه الحركة مسبقاً"))
@@ -828,7 +844,13 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
         return Result.success(revId)
     }
 
-    fun recordExpense(amount: Double, statement: String, paymentSource: String = "الخزينة الرئيسية"): Result<Long> {
+    fun recordExpense(
+        amount: Double,
+        statement: String,
+        paymentSource: String = "الخزينة الرئيسية",
+        entryType: String = "EXPENSE",
+        categoryId: Long? = null
+    ): Result<Long> {
         val clean = NumberFormatter.roundCurrency(amount)
         if (clean <= 0.0 || statement.isBlank()) return Result.failure(Exception("بيانات النفقة غير مكتملة"))
         val id = nextExpenseId++
@@ -836,10 +858,13 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
             ExpenseEntity(
                 Id = id,
                 ExpenseDate = "2026-10-17 16:00:00",
+                CategoryId = categoryId,
                 Amount = clean,
                 Statement = statement.trim(),
                 PaymentSource = paymentSource,
-                CreatedAt = "2026-10-17 16:00:00"
+                CreatedAt = "2026-10-17 16:00:00",
+                EntryType = entryType,
+                IsArchived = 0
             )
         )
         return Result.success(id)
@@ -850,13 +875,17 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
         val completedPurchases = invoices.filter { it.Type == "Purchase" && it.Status == "Completed" }
         val completedSaleIds = completedSales.map { it.Id }.toSet()
 
+        val activeExpenses = expenses.filter { (it.IsArchived ?: 0) == 0 && (it.EntryType ?: "EXPENSE") == "EXPENSE" }
+        val activeRevenues = expenses.filter { (it.IsArchived ?: 0) == 0 && it.EntryType == "REVENUE" }
+
         val totalSales = NumberFormatter.roundCurrency(completedSales.sumOf { it.FinalTotal })
         val cogs = NumberFormatter.roundCurrency(
             invoiceLines.filter { it.InvoiceId in completedSaleIds }.sumOf { it.QuantityMinor * it.LineCost }
         )
         val grossProfit = NumberFormatter.roundCurrency(totalSales - cogs)
-        val totalExpenses = NumberFormatter.roundCurrency(expenses.sumOf { it.Amount })
-        val netProfit = NumberFormatter.roundCurrency(grossProfit - totalExpenses)
+        val totalExpenses = NumberFormatter.roundCurrency(activeExpenses.sumOf { it.Amount })
+        val otherRevenues = NumberFormatter.roundCurrency(activeRevenues.sumOf { it.Amount })
+        val netProfit = NumberFormatter.roundCurrency(grossProfit + otherRevenues - totalExpenses)
 
         val inventoryValuation = NumberFormatter.roundCurrency(
             products.filter { it.IsActive }.sumOf { p ->
@@ -872,14 +901,28 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
             activeSummaries.filter { it.NetBalance < 0.0 }.sumOf { abs(it.NetBalance) }
         )
 
+        val voucherInflows = operations.sumOf { op ->
+            val isRev = op.ReferenceNumber?.startsWith("REV-OP-") == true
+            when {
+                op.Type == "Receive" && !isRev -> op.Amount
+                op.Type == "Payment" && isRev -> -op.Amount
+                else -> 0.0
+            }
+        }
+        val voucherOutflows = operations.sumOf { op ->
+            val isRev = op.ReferenceNumber?.startsWith("REV-OP-") == true
+            when {
+                op.Type == "Payment" && !isRev -> op.Amount
+                op.Type == "Receive" && isRev -> -op.Amount
+                else -> 0.0
+            }
+        }
+
         val cashInflows = NumberFormatter.roundCurrency(
-            completedSales.sumOf { it.PaidAmount } +
-                operations.filter { it.Type == "Receive" }.sumOf { it.Amount }
+            completedSales.sumOf { it.PaidAmount } + voucherInflows + otherRevenues
         )
         val cashOutflows = NumberFormatter.roundCurrency(
-            completedPurchases.sumOf { it.PaidAmount } +
-                operations.filter { it.Type == "Payment" }.sumOf { it.Amount } +
-                totalExpenses
+            completedPurchases.sumOf { it.PaidAmount } + voucherOutflows + totalExpenses
         )
         val netCashBalance = NumberFormatter.roundCurrency(cashInflows - cashOutflows)
 

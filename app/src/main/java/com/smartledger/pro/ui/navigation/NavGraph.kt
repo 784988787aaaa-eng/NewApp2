@@ -149,10 +149,22 @@ fun MainAppScaffold(navController: NavHostController = rememberNavController()) 
                 )
             }
             composable(Screen.PosSales.route) {
-                PosSalesScreen()
+                PosSalesScreen(
+                    onNavigateToInventory = {
+                        navController.navigate(Screen.Inventory.route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
+                )
             }
             composable(Screen.Inventory.route) {
-                InventoryScreen()
+                InventoryScreen(
+                    onNavigateToPurchases = { navController.navigate(Screen.Purchases.route) }
+                )
             }
             composable(Screen.Purchases.route) {
                 PurchasesScreen(
