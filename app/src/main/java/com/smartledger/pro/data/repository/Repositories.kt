@@ -10,8 +10,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.max
 
 class AccountRepository(private val db: SmartLedgerDatabase) {
     private val accountDao = db.accountDao()
@@ -96,6 +98,17 @@ class AccountRepository(private val db: SmartLedgerDatabase) {
         writeMutex.withLock {
             val person = accountDao.getPersonById(id) ?: return@withContext
             val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+            val safeSnapshot = JSONObject().apply {
+                put("id", person.Id)
+                put("bookId", person.BookId)
+                put("name", person.Name)
+                put("phone", person.Phone ?: "")
+                put("accountCode", person.AccountCode ?: "")
+                put("creditLimit", person.CreditLimit)
+                put("note", person.Note ?: "")
+                put("createdAt", person.CreatedAt)
+            }.toString()
+
             db.withTransaction {
                 accountDao.softDeletePerson(id)
                 deletedItemDao.insertDeletedItem(
@@ -103,7 +116,7 @@ class AccountRepository(private val db: SmartLedgerDatabase) {
                         EntityType = "Account",
                         OriginalId = id,
                         Title = person.Name,
-                        SnapshotJson = "{\"name\": \"${person.Name}\", \"phone\": \"${person.Phone ?: ""}\"}",
+                        SnapshotJson = safeSnapshot,
                         DeletedAt = now,
                         Reason = reason ?: "أرشفة حساب بواسطة المستخدم"
                     )
@@ -116,22 +129,83 @@ class AccountRepository(private val db: SmartLedgerDatabase) {
         return operationDao.getOperationsForPerson(personId)
     }
 
-    suspend fun deleteOperation(operationId: Long, reason: String? = null) = withContext(Dispatchers.IO) {
+    /**
+     * إلغاء الحركة المالية عبر قيد عكسي محاسبي موثق (Auditable Accounting Reversal) بدلاً من الحذف المادي:
+     * - يحتفظ بالحركة الأصلية في جدول `Operations` لحماية التاريخ المالي وسجل التدقيق.
+     * - يدرج حركة عكسية بالاتجاه المقابل (`REV-OP-<id>`) لتصحيح رصيد الحساب بدقة.
+     * - يوثق اللقطة الكاملة بترميز JSON سليم ومهرب (`JSONObject`) داخل `DeletedItems`.
+     */
+    suspend fun deleteOperation(operationId: Long, reason: String? = null): Result<Long> = withContext(Dispatchers.IO) {
         writeMutex.withLock {
-            val op = operationDao.getOperationById(operationId) ?: return@withContext
-            val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-            db.withTransaction {
-                operationDao.deleteOperationById(operationId)
-                deletedItemDao.insertDeletedItem(
-                    DeletedItemEntity(
-                        EntityType = "Operation",
-                        OriginalId = operationId,
-                        Title = "حركة مالية #$operationId (${op.Amount})",
-                        SnapshotJson = "{\"type\": \"${op.Type}\", \"amount\": ${op.Amount}, \"personId\": ${op.PersonId}}",
-                        DeletedAt = now,
-                        Reason = reason ?: "حذف حركة مالية من كشف الحساب"
+            try {
+                val op = operationDao.getOperationById(operationId)
+                    ?: return@withContext Result.failure(Exception("الحركة المالية المطلوبة غير موجودة."))
+
+                val reversalRef = "REV-OP-${op.Id}"
+                if (op.ReferenceNumber?.startsWith("REV-OP-") == true ||
+                    operationDao.countByReferenceNumber(reversalRef) > 0
+                ) {
+                    return@withContext Result.failure(Exception("تم عكس وإلغاء هذه الحركة المالية مسبقاً بقيد عكسي موثق."))
+                }
+
+                val reverseType = when (op.Type) {
+                    "Receive" -> "Payment"
+                    "Payment" -> "Receive"
+                    "DebtOnUs" -> "DebtToUs"
+                    "DebtToUs" -> "DebtOnUs"
+                    "Sale" -> "SaleReturn"
+                    "Purchase" -> "PurchaseReturn"
+                    "SaleReturn" -> "Sale"
+                    "PurchaseReturn" -> "Purchase"
+                    else -> "Receive"
+                }
+
+                val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+                val cleanReason = reason?.trim()?.ifBlank { null } ?: "إلغاء محاسبي معتمد"
+                var reversalOpId = 0L
+
+                db.withTransaction {
+                    val reversalOp = OperationEntity(
+                        PersonId = op.PersonId,
+                        Type = reverseType,
+                        Amount = NumberFormatter.roundCurrency(op.Amount),
+                        OccurredAt = now,
+                        Note = "قيد عكسي لإلغاء الحركة #${op.Id} (${op.Note ?: op.Type}) — السبب: $cleanReason",
+                        ReferenceNumber = reversalRef,
+                        SourceInvoiceId = op.SourceInvoiceId,
+                        CreatedAt = now
                     )
-                )
+                    reversalOpId = operationDao.insertOperation(reversalOp)
+                    accountDao.updateLastOperationAt(op.PersonId, now)
+
+                    val safeSnapshot = JSONObject().apply {
+                        put("originalId", op.Id)
+                        put("personId", op.PersonId)
+                        put("originalType", op.Type)
+                        put("reversalType", reverseType)
+                        put("reversalOperationId", reversalOpId)
+                        put("amount", op.Amount)
+                        put("occurredAt", op.OccurredAt)
+                        put("note", op.Note ?: "")
+                        put("referenceNumber", op.ReferenceNumber ?: "")
+                        put("sourceInvoiceId", op.SourceInvoiceId ?: 0L)
+                        put("reason", cleanReason)
+                    }.toString()
+
+                    deletedItemDao.insertDeletedItem(
+                        DeletedItemEntity(
+                            EntityType = "OperationReversal",
+                            OriginalId = operationId,
+                            Title = "إلغاء قيد مالي #$operationId (${op.Amount})",
+                            SnapshotJson = safeSnapshot,
+                            DeletedAt = now,
+                            Reason = cleanReason
+                        )
+                    )
+                }
+                Result.success(reversalOpId)
+            } catch (e: Exception) {
+                Result.failure(Exception("تعذر تنفيذ القيد العكسي للحركة: ${e.localizedMessage}"))
             }
         }
     }
@@ -234,6 +308,18 @@ class InventoryRepository(private val db: SmartLedgerDatabase) {
         writeMutex.withLock {
             val product = productDao.getProductById(id) ?: return@withContext
             val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+            val safeSnapshot = JSONObject().apply {
+                put("id", product.Id)
+                put("name", product.Name)
+                put("barcode", product.Barcode ?: "")
+                put("smallUnit", product.SmallUnit)
+                put("largeUnit", product.LargeUnit ?: "")
+                put("unitFactor", product.UnitFactor)
+                put("costPrice", product.CostPrice)
+                put("retailPrice", product.RetailPrice)
+                put("wholesalePrice", product.WholesalePrice)
+            }.toString()
+
             db.withTransaction {
                 productDao.softDeleteProduct(id)
                 deletedItemDao.insertDeletedItem(
@@ -241,7 +327,7 @@ class InventoryRepository(private val db: SmartLedgerDatabase) {
                         EntityType = "Product",
                         OriginalId = id,
                         Title = product.Name,
-                        SnapshotJson = "{\"name\": \"${product.Name}\", \"barcode\": \"${product.Barcode ?: ""}\"}",
+                        SnapshotJson = safeSnapshot,
                         DeletedAt = now,
                         Reason = reason ?: "أرشفة صنف من المخزون"
                     )
@@ -258,18 +344,21 @@ class InventoryRepository(private val db: SmartLedgerDatabase) {
     ): Result<Long> = withContext(Dispatchers.IO) {
         writeMutex.withLock {
             try {
-                val delta = actualQty - currentQty
+                val product = productDao.getProductById(productId)
+                    ?: return@withContext Result.failure(Exception("الصنف المطلوب تسوية جرده غير موجود."))
+                val liveCurrentQty = productDao.getProductStock(productId)
+                val delta = actualQty - liveCurrentQty
                 if (kotlin.math.abs(delta) < 0.0001) return@withContext Result.success(0L)
                 val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
                 val type = if (delta > 0) "AdjustmentIn" else "AdjustmentOut"
                 val cleanNotes = notes?.trim()?.ifBlank { null }
-                    ?: "تسوية جرد مخزني (الفعلي: $actualQty، الدفتري: $currentQty، الفارق: ${if (delta > 0) "+$delta" else "$delta"})"
+                    ?: "تسوية جرد مخزني للصنف «${product.Name}» (الفعلي: $actualQty، الدفتري: $liveCurrentQty، الفارق: ${if (delta > 0) "+$delta" else "$delta"})"
                 val movement = StockMovementEntity(
                     ProductId = productId,
                     OccurredAt = now,
                     Type = type,
                     QuantityMinor = kotlin.math.abs(delta),
-                    UnitCost = 0.0,
+                    UnitCost = product.CostPrice,
                     Notes = cleanNotes,
                     CreatedAt = now
                 )
@@ -284,14 +373,23 @@ class InventoryRepository(private val db: SmartLedgerDatabase) {
 
 class InvoiceRepository(private val db: SmartLedgerDatabase) {
     private val invoiceDao = db.invoiceDao()
+    private val productDao = db.productDao()
     private val stockMovementDao = db.stockMovementDao()
     private val operationDao = db.operationDao()
     private val accountDao = db.accountDao()
     private val writeMutex = Mutex()
 
+    /**
+     * حفظ الفاتورة وبنودها وحركات المخزون والذمم داخل معاملة قاعدة بيانات ذرية واحدة (`db.withTransaction`)، مع:
+     * 1. التحقق المرجعي من وجود الحساب (`PersonId > 0`) ووجود كافة الأصناف (`ProductId`) داخل المعاملة.
+     * 2. تجميع كميات كل صنف في الفاتورة وإعادة فحص الرصيد الفعلي من قاعدة البيانات (`productDao.getProductStock`)
+     *    داخل المعاملة نفسها لمنع البيع الزائد عند تزامن العمليات (`allowNegativeStock == false`).
+     * 3. تخصيص رقم فاتورة تسلسلي فريد غير قابل للتصادم (`allocateUniqueInvoiceNumber`) داخل المعاملة.
+     */
     suspend fun createInvoice(
         invoice: InvoiceEntity,
-        lines: List<InvoiceLineEntity>
+        lines: List<InvoiceLineEntity>,
+        allowNegativeStock: Boolean = true
     ): Result<Long> = withContext(Dispatchers.IO) {
         writeMutex.withLock {
             try {
@@ -300,16 +398,54 @@ class InvoiceRepository(private val db: SmartLedgerDatabase) {
                 }
                 var invoiceId = 0L
                 val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-                val cleanInvoice = invoice.copy(
-                    Subtotal = NumberFormatter.roundCurrency(invoice.Subtotal),
-                    DiscountAmount = NumberFormatter.roundCurrency(invoice.DiscountAmount),
-                    TaxAmount = NumberFormatter.roundCurrency(invoice.TaxAmount),
-                    FinalTotal = NumberFormatter.roundCurrency(invoice.FinalTotal),
-                    PaidAmount = NumberFormatter.roundCurrency(invoice.PaidAmount),
-                    RemainingAmount = NumberFormatter.roundCurrency(invoice.RemainingAmount)
-                )
 
                 db.withTransaction {
+                    // 1. التحقق المرجعي من وجود الحساب المرتبط إذا لم يكن نقدياً عاماً (PersonId > 0)
+                    if (invoice.PersonId > 0L) {
+                        val person = accountDao.getPersonById(invoice.PersonId)
+                            ?: throw IllegalStateException("الحساب المرتبط بالفاتورة (#${invoice.PersonId}) غير موجود في قاعدة البيانات.")
+                        if (!person.IsActive) {
+                            throw IllegalStateException("الحساب «${person.Name}» مؤرشف حالياً ولا يمكن قيد فواتير جديدة عليه.")
+                        }
+                    }
+
+                    // 2. تجميع كميات الأصناف المكررة وإعادة فحص المخزون الحي داخل المعاملة الذرية
+                    val aggregatedRequiredByProduct = lines
+                        .groupBy { it.ProductId }
+                        .mapValues { (_, prodLines) -> prodLines.sumOf { it.QuantityMinor } }
+
+                    for ((productId, totalRequiredMinor) in aggregatedRequiredByProduct) {
+                        if (totalRequiredMinor <= 0.0) {
+                            throw IllegalStateException("كمية الصنف في الفاتورة يجب أن تكون أكبر من صفر.")
+                        }
+                        val dbProduct = productDao.getProductById(productId)
+                            ?: throw IllegalStateException("الصنف (#$productId) غير موجود في قاعدة البيانات.")
+                        if (!dbProduct.IsActive) {
+                            throw IllegalStateException("الصنف «${dbProduct.Name}» مؤرشف ولا يمكن التعامل عليه.")
+                        }
+                        if (invoice.Type == "Sale" && !allowNegativeStock) {
+                            val liveStockMinor = productDao.getProductStock(productId)
+                            if (totalRequiredMinor > liveStockMinor + 0.0001) {
+                                throw IllegalStateException(
+                                    "الكمية المطلوبة من «${dbProduct.Name}» (${NumberFormatter.formatQuantity(totalRequiredMinor)} ${dbProduct.SmallUnit}) تتجاوز الرصيد الفعلي المتاح بالمخزن (${NumberFormatter.formatQuantity(liveStockMinor)} ${dbProduct.SmallUnit})."
+                                )
+                            }
+                        }
+                    }
+
+                    // 3. توليد/تأكيد رقم فاتورة تسلسلي فريد داخل المعاملة يمنع أي تصادم في الفهرس الفريد
+                    val uniqueInvoiceNo = allocateUniqueInvoiceNumberInsideTx(invoice.InvoiceNumber, invoice.Type)
+
+                    val cleanInvoice = invoice.copy(
+                        InvoiceNumber = uniqueInvoiceNo,
+                        Subtotal = NumberFormatter.roundCurrency(invoice.Subtotal),
+                        DiscountAmount = NumberFormatter.roundCurrency(invoice.DiscountAmount),
+                        TaxAmount = NumberFormatter.roundCurrency(invoice.TaxAmount),
+                        FinalTotal = NumberFormatter.roundCurrency(invoice.FinalTotal),
+                        PaidAmount = NumberFormatter.roundCurrency(invoice.PaidAmount),
+                        RemainingAmount = NumberFormatter.roundCurrency(invoice.RemainingAmount)
+                    )
+
                     invoiceId = invoiceDao.insertInvoice(cleanInvoice)
                     val linesWithId = lines.map {
                         it.copy(
@@ -321,7 +457,7 @@ class InvoiceRepository(private val db: SmartLedgerDatabase) {
                     }
                     invoiceDao.insertLines(linesWithId)
 
-                    // 1. حركة المخزون الذرية
+                    // 4. حركة المخزون الذرية
                     val stockMovements = linesWithId.map { line ->
                         StockMovementEntity(
                             ProductId = line.ProductId,
@@ -336,7 +472,7 @@ class InvoiceRepository(private val db: SmartLedgerDatabase) {
                     }
                     stockMovementDao.insertMovements(stockMovements)
 
-                    // 2. تحديث الحسابات والذمم المدينة والدائنة
+                    // 5. تحديث الحسابات والذمم المدينة والدائنة
                     if (cleanInvoice.Type == "Sale") {
                         if (cleanInvoice.RemainingAmount > 0 && cleanInvoice.PersonId > 0) {
                             operationDao.insertOperation(
@@ -377,9 +513,39 @@ class InvoiceRepository(private val db: SmartLedgerDatabase) {
                 }
                 Result.success(invoiceId)
             } catch (e: Exception) {
-                Result.failure(Exception("تعذر حفظ الفاتورة: ${e.localizedMessage ?: "خطأ غير متوقع"}"))
+                Result.failure(Exception(e.message ?: "تعذر حفظ الفاتورة"))
             }
         }
+    }
+
+    /**
+     * تخصيص رقم فاتورة تسلسلي رتيب وفريد لليوم الحالي (`PREFIX-YYYYMMDD-0001`) داخل المعاملة
+     */
+    private suspend fun allocateUniqueInvoiceNumberInsideTx(requestedNumber: String, type: String): String {
+        val trimmed = requestedNumber.trim()
+        if (trimmed.isNotEmpty() && invoiceDao.countByInvoiceNumber(trimmed) == 0 && !trimmed.matches(Regex(""".*-\d{4}$"""))) {
+            return trimmed
+        }
+        val defaultPrefix = if (type == "Sale") "INV" else "PUR"
+        val prefix = trimmed.substringBefore("-", defaultPrefix).ifBlank { defaultPrefix }
+        val dateCode = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
+        val basePrefix = "$prefix-$dateCode-"
+
+        val lastNo = invoiceDao.getLastInvoiceNumberForPrefix("$basePrefix%")
+        val lastSeq = lastNo?.substringAfterLast("-")?.toLongOrNull() ?: 0L
+        val maxId = invoiceDao.getMaxInvoiceId()
+        var nextSeq = max(lastSeq + 1L, maxId + 1L)
+
+        var candidate = "$basePrefix${nextSeq.toString().padStart(4, '0')}"
+        while (invoiceDao.countByInvoiceNumber(candidate) > 0) {
+            nextSeq++
+            candidate = "$basePrefix${nextSeq.toString().padStart(4, '0')}"
+        }
+        return candidate
+    }
+
+    suspend fun getInvoiceById(invoiceId: Long): InvoiceEntity? = withContext(Dispatchers.IO) {
+        invoiceDao.getInvoiceById(invoiceId)
     }
 
     fun getRecentInvoices(limit: Int = 100): Flow<List<InvoiceEntity>> = invoiceDao.getRecentInvoices(limit)
@@ -469,10 +635,16 @@ class VoucherRepository(private val db: SmartLedgerDatabase) {
                     return@withContext Result.failure(Exception("يرجى اختيار الحساب المرتبط بالسند."))
                 }
                 val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-                val autoRef = refNumber?.trim()?.ifBlank { null }
-                    ?: "${if (type == "Receive") "RV" else "PV"}-${System.currentTimeMillis() % 100000}"
                 var opId = 0L
                 db.withTransaction {
+                    val person = accountDao.getPersonById(personId)
+                        ?: throw IllegalStateException("الحساب المرتبط بالسند غير موجود في قاعدة البيانات.")
+                    if (!person.IsActive) {
+                        throw IllegalStateException("الحساب «${person.Name}» مؤرشف ولا يمكن ترحيل سندات جديدة عليه.")
+                    }
+                    val totalOps = operationDao.getOperationsCount() + 1
+                    val autoRef = refNumber?.trim()?.ifBlank { null }
+                        ?: "${if (type == "Receive") "RV" else "PV"}-${SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())}-${totalOps.toString().padStart(4, '0')}"
                     val op = OperationEntity(
                         PersonId = personId,
                         Type = type,
@@ -487,7 +659,7 @@ class VoucherRepository(private val db: SmartLedgerDatabase) {
                 }
                 Result.success(opId)
             } catch (e: Exception) {
-                Result.failure(Exception("تعذر حفظ السند المالي: ${e.localizedMessage}"))
+                Result.failure(Exception(e.message ?: "تعذر حفظ السند المالي"))
             }
         }
     }
@@ -520,15 +692,25 @@ class ExpenseRepository(private val db: SmartLedgerDatabase) {
 
     suspend fun deleteExpense(id: Long, reason: String? = null) = withContext(Dispatchers.IO) {
         writeMutex.withLock {
+            val existing = expenseDao.getExpenseById(id) ?: return@withContext
             val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+            val safeSnapshot = JSONObject().apply {
+                put("id", existing.Id)
+                put("expenseDate", existing.ExpenseDate)
+                put("amount", existing.Amount)
+                put("statement", existing.Statement)
+                put("paymentSource", existing.PaymentSource)
+                put("createdAt", existing.CreatedAt)
+            }.toString()
+
             db.withTransaction {
                 expenseDao.deleteExpense(id)
                 deletedItemDao.insertDeletedItem(
                     DeletedItemEntity(
                         EntityType = "Expense",
                         OriginalId = id,
-                        Title = "مصروف تشغيلي #$id",
-                        SnapshotJson = "{\"id\": $id}",
+                        Title = "${existing.Statement} (${existing.Amount})",
+                        SnapshotJson = safeSnapshot,
                         DeletedAt = now,
                         Reason = reason ?: "حذف نفقة تشغيلية"
                     )

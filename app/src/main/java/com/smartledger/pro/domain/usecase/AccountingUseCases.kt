@@ -7,25 +7,15 @@ import com.smartledger.pro.data.local.entity.*
 import com.smartledger.pro.data.repository.*
 import com.smartledger.pro.domain.model.UnitConversionEngine
 import com.smartledger.pro.util.NumberFormatter
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.max
 
 /**
  * السياسة المركزية الموحدة لاتجاهات الحركات المالية والمخزنية (Single Source of Truth for Accounting Rules).
- *
- * توثق هذه السياسة القواعد المحاسبية المعتمدة في جميع طبقات التطبيق (Room DAOs, Repositories, UseCases, Reports):
- * 1. الحركات المدينة (`DEBIT_TYPES` -> `+Amount` تزيد رصيد «عليه/لنا» أو تخفض التزام المورد «له/علينا»):
- *    - `DebtOnUs`: رصيد افتتاحي مدين (عليه)
- *    - `Sale`: متبقي آجل من فاتورة مبيعات
- *    - `Payment`: سند صرف نقدية للعميل/المورد
- *    - `PurchaseReturn`: إشعار مدين بعكس/مرتجع فاتورة مشتريات آجلة
- * 2. الحركات الدائنة (`CREDIT_TYPES` -> `-Amount` تخفض رصيد «عليه/لنا» أو تزيد التزام المورد «له/علينا»):
- *    - `DebtToUs`: رصيد افتتاحي دائن (له)
- *    - `Purchase`: متبقي آجل من فاتورة مشتريات
- *    - `Receive`: سند قبض نقدية من العميل/المورد
- *    - `SaleReturn`: إشعار دائن بعكس/مرتجع فاتورة مبيعات آجلة
  */
 object LedgerDirectionPolicy {
     val DEBIT_TYPES = setOf("DebtOnUs", "Sale", "Payment", "PurchaseReturn")
@@ -55,6 +45,20 @@ object LedgerDirectionPolicy {
     }
 }
 
+/**
+ * مولد أرقام الفواتير المتسلسل الفريد (SequentialInvoiceNumberGenerator)
+ * يضمن عدم تكرار أرقام الفواتير حتى عند إصدار مئات الفواتير في نفس الثانية.
+ */
+object SequentialInvoiceNumberGenerator {
+    private val atomicCounter = AtomicLong(0L)
+
+    fun nextCandidate(prefix: String, dateCode: String, currentMaxId: Long = 0L): String {
+        val cleanPrefix = prefix.trim().ifBlank { "INV" }
+        val seq = atomicCounter.updateAndGet { prev -> max(prev + 1L, currentMaxId + 1L) }
+        return "$cleanPrefix-$dateCode-${seq.toString().padStart(4, '0')}"
+    }
+}
+
 data class SaleLineDraft(
     val productId: Long,
     val name: String,
@@ -81,7 +85,10 @@ data class SaleLineDraft(
 }
 
 /**
- * حالة استخدام إصدار فاتورة المبيعات (CreateSaleUseCase) — تفصل منطق التحقق والتسعير والخصم عن واجهة المستخدم.
+ * حالة استخدام إصدار فاتورة المبيعات (CreateSaleUseCase)
+ * - تتحقق مبدئياً من المدخلات وتجمع الكميات المكررة للصنف الواحد،
+ * - ثم تمرر `allowNegativeStock` إلى `InvoiceRepository.createInvoice` لإعادة فحص المخزون الفعلي
+ *   وتخصيص رقم فاتورة تسلسلي فريد داخل معاملة قاعدة البيانات نفسها (`db.withTransaction`).
  */
 class CreateSaleUseCase(private val invoiceRepository: InvoiceRepository) {
 
@@ -99,12 +106,17 @@ class CreateSaleUseCase(private val invoiceRepository: InvoiceRepository) {
             return Result.failure(Exception("السلة فارغة؛ أضف صنفاً واحداً على الأقل لإصدار الفاتورة."))
         }
 
+        // فحص مبدئي لتجميع الأصناف المكررة قبل دخول المعاملة (مع إعادة الفحص الإلزامي داخل معاملة قاعدة البيانات)
         if (!allowNegativeStock) {
-            val insufficient = draftLines.firstOrNull { it.compositeCalc.totalMinorQuantity > it.availableStockMinor }
-            if (insufficient != null) {
-                return Result.failure(
-                    Exception("الكمية المطلوبة من «${insufficient.name}» (${NumberFormatter.formatQuantity(insufficient.compositeCalc.totalMinorQuantity)} ${insufficient.smallUnit}) تتجاوز المتاح بالمخزن (${NumberFormatter.formatQuantity(insufficient.availableStockMinor)} ${insufficient.smallUnit}).")
-                )
+            val grouped = draftLines.groupBy { it.productId }
+            for ((_, items) in grouped) {
+                val first = items.first()
+                val totalReq = items.sumOf { it.compositeCalc.totalMinorQuantity }
+                if (totalReq > first.availableStockMinor + 0.0001) {
+                    return Result.failure(
+                        Exception("الكمية المطلوبة من «${first.name}» (${NumberFormatter.formatQuantity(totalReq)} ${first.smallUnit}) تتجاوز المتاح بالمخزن (${NumberFormatter.formatQuantity(first.availableStockMinor)} ${first.smallUnit}).")
+                    )
+                }
             }
         }
 
@@ -128,10 +140,10 @@ class CreateSaleUseCase(private val invoiceRepository: InvoiceRepository) {
         val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
         val dateCode = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
         val prefix = invoicePrefix.trim().ifBlank { "INV" }
-        val invoiceNo = "$prefix-$dateCode-${(System.currentTimeMillis() % 10000).toString().padStart(4, '0')}"
+        val candidateInvoiceNo = SequentialInvoiceNumberGenerator.nextCandidate(prefix, dateCode)
 
         val invoiceEntity = InvoiceEntity(
-            InvoiceNumber = invoiceNo,
+            InvoiceNumber = candidateInvoiceNo,
             Type = "Sale",
             PersonId = customer?.PersonId ?: 0L,
             PersonNameSnapshot = customer?.PersonName ?: "عميل نقدي عام",
@@ -174,9 +186,15 @@ class CreateSaleUseCase(private val invoiceRepository: InvoiceRepository) {
             )
         }
 
-        val saveRes = invoiceRepository.createInvoice(invoiceEntity, lineEntities)
+        val saveRes = invoiceRepository.createInvoice(
+            invoice = invoiceEntity,
+            lines = lineEntities,
+            allowNegativeStock = allowNegativeStock
+        )
         return if (saveRes.isSuccess) {
-            Result.success(invoiceEntity.copy(Id = saveRes.getOrThrow()))
+            val savedId = saveRes.getOrThrow()
+            val persistedInvoice = invoiceRepository.getInvoiceById(savedId) ?: invoiceEntity.copy(Id = savedId)
+            Result.success(persistedInvoice)
         } else {
             Result.failure(saveRes.exceptionOrNull() ?: Exception("تعذر حفظ الفاتورة"))
         }
@@ -226,7 +244,7 @@ class CreatePurchaseUseCase(private val invoiceRepository: InvoiceRepository) {
         val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
         val dateCode = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
         val prefix = purchasePrefix.trim().ifBlank { "PUR" }
-        val invoiceNo = "$prefix-$dateCode-${(System.currentTimeMillis() % 10000).toString().padStart(4, '0')}"
+        val candidateInvoiceNo = SequentialInvoiceNumberGenerator.nextCandidate(prefix, dateCode)
         val unitLabel = if (useMajorUnit && !product.LargeUnit.isNullOrBlank()) {
             "${NumberFormatter.formatQuantity(quantity)} ${product.LargeUnit}"
         } else {
@@ -234,7 +252,7 @@ class CreatePurchaseUseCase(private val invoiceRepository: InvoiceRepository) {
         }
 
         val invoice = InvoiceEntity(
-            InvoiceNumber = invoiceNo,
+            InvoiceNumber = candidateInvoiceNo,
             Type = "Purchase",
             PersonId = supplier?.PersonId ?: 0L,
             PersonNameSnapshot = supplier?.PersonName ?: "مورد نقدي عام",
@@ -265,14 +283,17 @@ class CreatePurchaseUseCase(private val invoiceRepository: InvoiceRepository) {
             SortOrder = 1
         )
 
-        return invoiceRepository.createInvoice(invoice, listOf(line))
+        return invoiceRepository.createInvoice(invoice, listOf(line), allowNegativeStock = true)
     }
 }
 
 /**
- * محرك المحاكاة والتكامل الدفتري الذري (InMemoryLedgerEngine)
- * يطبق نفس قواعد `Repositories` و`SmartLedgerDaos` و`LedgerDirectionPolicy` حرفياً
- * لاختبار الدورات المحاسبية المترابطة (البيع، الشراء، السندات، المرتجعات، المصروفات، الجرد، والـ Rollback الذري) في اختبارات التكامل.
+ * محرك الاختبار والتكامل الدفتري الذري (InMemoryLedgerEngine)
+ * يطبق نفس القواعد المطبقة في `Repositories` و`SmartLedgerDaos`:
+ * - إعادة فحص المخزون الحي وتجميع البنود المكررة داخل المعاملة.
+ * - أرقام فواتير تسلسلية فريدة غير قابلة للتكرار.
+ * - الإلغاء المحاسبي الموثق (`cancelOperationWithReversal`) بدلاً من الحذف المادي.
+ * - حساب حركة الصندوق النقدي (`CashInflows`, `CashOutflows`, `NetCashBalance`) بجانب قائمة الدخل.
  */
 class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
     private var nextPersonId = 1L
@@ -282,6 +303,7 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
     private var nextMovementId = 1L
     private var nextOpId = 1L
     private var nextExpenseId = 1L
+    private var nextDeletedId = 1L
 
     val people = mutableListOf<PersonEntity>()
     val products = mutableListOf<ProductEntity>()
@@ -290,6 +312,7 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
     val stockMovements = mutableListOf<StockMovementEntity>()
     val operations = mutableListOf<OperationEntity>()
     val expenses = mutableListOf<ExpenseEntity>()
+    val deletedItems = mutableListOf<DeletedItemEntity>()
 
     fun createAccount(
         name: String,
@@ -418,6 +441,23 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
         )
     }
 
+    private fun allocateSequentialInvoiceNo(prefix: String): String {
+        val dateCode = "20261017"
+        val base = "$prefix-$dateCode-"
+        val lastSeq = invoices
+            .map { it.InvoiceNumber }
+            .filter { it.startsWith(base) }
+            .mapNotNull { it.substringAfterLast("-").toLongOrNull() }
+            .maxOrNull() ?: 0L
+        var next = max(lastSeq + 1L, invoices.size + 1L)
+        var candidate = "$base${next.toString().padStart(4, '0')}"
+        while (invoices.any { it.InvoiceNumber == candidate }) {
+            next++
+            candidate = "$base${next.toString().padStart(4, '0')}"
+        }
+        return candidate
+    }
+
     fun postSaleInvoice(
         personId: Long?,
         lines: List<Triple<Long, Double, Double>>, // (productId, majorQty, minorQty)
@@ -427,17 +467,20 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
     ): Result<Long> {
         if (lines.isEmpty()) return Result.failure(Exception("الفاتورة فارغة"))
 
-        // Snapshot for atomic rollback verification
         val invSnap = invoices.toList()
         val lineSnap = invoiceLines.toList()
         val movSnap = stockMovements.toList()
         val opSnap = operations.toList()
 
         try {
+            if (personId != null && personId > 0L) {
+                val p = people.firstOrNull { it.Id == personId && it.IsActive }
+                    ?: throw IllegalStateException("الحساب المرتبط بالفاتورة غير موجود أو مؤرشف")
+            }
+
             val preparedLines = lines.mapIndexed { idx, (prodId, majQty, minQty) ->
                 val prod = products.firstOrNull { it.Id == prodId && it.IsActive }
                     ?: throw IllegalStateException("الصنف غير موجود")
-                val currentStock = getProductStockMinor(prodId)
                 val calc = UnitConversionEngine.calculateCompositeSale(
                     majorQty = majQty,
                     minorQty = minQty,
@@ -446,10 +489,20 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
                     majorSalePrice = prod.WholesalePrice,
                     minorUnitCost = prod.CostPrice
                 )
-                if (!allowNegativeStock && calc.totalMinorQuantity > currentStock) {
-                    throw IllegalStateException("الكمية المطلوبة من ${prod.Name} تتجاوز المخزون المتاح")
-                }
                 Triple(prod, calc, idx + 1)
+            }
+
+            // فحص المخزون المجمع داخل المعاملة (يشمل تكرار نفس الصنف في أكثر من بند)
+            if (!allowNegativeStock) {
+                val aggregated = preparedLines.groupBy { it.first.Id }
+                for ((prodId, group) in aggregated) {
+                    val prod = group.first().first
+                    val totalRequiredMinor = group.sumOf { it.second.totalMinorQuantity }
+                    val currentLiveStock = getProductStockMinor(prodId)
+                    if (totalRequiredMinor > currentLiveStock + 0.0001) {
+                        throw IllegalStateException("الكمية المطلوبة من ${prod.Name} ($totalRequiredMinor) تتجاوز المخزون المتاح ($currentLiveStock)")
+                    }
+                }
             }
 
             val subtotal = NumberFormatter.roundCurrency(preparedLines.sumOf { it.second.totalLinePrice })
@@ -470,7 +523,7 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
 
             val now = "2026-10-17 12:30:00"
             val invoiceId = nextInvoiceId++
-            val invoiceNo = "INV-20261017-$invoiceId"
+            val invoiceNo = allocateSequentialInvoiceNo("INV")
             val personName = personId?.let { id -> people.firstOrNull { it.Id == id }?.Name } ?: "عميل نقدي عام"
 
             invoices.add(
@@ -543,7 +596,6 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
             }
             return Result.success(invoiceId)
         } catch (e: Exception) {
-            // Atomic rollback
             invoices.clear(); invoices.addAll(invSnap)
             invoiceLines.clear(); invoiceLines.addAll(lineSnap)
             stockMovements.clear(); stockMovements.addAll(movSnap)
@@ -562,6 +614,11 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
     ): Result<Long> {
         val prod = products.firstOrNull { it.Id == productId && it.IsActive }
             ?: return Result.failure(Exception("الصنف غير موجود"))
+        if (supplierId != null && supplierId > 0L) {
+            if (people.none { it.Id == supplierId && it.IsActive }) {
+                return Result.failure(Exception("حساب المورد غير موجود"))
+            }
+        }
         val safeFactor = if (prod.UnitFactor <= 1.0 || prod.LargeUnit.isNullOrBlank()) 1.0 else prod.UnitFactor
         val totalMinorQty = if (useMajorUnit && safeFactor > 1.0) quantity * safeFactor else quantity
         val minorCost = NumberFormatter.roundCurrency(
@@ -578,7 +635,7 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
 
         val now = "2026-10-17 13:00:00"
         val invoiceId = nextInvoiceId++
-        val invoiceNo = "PUR-20261017-$invoiceId"
+        val invoiceNo = allocateSequentialInvoiceNo("PUR")
         val supplierName = supplierId?.let { id -> people.firstOrNull { it.Id == id }?.Name } ?: "مورد نقدي عام"
 
         invoices.add(
@@ -694,6 +751,9 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
     fun postVoucher(personId: Long, type: String, amount: Double, statement: String): Result<Long> {
         val clean = NumberFormatter.roundCurrency(amount)
         if (clean <= 0.0) return Result.failure(Exception("مبلغ السند غير صالح"))
+        if (people.none { it.Id == personId && it.IsActive }) {
+            return Result.failure(Exception("الحساب غير موجود"))
+        }
         val id = nextOpId++
         operations.add(
             OperationEntity(
@@ -703,11 +763,69 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
                 Amount = clean,
                 OccurredAt = "2026-10-17 15:00:00",
                 Note = statement,
-                ReferenceNumber = "${if (type == "Receive") "RV" else "PV"}-$id",
+                ReferenceNumber = "${if (type == "Receive") "RV" else "PV"}-20261017-${id.toString().padStart(4, '0')}",
                 CreatedAt = "2026-10-17 15:00:00"
             )
         )
         return Result.success(id)
+    }
+
+    /**
+     * إلغاء الحركة المالية عبر قيد عكسي محاسبي موثق دون حذف السجل الأصلي
+     */
+    fun cancelOperationWithReversal(operationId: Long, reason: String): Result<Long> {
+        val op = operations.firstOrNull { it.Id == operationId }
+            ?: return Result.failure(Exception("الحركة غير موجودة"))
+        val revRef = "REV-OP-${op.Id}"
+        if (op.ReferenceNumber?.startsWith("REV-OP-") == true || operations.any { it.ReferenceNumber == revRef }) {
+            return Result.failure(Exception("تم عكس هذه الحركة مسبقاً"))
+        }
+        val reverseType = when (op.Type) {
+            "Receive" -> "Payment"
+            "Payment" -> "Receive"
+            "DebtOnUs" -> "DebtToUs"
+            "DebtToUs" -> "DebtOnUs"
+            "Sale" -> "SaleReturn"
+            "Purchase" -> "PurchaseReturn"
+            "SaleReturn" -> "Sale"
+            "PurchaseReturn" -> "Purchase"
+            else -> "Receive"
+        }
+        val revId = nextOpId++
+        operations.add(
+            OperationEntity(
+                Id = revId,
+                PersonId = op.PersonId,
+                Type = reverseType,
+                Amount = op.Amount,
+                OccurredAt = "2026-10-17 15:30:00",
+                Note = "قيد عكسي لإلغاء الحركة #${op.Id}: $reason",
+                ReferenceNumber = revRef,
+                SourceInvoiceId = op.SourceInvoiceId,
+                CreatedAt = "2026-10-17 15:30:00"
+            )
+        )
+        val safeSnapshot = JSONObject().apply {
+            put("originalId", op.Id)
+            put("reversalOperationId", revId)
+            put("originalType", op.Type)
+            put("reversalType", reverseType)
+            put("amount", op.Amount)
+            put("note", op.Note ?: "")
+            put("reason", reason)
+        }.toString()
+        deletedItems.add(
+            DeletedItemEntity(
+                Id = nextDeletedId++,
+                EntityType = "OperationReversal",
+                OriginalId = op.Id,
+                Title = "إلغاء قيد مالي #${op.Id}",
+                SnapshotJson = safeSnapshot,
+                DeletedAt = "2026-10-17 15:30:00",
+                Reason = reason
+            )
+        )
+        return Result.success(revId)
     }
 
     fun recordExpense(amount: Double, statement: String, paymentSource: String = "الخزينة الرئيسية"): Result<Long> {
@@ -729,7 +847,9 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
 
     fun getFinancialReportSummary(): FinancialReportSummary {
         val completedSales = invoices.filter { it.Type == "Sale" && it.Status == "Completed" }
+        val completedPurchases = invoices.filter { it.Type == "Purchase" && it.Status == "Completed" }
         val completedSaleIds = completedSales.map { it.Id }.toSet()
+
         val totalSales = NumberFormatter.roundCurrency(completedSales.sumOf { it.FinalTotal })
         val cogs = NumberFormatter.roundCurrency(
             invoiceLines.filter { it.InvoiceId in completedSaleIds }.sumOf { it.QuantityMinor * it.LineCost }
@@ -752,6 +872,17 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
             activeSummaries.filter { it.NetBalance < 0.0 }.sumOf { abs(it.NetBalance) }
         )
 
+        val cashInflows = NumberFormatter.roundCurrency(
+            completedSales.sumOf { it.PaidAmount } +
+                operations.filter { it.Type == "Receive" }.sumOf { it.Amount }
+        )
+        val cashOutflows = NumberFormatter.roundCurrency(
+            completedPurchases.sumOf { it.PaidAmount } +
+                operations.filter { it.Type == "Payment" }.sumOf { it.Amount } +
+                totalExpenses
+        )
+        val netCashBalance = NumberFormatter.roundCurrency(cashInflows - cashOutflows)
+
         return FinancialReportSummary(
             TotalSales = totalSales,
             CostOfGoodsSold = cogs,
@@ -760,7 +891,10 @@ class InMemoryLedgerEngine(var allowNegativeStock: Boolean = false) {
             NetProfit = netProfit,
             InventoryValuation = inventoryValuation,
             TotalDebtsToUs = debtsToUs,
-            TotalDebtsOnUs = debtsOnUs
+            TotalDebtsOnUs = debtsOnUs,
+            CashInflows = cashInflows,
+            CashOutflows = cashOutflows,
+            NetCashBalance = netCashBalance
         )
     }
 }

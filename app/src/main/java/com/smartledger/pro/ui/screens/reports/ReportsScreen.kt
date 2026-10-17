@@ -62,7 +62,6 @@ fun ReportsScreen(
         ((summary.GrossProfit / summary.TotalSales) * 100.0)
     } else 0.0
 
-    // مصدّر تقرير HTML قابل للطباعة والتحويل إلى PDF عبر Storage Access Framework
     val htmlReportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/html")
     ) { uri ->
@@ -86,7 +85,6 @@ fun ReportsScreen(
         }
     }
 
-    // مصدّر جدول CSV متوافق مع Excel عبر Storage Access Framework
     val csvReportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/csv")
     ) { uri ->
@@ -99,7 +97,6 @@ fun ReportsScreen(
                     summary = summary
                 )
                 context.contentResolver.openOutputStream(uri)?.use { os ->
-                    // إضافة UTF-8 BOM لضمان فتح الحروف العربية بشكل سليم في Microsoft Excel
                     os.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
                     os.write(csvContent.toByteArray(Charsets.UTF_8))
                 }
@@ -201,7 +198,7 @@ fun ReportsScreen(
                 )
             }
 
-            // 1. بطاقة قائمة الدخل والأرباح الصافية
+            // 1. بطاقة قائمة الدخل والأرباح المحاسبية (Accrual Income Statement)
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -216,7 +213,7 @@ fun ReportsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "قائمة الدخل والأرباح الصافية",
+                                text = "1. قائمة الدخل والأرباح الصافية",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = SmartLedgerColors.AccentLight
@@ -229,14 +226,14 @@ fun ReportsScreen(
                             )
                         }
 
-                        ReportMetricRow("إجمالي المبيعات المحققة", summary.TotalSales, SmartLedgerColors.TextPrimary)
+                        ReportMetricRow("إجمالي المبيعات المعتمدة", summary.TotalSales, SmartLedgerColors.TextPrimary)
                         ReportMetricRow("تكلفة البضاعة المباعة (COGS)", summary.CostOfGoodsSold, SmartLedgerColors.TextMuted)
                         Divider(color = SmartLedgerColors.BorderSubtle)
                         ReportMetricRow("مجمل الربح التجاري", summary.GrossProfit, SmartLedgerColors.AccentLight, isBold = true)
                         ReportMetricRow("إجمالي المصروفات التشغيلية", summary.TotalExpenses, SmartLedgerColors.StateDanger)
                         Divider(color = SmartLedgerColors.BorderSubtle)
                         ReportMetricRow(
-                            title = "صافي الربح الفعلي",
+                            title = "صافي الربح المحاسبي",
                             amount = summary.NetProfit,
                             color = if (summary.NetProfit >= 0) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger,
                             isBold = true
@@ -245,7 +242,7 @@ fun ReportsScreen(
                 }
             }
 
-            // 2. بطاقة تقييم المخزون والذمم المدينة والدائنة
+            // 2. بطاقة حركة الصندوق والسيولة النقدية الفعلية (Cashbox & Liquidity Statement)
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -255,7 +252,41 @@ fun ReportsScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "المركز المالي والأصول والمخزون",
+                            text = "2. حركة الصندوق والسيولة النقدية الفعلية",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = SmartLedgerColors.AccentLight
+                        )
+                        Text(
+                            text = "تفصل بين السيولة النقدية الفعلية الداخلة والخارجة من الصندوق وبين المبيعات الآجلة غير المحصلة بعد",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SmartLedgerColors.TextMuted
+                        )
+
+                        ReportMetricRow("إجمالي المقبوضات النقدية (مبيعات نقدية + سندات قبض)", summary.CashInflows, SmartLedgerColors.StateSuccess)
+                        ReportMetricRow("إجمالي المدفوعات النقدية (مشتريات نقدية + سندات صرف + مصروفات)", summary.CashOutflows, SmartLedgerColors.StateDanger)
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        ReportMetricRow(
+                            title = "صافي السيولة النقدية بالصندوق",
+                            amount = summary.NetCashBalance,
+                            color = if (summary.NetCashBalance >= 0) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger,
+                            isBold = true
+                        )
+                    }
+                }
+            }
+
+            // 3. بطاقة تقييم المخزون والذمم المدينة والدائنة
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
+                    shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "3. المركز المالي والذمم والمخزون",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = SmartLedgerColors.AccentLight
@@ -276,7 +307,7 @@ fun ReportsScreen(
                 }
             }
 
-            // 3. مؤشر بصري واضح لتوازن المبيعات والتكاليف والمصروفات مع بديل نصي مقروء
+            // 4. مؤشر بصري واضح لتوازن المبيعات والتكاليف والمصروفات
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -343,7 +374,7 @@ fun ReportsScreen(
                 }
             }
 
-            // 4. أزرار التصدير الفعلي (بدون أي أزرار شكلية أو استدعاء مزدوج)
+            // 5. أزرار التصدير الفعلي
             item {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
@@ -398,7 +429,8 @@ fun ReportMetricRow(title: String, amount: Double, color: Color, isBold: Boolean
             text = title,
             style = MaterialTheme.typography.bodyMedium,
             color = if (isBold) SmartLedgerColors.TextPrimary else SmartLedgerColors.TextSecondary,
-            fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal
+            fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.weight(1f).padding(end = 8.dp)
         )
         Text(
             text = NumberFormatter.formatCurrency(amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces),
@@ -420,11 +452,15 @@ private fun buildPlainTextReport(
 الفترة: $periodLabel
 تاريخ الإصدار: ${NumberFormatter.nowTimestamp()}
 ────────────────────────
-• إجمالي المبيعات: ${NumberFormatter.formatCurrency(summary.TotalSales, currency)}
+• إجمالي المبيعات المعتمدة: ${NumberFormatter.formatCurrency(summary.TotalSales, currency)}
 • تكلفة البضاعة المباعة (COGS): ${NumberFormatter.formatCurrency(summary.CostOfGoodsSold, currency)}
 • مجمل الربح التجاري: ${NumberFormatter.formatCurrency(summary.GrossProfit, currency)}
 • إجمالي المصروفات التشغيلية: ${NumberFormatter.formatCurrency(summary.TotalExpenses, currency)}
-• صافي الربح الفعلي: ${NumberFormatter.formatCurrency(summary.NetProfit, currency)}
+• صافي الربح المحاسبي: ${NumberFormatter.formatCurrency(summary.NetProfit, currency)}
+────────────────────────
+• إجمالي المقبوضات النقدية للصندوق: ${NumberFormatter.formatCurrency(summary.CashInflows, currency)}
+• إجمالي المدفوعات النقدية من الصندوق: ${NumberFormatter.formatCurrency(summary.CashOutflows, currency)}
+• صافي السيولة النقدية بالصندوق: ${NumberFormatter.formatCurrency(summary.NetCashBalance, currency)}
 ────────────────────────
 • قيمة المخزون (بالتكلفة): ${NumberFormatter.formatCurrency(summary.InventoryValuation, currency)}
 • إجمالي الديون لنا (مدين): ${NumberFormatter.formatCurrency(summary.TotalDebtsToUs, currency)}
@@ -443,11 +479,14 @@ private fun buildCsvFinancialReport(
     sb.appendLine("الفترة,$periodLabel")
     sb.appendLine("تاريخ التقرير,${NumberFormatter.nowTimestamp()}")
     sb.appendLine("البند المالي,المبلغ,العملة")
-    sb.appendLine("إجمالي المبيعات المحققة,${NumberFormatter.formatAmount(summary.TotalSales)},$currency")
+    sb.appendLine("إجمالي المبيعات المعتمدة,${NumberFormatter.formatAmount(summary.TotalSales)},$currency")
     sb.appendLine("تكلفة البضاعة المباعة (COGS),${NumberFormatter.formatAmount(summary.CostOfGoodsSold)},$currency")
     sb.appendLine("مجمل الربح التجاري,${NumberFormatter.formatAmount(summary.GrossProfit)},$currency")
     sb.appendLine("إجمالي المصروفات التشغيلية,${NumberFormatter.formatAmount(summary.TotalExpenses)},$currency")
-    sb.appendLine("صافي الربح الفعلي,${NumberFormatter.formatAmount(summary.NetProfit)},$currency")
+    sb.appendLine("صافي الربح المحاسبي,${NumberFormatter.formatAmount(summary.NetProfit)},$currency")
+    sb.appendLine("إجمالي المقبوضات النقدية للصندوق,${NumberFormatter.formatAmount(summary.CashInflows)},$currency")
+    sb.appendLine("إجمالي المدفوعات النقدية من الصندوق,${NumberFormatter.formatAmount(summary.CashOutflows)},$currency")
+    sb.appendLine("صافي السيولة النقدية بالصندوق,${NumberFormatter.formatAmount(summary.NetCashBalance)},$currency")
     sb.appendLine("قيمة بضاعة المخزن بالتكلفة,${NumberFormatter.formatAmount(summary.InventoryValuation)},$currency")
     sb.appendLine("إجمالي الديون لنا لدى العملاء,${NumberFormatter.formatAmount(summary.TotalDebtsToUs)},$currency")
     sb.appendLine("إجمالي الالتزامات علينا للموردين,${NumberFormatter.formatAmount(summary.TotalDebtsOnUs)},$currency")
@@ -484,11 +523,14 @@ private fun buildPrintableHtmlReport(
       <tr><th>البند المالي</th><th>القيمة ($currency)</th></tr>
     </thead>
     <tbody>
-      <tr><td>إجمالي المبيعات المحققة</td><td>${NumberFormatter.formatAmount(summary.TotalSales)}</td></tr>
+      <tr><td>إجمالي المبيعات المعتمدة</td><td>${NumberFormatter.formatAmount(summary.TotalSales)}</td></tr>
       <tr><td>تكلفة البضاعة المباعة (COGS)</td><td>${NumberFormatter.formatAmount(summary.CostOfGoodsSold)}</td></tr>
       <tr><td>مجمل الربح التجاري</td><td>${NumberFormatter.formatAmount(summary.GrossProfit)}</td></tr>
       <tr><td>إجمالي المصروفات التشغيلية</td><td>${NumberFormatter.formatAmount(summary.TotalExpenses)}</td></tr>
-      <tr class="total-row"><td>صافي الربح الفعلي</td><td>${NumberFormatter.formatAmount(summary.NetProfit)}</td></tr>
+      <tr class="total-row"><td>صافي الربح المحاسبي</td><td>${NumberFormatter.formatAmount(summary.NetProfit)}</td></tr>
+      <tr><td>إجمالي المقبوضات النقدية للصندوق</td><td>${NumberFormatter.formatAmount(summary.CashInflows)}</td></tr>
+      <tr><td>إجمالي المدفوعات النقدية من الصندوق</td><td>${NumberFormatter.formatAmount(summary.CashOutflows)}</td></tr>
+      <tr class="total-row"><td>صافي السيولة النقدية بالصندوق</td><td>${NumberFormatter.formatAmount(summary.NetCashBalance)}</td></tr>
       <tr><td>قيمة بضاعة المخزن بالتكلفة</td><td>${NumberFormatter.formatAmount(summary.InventoryValuation)}</td></tr>
       <tr><td>إجمالي الديون لنا لدى العملاء (مدين)</td><td>${NumberFormatter.formatAmount(summary.TotalDebtsToUs)}</td></tr>
       <tr><td>إجمالي الالتزامات علينا للموردين (دائن)</td><td>${NumberFormatter.formatAmount(summary.TotalDebtsOnUs)}</td></tr>

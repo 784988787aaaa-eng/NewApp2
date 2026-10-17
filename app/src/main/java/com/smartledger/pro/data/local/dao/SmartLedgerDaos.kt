@@ -46,6 +46,13 @@ data class ProductStockItem(
     val CurrentStockMinor: Double
 )
 
+/**
+ * ملخص القوائم المالية الشامل:
+ * يفصل بوضوح بين:
+ * 1. قائمة الدخل المحاسبية (Accrual Income Statement): `TotalSales`, `CostOfGoodsSold`, `GrossProfit`, `TotalExpenses`, `NetProfit`.
+ * 2. حركة الصندوق والسيولة النقدية الفعلية (Cashbox Statement): `CashInflows`, `CashOutflows`, `NetCashBalance`.
+ * 3. المركز المالي والذمم والمخزون (Balance Sheet): `InventoryValuation`, `TotalDebtsToUs`, `TotalDebtsOnUs`.
+ */
 data class FinancialReportSummary(
     val TotalSales: Double,
     val CostOfGoodsSold: Double,
@@ -54,7 +61,10 @@ data class FinancialReportSummary(
     val NetProfit: Double,
     val InventoryValuation: Double,
     val TotalDebtsToUs: Double,
-    val TotalDebtsOnUs: Double
+    val TotalDebtsOnUs: Double,
+    val CashInflows: Double = 0.0,
+    val CashOutflows: Double = 0.0,
+    val NetCashBalance: Double = 0.0
 )
 
 data class RecentOperationWithPerson(
@@ -268,6 +278,9 @@ interface OperationDao {
 
     @Query("SELECT * FROM Operations WHERE Id = :id LIMIT 1")
     suspend fun getOperationById(id: Long): OperationEntity?
+
+    @Query("SELECT COUNT(*) FROM Operations WHERE ReferenceNumber = :refNumber")
+    suspend fun countByReferenceNumber(refNumber: String): Int
 }
 
 @Dao
@@ -290,6 +303,15 @@ interface InvoiceDao {
     @Query("SELECT COUNT(*) FROM Invoices")
     suspend fun getInvoiceCount(): Long
 
+    @Query("SELECT COALESCE(MAX(Id), 0) FROM Invoices")
+    suspend fun getMaxInvoiceId(): Long
+
+    @Query("SELECT InvoiceNumber FROM Invoices WHERE InvoiceNumber LIKE :prefixPattern ORDER BY Id DESC LIMIT 1")
+    suspend fun getLastInvoiceNumberForPrefix(prefixPattern: String): String?
+
+    @Query("SELECT COUNT(*) FROM Invoices WHERE InvoiceNumber = :invoiceNumber")
+    suspend fun countByInvoiceNumber(invoiceNumber: String): Int
+
     @Query("UPDATE Invoices SET Status = :status WHERE Id = :invoiceId")
     suspend fun updateInvoiceStatus(invoiceId: Long, status: String)
 }
@@ -301,6 +323,9 @@ interface ExpenseDao {
 
     @Query("SELECT * FROM Expenses WHERE date(ExpenseDate) BETWEEN date(:from) AND date(:to) ORDER BY ExpenseDate DESC")
     fun getExpensesBetweenDates(from: String, to: String): Flow<List<ExpenseEntity>>
+
+    @Query("SELECT * FROM Expenses WHERE Id = :id LIMIT 1")
+    suspend fun getExpenseById(id: Long): ExpenseEntity?
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertExpense(expense: ExpenseEntity): Long
@@ -421,7 +446,27 @@ interface ReportDao {
                     SELECT p.Id, COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment', 'PurchaseReturn') THEN o.Amount WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount ELSE 0.0 END), 0.0) AS NetBalance
                     FROM People p LEFT JOIN Operations o ON p.Id = o.PersonId WHERE p.IsActive = 1 GROUP BY p.Id
                 )
-            ) AS TotalDebtsOnUs
+            ) AS TotalDebtsOnUs,
+            (
+                (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed') +
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Receive')
+            ) AS CashInflows,
+            (
+                (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Purchase' AND Status = 'Completed') +
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Payment') +
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses)
+            ) AS CashOutflows,
+            (
+                (
+                    (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed') +
+                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Receive')
+                ) -
+                (
+                    (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Purchase' AND Status = 'Completed') +
+                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Payment') +
+                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses)
+                )
+            ) AS NetCashBalance
     """)
     fun getFinancialReportSummary(): Flow<FinancialReportSummary>
 
@@ -455,7 +500,27 @@ interface ReportDao {
                     SELECT p.Id, COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment', 'PurchaseReturn') THEN o.Amount WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount ELSE 0.0 END), 0.0) AS NetBalance
                     FROM People p LEFT JOIN Operations o ON p.Id = o.PersonId WHERE p.IsActive = 1 GROUP BY p.Id
                 )
-            ) AS TotalDebtsOnUs
+            ) AS TotalDebtsOnUs,
+            (
+                (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed' AND date(IssuedAt) >= date(:fromDate)) +
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Receive' AND date(OccurredAt) >= date(:fromDate))
+            ) AS CashInflows,
+            (
+                (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Purchase' AND Status = 'Completed' AND date(IssuedAt) >= date(:fromDate)) +
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Payment' AND date(OccurredAt) >= date(:fromDate)) +
+                (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE date(ExpenseDate) >= date(:fromDate))
+            ) AS CashOutflows,
+            (
+                (
+                    (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Sale' AND Status = 'Completed' AND date(IssuedAt) >= date(:fromDate)) +
+                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Receive' AND date(OccurredAt) >= date(:fromDate))
+                ) -
+                (
+                    (SELECT COALESCE(SUM(PaidAmount), 0.0) FROM Invoices WHERE Type = 'Purchase' AND Status = 'Completed' AND date(IssuedAt) >= date(:fromDate)) +
+                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Operations WHERE Type = 'Payment' AND date(OccurredAt) >= date(:fromDate)) +
+                    (SELECT COALESCE(SUM(Amount), 0.0) FROM Expenses WHERE date(ExpenseDate) >= date(:fromDate))
+                )
+            ) AS NetCashBalance
     """)
     fun getFinancialReportFromDate(fromDate: String): Flow<FinancialReportSummary>
 }

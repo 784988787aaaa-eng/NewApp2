@@ -1351,7 +1351,16 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text("حجم قاعدة البيانات: ${NumberFormatter.formatFileSize(insp.dbSizeBytes)}", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary)
-                            Text("بصمة SHA-256: مطابقة 100% (${insp.actualSha256.take(16)}...)", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.StateSuccess, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = if (insp.isChecksumMatched) {
+                                    "${insp.checksumStatus.arabicDescription} (${insp.actualSha256.take(16)}...)"
+                                } else {
+                                    insp.checksumStatus.arabicDescription
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (insp.isChecksumMatched) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateWarning,
+                                fontWeight = FontWeight.Bold
+                            )
                             if (insp.accountsCount > 0 || insp.productsCount > 0 || insp.invoicesCount > 0) {
                                 Text("السجلات: ${insp.accountsCount} حساب • ${insp.productsCount} صنف • ${insp.invoicesCount} فاتورة", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
                             }

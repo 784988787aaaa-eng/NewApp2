@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   quality_gate_and_build:
-    name: Schema Check, Unit & Flow Tests, Lint & APK Build
+    name: Schema Verification, Unit & Flow Tests, Lint & APK Build
     runs-on: ubuntu-latest
 
     steps:
@@ -35,13 +35,39 @@ jobs:
       - name: Grant Execute Permission to Gradlew
         run: chmod +x gradlew
 
-      - name: Verify Room Baseline Schema & Non-Destructive Policy
+      - name: Verify Non-Destructive Database Policy & Baseline Schema (AST/Comment-Aware)
         run: |
-          test -f app/schemas/com.smartledger.pro.data.local.SmartLedgerDatabase/1.json
-          ! grep -q "fallbackToDestructiveMigration" app/src/main/java/com/smartledger/pro/data/local/SmartLedgerDatabase.kt
+          python3 -c '
+          import json, os, re, sys
+          with open("app/src/main/java/com/smartledger/pro/data/local/SmartLedgerDatabase.kt", "r", encoding="utf-8") as f:
+              code = f.read()
+          code_no_comments = re.sub(r"/\*[\s\S]*?\*/|//[^\n]*", "", code)
+          if "fallbackToDestructiveMigration" in code_no_comments:
+              print("ERROR: Destructive migration call found in executable code!")
+              sys.exit(1)
+          if "exportSchema = true" not in code_no_comments:
+              print("ERROR: exportSchema = true is not enabled in SmartLedgerDatabase.kt!")
+              sys.exit(1)
+          schema_file = "app/schemas/com.smartledger.pro.data.local.SmartLedgerDatabase/1.json"
+          if not os.path.exists(schema_file):
+              print("ERROR: Room schema file 1.json is missing!")
+              sys.exit(1)
+          with open(schema_file, "r", encoding="utf-8") as sf:
+              schema = json.load(sf)
+          entities = schema.get("database", {}).get("entities", [])
+          if len(entities) != 11:
+              print(f"ERROR: Expected 11 Room entities in schema, found {len(entities)}")
+              sys.exit(1)
+          print("SUCCESS: Non-destructive migration policy and 11-table Room schema verified.")
+          '
 
       - name: Run Unit, Security & Accounting Business Flow Tests
         run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
+
+      - name: Verify Room Kapt Schema Generation Consistency
+        run: |
+          ./gradlew kaptDebugKotlin --stacktrace --no-daemon
+          test -f app/schemas/com.smartledger.pro.data.local.SmartLedgerDatabase/1.json
 
       - name: Run Android Lint Static Analysis
         run: ./gradlew lintDebug --stacktrace --no-daemon
@@ -49,16 +75,26 @@ jobs:
       - name: Build Debug & Release APKs
         run: ./gradlew assembleDebug assembleRelease --stacktrace --no-daemon
 
-      - name: Verify Generated APK Outputs
+      - name: Strictly Verify Generated APK Outputs
         run: |
-          echo "Listing generated Debug and Release APK files:"
-          ls -lh app/build/outputs/apk/debug/ || true
-          ls -lh app/build/outputs/apk/release/ || true
+          echo "Verifying generated Debug and Release APK files:"
+          ls -lh app/build/outputs/apk/debug/
+          ls -lh app/build/outputs/apk/release/
+          test -n "$(find app/build/outputs/apk/debug -name '*.apk')"
+          test -n "$(find app/build/outputs/apk/release -name '*.apk')"
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmartLedger-Pro-v2.4.0-Debug
+          name: SmartLedger-Pro-v2.4.0-Debug-APK
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmartLedger-Pro-v2.4.0-Release-APK
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 30
+          if-no-files-found: error

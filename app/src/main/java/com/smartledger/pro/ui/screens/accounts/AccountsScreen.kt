@@ -791,12 +791,15 @@ fun AccountStatementSheetContent(
             ) {
                 items(filteredOperations, key = { it.first.Id }) { (op, runningBalance) ->
                     val isCredit = op.Type in listOf("Receive", "DebtToUs", "Purchase", "SaleReturn")
+                    val isAlreadyReversed = op.ReferenceNumber?.startsWith("REV-OP-") == true ||
+                        allOperations.any { it.ReferenceNumber == "REV-OP-${op.Id}" }
                     val typeTitle = when (op.Type) {
                         "Receive" -> "سند قبض"
                         "Payment" -> "سند صرف"
                         "Sale" -> "فاتورة مبيعات آجل"
                         "Purchase" -> "فاتورة مشتريات آجل"
                         "SaleReturn" -> "مرتجع مبيعات"
+                        "PurchaseReturn" -> "مرتجع مشتريات"
                         "DebtOnUs" -> "رصيد افتتاحي (مدين)"
                         "DebtToUs" -> "رصيد افتتاحي (دائن)"
                         else -> op.Type
@@ -841,12 +844,14 @@ fun AccountStatementSheetContent(
                                     color = SmartLedgerColors.TextMuted
                                 )
                             }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            IconButton(
-                                onClick = { operationToDelete = op },
-                                modifier = Modifier.size(26.dp)
-                            ) {
-                                Icon(Icons.Default.DeleteOutline, contentDescription = "حذف القيد", tint = SmartLedgerColors.TextMuted, modifier = Modifier.size(16.dp))
+                            if (!isAlreadyReversed) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                IconButton(
+                                    onClick = { operationToDelete = op },
+                                    modifier = Modifier.size(26.dp)
+                                ) {
+                                    Icon(Icons.Default.Undo, contentDescription = "إلغاء بقيد عكسي", tint = SmartLedgerColors.StateWarning, modifier = Modifier.size(16.dp))
+                                }
                             }
                         }
                     }
@@ -858,10 +863,11 @@ fun AccountStatementSheetContent(
     if (operationToDelete != null) {
         val targetOp = operationToDelete!!
         ConfirmActionDialog(
-            title = "حذف الحركة المالية؟",
-            message = "سيتم حذف القيد المالي بقيمة ${NumberFormatter.formatCurrency(targetOp.Amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} وتحديث صافي رصيد الحساب فوراً، مع حفظ نسخة في سجل المحذوفات.",
-            confirmText = "تأكيد الحذف",
+            title = "إلغاء الحركة بقيد عكسي محاسبي؟",
+            message = "حفاظاً على سلامة السجل المحاسبي، لا يتم مسح الحركة الأصلية، بل سيتم إدراج قيد عكسي موثق بقيمة ${NumberFormatter.formatCurrency(targetOp.Amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} لتصحيح رصيد الحساب فوراً مع توثيق سبب الإلغاء.",
+            confirmText = "اعتماد القيد العكسي",
             requireReason = true,
+            reasonLabel = "سبب الإلغاء المحاسبي",
             onConfirm = { reason ->
                 viewModel.deleteOperation(targetOp.Id, reason)
                 operationToDelete = null

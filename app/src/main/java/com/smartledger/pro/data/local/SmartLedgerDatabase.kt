@@ -15,7 +15,7 @@ import kotlinx.coroutines.launch
  *
  * القواعد الهندسية الصارمة:
  * 1. `exportSchema = true` لحفظ وتوثيق مخطط كل إصدار في `app/schemas/` ومراجعته قبل أي ترقية.
- * 2. يُمنع استخدام `fallbackToDestructiveMigration()` منعاً باتاً لحماية سجلات العملاء والفواتير من الحذف الصامت.
+ * 2. يُحظر تماماً تفعيل أي مسار ترحيل تدميري يحذف الجداول لحماية سجلات العملاء والفواتير من الفقد الصامت.
  * 3. أي تعديل مستقبلي على الجداول يجب أن يمر عبر كائن `Migration(from, to)` صريح داخل `ALL_MIGRATIONS`.
  */
 @Database(
@@ -50,17 +50,25 @@ abstract class SmartLedgerDatabase : RoomDatabase() {
     abstract fun reportDao(): ReportDao
 
     /**
-     * تفريغ معاملات WAL إلى ملف قاعدة البيانات الأساسي لضمان لقطة نسخ احتياطي متماسكة 100%
+     * تفريغ معاملات WAL إلى ملف قاعدة البيانات الأساسي والتحقق من عدم وجود صفحات محجوزة (`busy == 0`)
+     * لضمان إنتاج لقطة نسخ احتياطي متماسكة 100%؛ يعيد `Result.failure` صريحاً إذا تعذر التفريغ الكامل.
      */
-    fun checkpointWal() {
-        try {
+    fun checkpointWal(): Result<Unit> {
+        return try {
             val db = openHelper.writableDatabase
             db.query("PRAGMA wal_checkpoint(FULL)").use { cursor ->
                 if (cursor.moveToFirst()) {
-                    // WAL checkpoint executed
+                    val busy = cursor.getInt(0)
+                    if (busy != 0) {
+                        return Result.failure(
+                            IllegalStateException("قاعدة البيانات مشغولة بعملية كتابة جارية (WAL busy=$busy)؛ يرجى المحاولة بعد اكتمال الحفظ.")
+                        )
+                    }
                 }
             }
-        } catch (_: Exception) {
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(Exception("تعذر تفريغ سجل معاملات قاعدة البيانات (WAL Checkpoint): ${e.localizedMessage}"))
         }
     }
 
@@ -116,7 +124,7 @@ abstract class SmartLedgerDatabase : RoomDatabase() {
             }
         }
 
-        private suspend fun seedInitialData(db: SmartLedgerDatabase) {
+        suspend fun seedInitialData(db: SmartLedgerDatabase) {
             val books = listOf(
                 BookEntity(Id = 1, Name = "العملاء", IsSystem = true, SortOrder = 1),
                 BookEntity(Id = 2, Name = "الموردين", IsSystem = true, SortOrder = 2),

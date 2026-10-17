@@ -67,19 +67,17 @@ data class AppSettingsSnapshot(
     val reduceMotion: Boolean = false
 ) {
     val hasPinConfigured: Boolean
-        get() = appPinCode.isNotBlank()
+        get() = appPinCode.startsWith("v1$")
 }
 
 /**
  * مستودع الإعدادات والأسرار الموحد (AppPreferencesRepository).
  *
- * سياسة مصدر الحقيقة (Single Source of Truth Policy):
- * 1. الأسرار الحساسة (`appPinHash` المملح عبر PBKDF2 و`googleDriveAccessToken` المشفر عبر AndroidKeyStore AES-GCM)
+ * سياسة مصدر الحقيقة وحماية الأسرار:
+ * 1. الأسرار الحساسة (`appPinHash` المملح عبر PBKDF2 و`googleDriveAccessToken` المشفر عبر AES-GCM)
  *    تُحفظ حصراً في مخزن الأسرار المعزول `smartledger_secure_secrets` المستبعد من النسخ التلقائي ونقل الجهاز.
- * 2. الإعدادات التشغيلية القابلة للنقل مع النسخة الاحتياطية (العملة، المنازل العشرية، البادئات، المظهر، سياسات المخزون)
- *    تُحفظ في `SharedPreferences` وتُزامن مع جدول `AppPreferences` في Room بحيث تنتقل مع ملف `.slprobackup` عند الاستعادة.
- * 3. عند استعادة قاعدة بيانات من نسخة احتياطية أو تشغيل التطبيق لأول مرة، تتم قراءة إعدادات `AppPreferences` من Room
- *    دون الكتابة فوق أسرار الجهاز المحلية.
+ * 2. عند ترحيل أي قيم قديمة، يتحقق المستودع من نجاح التشفير الفعلي (`encryptSecretResult` + `decryptSecretResult`)
+ *    ونجاح اشتقاق بصمة الـ PIN (`verifyPin`) قبل حذف الأصل لضمان عدم ضياع البيانات أو حفظها بدون تشفير.
  */
 class AppPreferencesRepository private constructor(context: Context) {
 
@@ -104,21 +102,43 @@ class AppPreferencesRepository private constructor(context: Context) {
     }
 
     /**
-     * ترحيل أي رمز PIN صريح أو رمز Google Drive قديم من الإعدادات العادية إلى المخزن الآمن المشفر وحذفه فوراً من التخزين العادي
+     * ترحيل آمن ومتحقق منه لأي رمز PIN صريح أو رمز Google Drive قديم إلى الصيغة المحمية الجديدة،
+     * مع التحقق من صحة فك التشفير/المطابقة قبل حذف القيمة القديمة.
      */
     private fun migrateLegacyPlaintextSecretsIfNeeded() {
         val legacyPin = prefs.getString("appPinCode", null)
         if (!legacyPin.isNullOrBlank()) {
             val hashed = if (legacyPin.startsWith("v1$")) legacyPin else SecurityCryptoHelper.hashPin(legacyPin)
-            securePrefs.edit().putString("appPinHash", hashed).apply()
-            prefs.edit().remove("appPinCode").apply()
+            val verified = if (legacyPin.startsWith("v1$")) true else SecurityCryptoHelper.verifyPin(legacyPin, hashed)
+            if (verified && hashed.startsWith("v1$")) {
+                val committed = securePrefs.edit().putString("appPinHash", hashed).commit()
+                if (committed) {
+                    prefs.edit().remove("appPinCode").apply()
+                }
+            }
+        }
+
+        val existingPinHash = securePrefs.getString("appPinHash", null)
+        if (!existingPinHash.isNullOrBlank() && !existingPinHash.startsWith("v1$")) {
+            val upgradedHash = SecurityCryptoHelper.hashPin(existingPinHash)
+            if (SecurityCryptoHelper.verifyPin(existingPinHash, upgradedHash)) {
+                securePrefs.edit().putString("appPinHash", upgradedHash).apply()
+            }
         }
 
         val legacyToken = prefs.getString("googleDriveAccessToken", null)
         if (!legacyToken.isNullOrBlank()) {
-            val encrypted = SecurityCryptoHelper.encryptSecret(legacyToken)
-            securePrefs.edit().putString("encryptedDriveToken", encrypted).apply()
-            prefs.edit().remove("googleDriveAccessToken").apply()
+            val encResult = SecurityCryptoHelper.encryptSecretResult(legacyToken)
+            if (encResult.isSuccess) {
+                val cipherText = encResult.getOrThrow()
+                val roundTrip = SecurityCryptoHelper.decryptSecretResult(cipherText)
+                if (roundTrip.isSuccess && roundTrip.getOrNull() == legacyToken.trim()) {
+                    val committed = securePrefs.edit().putString("encryptedDriveToken", cipherText).commit()
+                    if (committed) {
+                        prefs.edit().remove("googleDriveAccessToken").apply()
+                    }
+                }
+            }
         }
     }
 
@@ -152,8 +172,8 @@ class AppPreferencesRepository private constructor(context: Context) {
         val densityStr = prefs.getString("uiDensity", AppUiDensity.COMFORTABLE.name) ?: AppUiDensity.COMFORTABLE.name
 
         val encryptedToken = securePrefs.getString("encryptedDriveToken", "") ?: ""
-        val decryptedToken = SecurityCryptoHelper.decryptSecret(encryptedToken)
-        val storedPinVerifier = securePrefs.getString("appPinHash", "") ?: ""
+        val decryptedToken = SecurityCryptoHelper.decryptSecretResult(encryptedToken).getOrDefault("")
+        val storedPinVerifier = (securePrefs.getString("appPinHash", "") ?: "").takeIf { it.startsWith("v1$") } ?: ""
 
         return AppSettingsSnapshot(
             currencySymbol = prefs.getString("currencySymbol", "ر.ي") ?: "ر.ي",
@@ -219,7 +239,6 @@ class AppPreferencesRepository private constructor(context: Context) {
 
     fun updateSettings(transform: (AppSettingsSnapshot) -> AppSettingsSnapshot) {
         val rawNext = transform(_settings.value)
-        // ضمان عدم بقاء أي رمز PIN بصيغة نص صريح في الذاكرة أو التخزين
         val normalizedPinVerifier = when {
             rawNext.appPinCode.isBlank() -> ""
             rawNext.appPinCode.startsWith("v1$") -> rawNext.appPinCode
@@ -232,14 +251,19 @@ class AppPreferencesRepository private constructor(context: Context) {
     }
 
     private fun saveSnapshotToDisk(s: AppSettingsSnapshot) {
-        // 1. حفظ الأسرار الحساسة مشفرة ومملحة في المخزن المعزول
-        val encryptedToken = if (s.googleDriveAccessToken.isBlank()) "" else SecurityCryptoHelper.encryptSecret(s.googleDriveAccessToken)
-        securePrefs.edit()
+        val secureEditor = securePrefs.edit()
             .putString("appPinHash", s.appPinCode)
-            .putString("encryptedDriveToken", encryptedToken)
-            .apply()
 
-        // 2. حفظ الإعدادات غير الحساسة في SharedPreferences (مع ضمان إزالة أي مفاتيح نصية قديمة للأسرار)
+        if (s.googleDriveAccessToken.isBlank()) {
+            secureEditor.putString("encryptedDriveToken", "")
+        } else {
+            val encResult = SecurityCryptoHelper.encryptSecretResult(s.googleDriveAccessToken)
+            if (encResult.isSuccess) {
+                secureEditor.putString("encryptedDriveToken", encResult.getOrThrow())
+            }
+        }
+        secureEditor.apply()
+
         prefs.edit()
             .putBoolean("_initialized", true)
             .remove("appPinCode")
@@ -285,7 +309,6 @@ class AppPreferencesRepository private constructor(context: Context) {
             .putBoolean("reduceMotion", s.reduceMotion)
             .apply()
 
-        // 3. مزامنة الإعدادات القابلة للنقل مع جدول Room
         ioScope.launch {
             try {
                 prefDao.setPreference(AppPreferenceEntity("currency_symbol", s.currencySymbol))
@@ -303,9 +326,6 @@ class AppPreferencesRepository private constructor(context: Context) {
         }
     }
 
-    /**
-     * استعادة الإعدادات الافتراضية دون المساس بالسجلات المالية أو سجل النسخ الاحتياطية أو القفل الأمني النشط
-     */
     fun resetToDefaultsPreservingBackupHistory() {
         val current = _settings.value
         val resetSnapshot = AppSettingsSnapshot(
