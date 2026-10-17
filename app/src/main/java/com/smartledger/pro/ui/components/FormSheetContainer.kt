@@ -1,5 +1,7 @@
 package com.smartledger.pro.ui.components
 
+import android.os.SystemClock
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -23,6 +25,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,85 +34,141 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.smartledger.pro.ui.theme.SmartLedgerColors
-import com.smartledger.pro.ui.theme.SmartLedgerTokens
 
 /**
- * نافذة عائمة حديثة وذكية (FloatingModalDialog)
- * - تحل محل اللوحات الملتصقة التقليدية (ModalBottomSheet) لتعطي مظهراً عائماً أنيقاً ومنفصلاً عن حواف الشاشة.
- * - تستخدم `decorFitsSystemWindows = false` مع `imePadding()` و`systemBarsPadding()` بحيث ترتفع النافذة
- *   تلقائياً وبانسيابية فوق لوحة المفاتيح دون أن تختفي أزرار الحفظ أو الحقول النشطة.
+ * نموذج الحالات الصريح لدورة حياة نافذة الإدخال (Explicit Window Lifecycle State Machine)
+ * التدفق الأساسي:
+ * - Open -> EDITING -> VALIDATING -> SAVING -> SAVE_SUCCESS -> Close
+ * - عند فشل التحقق: EDITING -> VALIDATION_ERROR (لا تُغلق النافذة ولا تضيع القيم)
+ * - عند فشل الحفظ: SAVING -> SAVE_ERROR -> EDITING (لا تُغلق النافذة وتُعرض الرسالة مع بقاء القيم)
+ * - عند طلب الإلغاء أو الرجوع مع وجود تعديلات: EDITING -> CONFIRMING_DISCARD
+ */
+enum class FormWindowLifecycleState {
+    CLOSED,
+    EDITING,
+    VALIDATING,
+    VALIDATION_ERROR,
+    SAVING,
+    SAVE_ERROR,
+    CONFIRMING_DISCARD,
+    SAVE_SUCCESS
+}
+
+/**
+ * موفر سياق داخلي لربط طلب الإغلاق الخارجي (مثل زر الرجوع في أندرويد أو النقر خارج النافذة)
+ * بحارس حماية البيانات داخل FormSheetContainer.
+ */
+internal val LocalModalCloseInterceptor = compositionLocalOf<((() -> Boolean) -> Unit)?> { null }
+
+/**
+ * نافذة عائمة حديثة ومستقلة (FloatingModalDialog)
+ * - تعمل فوق الشاشة الحالية وتستقر تلقائياً فوق لوحة المفاتيح عبر `decorFitsSystemWindows = false` و`imePadding()`.
+ * - تعترض زر الرجوع في النظام (Back Press) والنقر خارج النافذة وتوجههما إلى آلة الحالات في `FormSheetContainer`
+ *   بحيث يستحيل فقدان التعديلات غير المحفوظة بصمت أو إغلاق النافذة أثناء عملية الحفظ الجارية.
  */
 @Composable
 fun FloatingModalDialog(
     onDismissRequest: () -> Unit,
     maxWidth: Dp = 540.dp,
+    allowOutsideClickDismiss: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
+    var childCloseHandler by remember { mutableStateOf<(() -> Boolean)?>(null) }
 
-    Dialog(
-        onDismissRequest = {
+    val safeAttemptDismiss = {
+        val intercepted = childCloseHandler?.invoke() ?: false
+        if (!intercepted) {
             keyboardController?.hide()
             onDismissRequest()
-        },
+        }
+    }
+
+    Dialog(
+        onDismissRequest = safeAttemptDismiss,
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             decorFitsSystemWindows = false,
             dismissOnBackPress = true,
-            dismissOnClickOutside = false
+            dismissOnClickOutside = allowOutsideClickDismiss
         )
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(SmartLedgerColors.SurfaceOverlay)
-                .imePadding()
-                .systemBarsPadding()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            contentAlignment = Alignment.Center
+        // اعتراض صريح لزر الرجوع في أندرويد لضمان المرور عبر حارس التعديلات غير المحفوظة وحارس الحفظ الجاري
+        BackHandler(enabled = true) {
+            safeAttemptDismiss()
+        }
+
+        CompositionLocalProvider(
+            LocalModalCloseInterceptor provides { handler -> childCloseHandler = handler }
         ) {
-            Surface(
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = maxWidth)
-                    .shadow(
-                        elevation = 24.dp,
-                        shape = RoundedCornerShape(24.dp),
-                        ambientColor = Color.Black,
-                        spotColor = SmartLedgerColors.AccentPrimary.copy(alpha = 0.25f)
-                    )
-                    .clip(RoundedCornerShape(24.dp)),
-                shape = RoundedCornerShape(24.dp),
-                color = SmartLedgerColors.SurfacePanel,
-                tonalElevation = 12.dp,
-                border = BorderStroke(
-                    width = 1.dp,
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            SmartLedgerColors.AccentLight.copy(alpha = 0.35f),
-                            SmartLedgerColors.BorderSubtle
+                    .fillMaxSize()
+                    .background(SmartLedgerColors.SurfaceOverlay)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        if (allowOutsideClickDismiss) {
+                            safeAttemptDismiss()
+                        }
+                    }
+                    .imePadding()
+                    .systemBarsPadding()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = maxWidth)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { /* منع انتقال النقرة إلى الخلفية */ }
+                        .shadow(
+                            elevation = 24.dp,
+                            shape = RoundedCornerShape(24.dp),
+                            ambientColor = Color.Black,
+                            spotColor = SmartLedgerColors.AccentPrimary.copy(alpha = 0.25f)
+                        )
+                        .clip(RoundedCornerShape(24.dp)),
+                    shape = RoundedCornerShape(24.dp),
+                    color = SmartLedgerColors.SurfacePanel,
+                    tonalElevation = 12.dp,
+                    border = BorderStroke(
+                        width = 1.dp,
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                SmartLedgerColors.AccentLight.copy(alpha = 0.35f),
+                                SmartLedgerColors.BorderSubtle
+                            )
                         )
                     )
-                )
-            ) {
-                content()
+                ) {
+                    content()
+                }
             }
         }
     }
 }
 
 /**
- * حاوية النماذج العائمة الاحترافية (FormSheetContainer)
- * - مصممة لتكون رشيقة وغير ملتصقة بحواف الشاشة، مع مسافات مريحة تمنع تشابك الحقول.
- * - ترفع المحتوى وشريط الأزرار السفلي تلقائياً فوق لوحة المفاتيح.
- * - تحمي المستخدم من فقدان التعديلات غير المحفوظة وتمنع النقر المزدوج أثناء الحفظ.
+ * حاوية النماذج العائمة الموحدة (FormSheetContainer)
+ * تطبق دورة حياة FormWindowLifecycleState الصارمة:
+ * 1. تمنع الإغلاق التلقائي عند وجود خطأ تحقق أو فشل في الحفظ.
+ * 2. تمنع الإغلاق العرضي أثناء تنفيذ الحفظ (isSaving == true).
+ * 3. تحمي التعديلات غير المحفوظة عند الضغط على زر الإغلاق أو زر الإلغاء أو زر الرجوع في أندرويد.
+ * 4. تفصل التأثير البصري للزر عن استدعاء onPrimaryClick لمنع تكرار العمليات المالية، مع قفل زمني ضد النقر السريع.
  */
 @Composable
 fun FormSheetContainer(
@@ -124,20 +183,70 @@ fun FormSheetContainer(
     isSaving: Boolean = false,
     hasUnsavedChanges: Boolean = false,
     errorMessage: String? = null,
+    onValidationFailedMessage: String = "يرجى استكمال الحقول المطلوبة بشكل صحيح قبل الحفظ",
     onPrimaryClick: () -> Unit,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    var showDiscardWarning by remember { mutableStateOf(false) }
-    val keyboardController = LocalSoftwareKeyboardController.current
+    var lifecycleState by rememberSaveable { mutableStateOf(FormWindowLifecycleState.EDITING) }
+    var localValidationMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var lastSubmitTimestamp by remember { mutableStateOf(0L) }
 
-    val handleDismissRequest = {
-        if (hasUnsavedChanges && !isSaving) {
-            showDiscardWarning = true
-        } else {
-            keyboardController?.hide()
-            onDismiss()
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val view = LocalView.current
+    val registerInterceptor = LocalModalCloseInterceptor.current
+
+    // مزامنة حالة النافذة مع حالة الحفظ والأخطاء القادمة من طبقة الأعمال (ViewModel/Repository)
+    LaunchedEffect(isSaving, errorMessage) {
+        when {
+            isSaving -> {
+                lifecycleState = FormWindowLifecycleState.SAVING
+                localValidationMessage = null
+            }
+            !errorMessage.isNullOrBlank() -> {
+                lifecycleState = FormWindowLifecycleState.SAVE_ERROR
+                AppHaptics.perform(view, AppHapticType.ERROR)
+            }
+            lifecycleState == FormWindowLifecycleState.SAVING -> {
+                lifecycleState = FormWindowLifecycleState.EDITING
+            }
         }
     }
+
+    // مسار موحد لطلب إغلاق النافذة (من زر ×، أو زر إلغاء، أو زر الرجوع في النظام)
+    val requestWindowClose: () -> Boolean = {
+        when {
+            isSaving || lifecycleState == FormWindowLifecycleState.SAVING -> {
+                // أثناء الحفظ: نمنع الإغلاق العرضي حتى تكتمل العملية وتظهر نتيجتها
+                true
+            }
+            lifecycleState == FormWindowLifecycleState.CONFIRMING_DISCARD -> {
+                // إذا كان تنبيه التجاهل ظاهراً بالفعل وضغط المستخدم رجوع مرة ثانية، نلغي تنبيه التجاهل ونعود للتحرير
+                lifecycleState = FormWindowLifecycleState.EDITING
+                true
+            }
+            hasUnsavedChanges -> {
+                // انتقال صريح إلى حالة تأكيد تجاهل التعديلات بدلاً من الإغلاق الصامت
+                lifecycleState = FormWindowLifecycleState.CONFIRMING_DISCARD
+                AppHaptics.perform(view, AppHapticType.TICK)
+                true
+            }
+            else -> {
+                lifecycleState = FormWindowLifecycleState.CLOSED
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                onDismiss()
+                true
+            }
+        }
+    }
+
+    DisposableEffect(registerInterceptor, hasUnsavedChanges, isSaving, lifecycleState) {
+        registerInterceptor?.invoke(requestWindowClose)
+        onDispose { }
+    }
+
+    val activeBannerError = errorMessage?.takeIf { it.isNotBlank() } ?: localValidationMessage
 
     Column(
         modifier = Modifier
@@ -151,7 +260,6 @@ fun FormSheetContainer(
                 .background(SmartLedgerColors.SurfaceCardElevated.copy(alpha = 0.45f))
                 .padding(horizontal = 18.dp, vertical = 14.dp)
         ) {
-            // مؤشر علوي جمالي رشيق
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
@@ -209,7 +317,8 @@ fun FormSheetContainer(
                 }
 
                 IconButton(
-                    onClick = handleDismissRequest,
+                    onClick = { requestWindowClose() },
+                    enabled = !isSaving,
                     modifier = Modifier
                         .size(34.dp)
                         .clip(CircleShape)
@@ -218,16 +327,16 @@ fun FormSheetContainer(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = "إغلاق",
+                        contentDescription = "إغلاق النافذة",
                         tint = SmartLedgerColors.TextSecondary,
                         modifier = Modifier.size(16.dp)
                     )
                 }
             }
 
-            // تنبيه فقدان التعديلات غير المحفوظة
+            // حالة CONFIRMING_DISCARD: تأكيد تجاهل التعديلات غير المحفوظة
             AnimatedVisibility(
-                visible = showDiscardWarning,
+                visible = lifecycleState == FormWindowLifecycleState.CONFIRMING_DISCARD,
                 enter = expandVertically() + fadeIn(),
                 exit = shrinkVertically() + fadeOut()
             ) {
@@ -255,15 +364,16 @@ fun FormSheetContainer(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             TextButton(
-                                onClick = { showDiscardWarning = false },
+                                onClick = { lifecycleState = FormWindowLifecycleState.EDITING },
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                             ) {
-                                Text("متابعة", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextPrimary, fontWeight = FontWeight.Bold)
+                                Text("متابعة التحرير", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextPrimary, fontWeight = FontWeight.Bold)
                             }
                             Button(
                                 onClick = {
-                                    showDiscardWarning = false
+                                    lifecycleState = FormWindowLifecycleState.CLOSED
                                     keyboardController?.hide()
+                                    focusManager.clearFocus()
                                     onDismiss()
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.StateDanger),
@@ -271,16 +381,16 @@ fun FormSheetContainer(
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.height(30.dp)
                             ) {
-                                Text("تجاهل", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextInverse, fontWeight = FontWeight.Bold)
+                                Text("تجاهل وإغلاق", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextInverse, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
             }
 
-            // رسالة خطأ سياقية إن وجدت
+            // حالة VALIDATION_ERROR / SAVE_ERROR: عرض الخطأ بوضوح مع الحفاظ الكامل على المدخلات
             AnimatedVisibility(
-                visible = !errorMessage.isNullOrBlank(),
+                visible = !activeBannerError.isNullOrBlank(),
                 enter = expandVertically() + fadeIn(),
                 exit = shrinkVertically() + fadeOut()
             ) {
@@ -306,10 +416,11 @@ fun FormSheetContainer(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = errorMessage.orEmpty(),
+                            text = activeBannerError.orEmpty(),
                             style = MaterialTheme.typography.bodyMedium,
                             color = SmartLedgerColors.StateDangerText,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
@@ -318,7 +429,7 @@ fun FormSheetContainer(
 
         Divider(color = SmartLedgerColors.BorderSubtle)
 
-        // 2. جسم النموذج القابل للتمرير المريح بمسافات متوازنة غير متشابكة
+        // 2. جسم النموذج القابل للتمرير المريح
         Column(
             modifier = Modifier
                 .weight(1f, fill = false)
@@ -331,7 +442,7 @@ fun FormSheetContainer(
 
         Divider(color = SmartLedgerColors.BorderSubtle)
 
-        // 3. شريط الإجراءات السفلي الثابت (يظهر دائماً فوق لوحة المفاتيح مباشرة)
+        // 3. شريط الإجراءات السفلي الثابت (يظهر دائماً فوق لوحة المفاتيح، ويفصل التأثير البصري عن منطق الحفظ)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -341,26 +452,42 @@ fun FormSheetContainer(
         ) {
             Button(
                 onClick = {
-                    if (isPrimaryEnabled && !isSaving) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastSubmitTimestamp < 500L || isSaving || lifecycleState == FormWindowLifecycleState.SAVING) {
+                        return@Button
+                    }
+                    lastSubmitTimestamp = now
+                    lifecycleState = FormWindowLifecycleState.VALIDATING
+
+                    if (!isPrimaryEnabled) {
+                        // عند عدم اكتمال التحقق: تبقى النافذة مفتوحة وتوضح للمستخدم ما يلزم إكماله
+                        lifecycleState = FormWindowLifecycleState.VALIDATION_ERROR
+                        localValidationMessage = onValidationFailedMessage
+                        AppHaptics.perform(view, AppHapticType.ERROR)
+                    } else {
+                        localValidationMessage = null
+                        lifecycleState = FormWindowLifecycleState.EDITING
                         keyboardController?.hide()
+                        focusManager.clearFocus()
+                        AppHaptics.perform(view, AppHapticType.CONFIRM)
                         onPrimaryClick()
                     }
                 },
-                enabled = isPrimaryEnabled && !isSaving,
+                enabled = !isSaving && lifecycleState != FormWindowLifecycleState.SAVING,
                 modifier = Modifier
                     .weight(1.65f)
                     .height(46.dp)
-                    .bounceClick(enabled = isPrimaryEnabled && !isSaving) {
-                        keyboardController?.hide()
-                        onPrimaryClick()
-                    },
+                    .pressScaleEffect(
+                        enabled = !isSaving && lifecycleState != FormWindowLifecycleState.SAVING,
+                        hapticType = null
+                    ),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = primaryButtonColor,
+                    containerColor = if (isPrimaryEnabled) primaryButtonColor else SmartLedgerColors.SurfaceCardElevated,
                     disabledContainerColor = SmartLedgerColors.SurfaceCardElevated
                 ),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                if (isSaving) {
+                if (isSaving || lifecycleState == FormWindowLifecycleState.SAVING) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(18.dp),
                         strokeWidth = 2.dp,
@@ -377,18 +504,22 @@ fun FormSheetContainer(
                     Text(
                         text = primaryButtonText,
                         fontWeight = FontWeight.Bold,
-                        color = if (isPrimaryEnabled) SmartLedgerColors.TextInverse else SmartLedgerColors.TextDisabled,
+                        color = if (isPrimaryEnabled) SmartLedgerColors.TextInverse else SmartLedgerColors.TextSecondary,
                         style = MaterialTheme.typography.bodyLarge
                     )
                 }
             }
 
             OutlinedButton(
-                onClick = handleDismissRequest,
-                enabled = !isSaving,
+                onClick = { requestWindowClose() },
+                enabled = !isSaving && lifecycleState != FormWindowLifecycleState.SAVING,
                 modifier = Modifier
                     .weight(1f)
-                    .height(46.dp),
+                    .height(46.dp)
+                    .pressScaleEffect(
+                        enabled = !isSaving && lifecycleState != FormWindowLifecycleState.SAVING,
+                        hapticType = AppHapticType.CLICK
+                    ),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = SmartLedgerColors.TextSecondary),
                 border = ButtonDefaults.outlinedButtonBorder.copy(
                     brush = SolidColor(SmartLedgerColors.BorderSubtle)
@@ -407,7 +538,6 @@ fun FormSheetContainer(
 
 /**
  * بطاقة تجميع حقول رشيقة داخل النوافذ العائمة (FormSectionGroup)
- * تفصل مجموعات الحقول بصرياً بمسافات مدروسة تمنع الالتصاق والتشابك.
  */
 @Composable
 fun FormSectionGroup(
@@ -466,7 +596,7 @@ fun ExpandableAdvancedSection(
     badgeText: String? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    var expanded by remember { mutableStateOf(initiallyExpanded) }
+    var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
 
     Column(
         modifier = Modifier

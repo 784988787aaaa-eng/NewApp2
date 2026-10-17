@@ -1,5 +1,7 @@
 package com.smartledger.pro.util
 
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.text.SimpleDateFormat
@@ -9,8 +11,8 @@ import kotlin.math.abs
 import kotlin.math.roundToLong
 
 /**
- * أداة موحدة لتنسيق الأرقام والعملات والتواريخ بالأرقام الغربية (123) حصراً
- * وتحويل أي أرقام عربية شرقية (٠-٩) أو فارسية (۰-۹) مدخلة من لوحة المفاتيح إلى أرقام غربية قياسية.
+ * أداة موحدة لتنسيق الأرقام والعملات والتواريخ بالأرقام الغربية (123) حصراً،
+ * وضبط الدقة المحاسبية للمبالغ المالية عبر BigDecimal لمنع أخطاء الفاصلة العائمة.
  */
 object NumberFormatter {
 
@@ -18,6 +20,17 @@ object NumberFormatter {
     private val twoDecimalsFormat = DecimalFormat("#,##0.00", usSymbols)
     private val zeroDecimalsFormat = DecimalFormat("#,##0", usSymbols)
     private val cleanQuantityFormat = DecimalFormat("#,##0.##", usSymbols)
+
+    /**
+     * تقريب محاسبي صارم للمبالغ المالية (منزلتان عشريتان بنظام HALF_UP)
+     * يمنع أخطاء جمع وطرح الكسور العشرية في Double مثل 0.1 + 0.2 = 0.30000000000000004
+     */
+    fun roundCurrency(value: Double, scale: Int = 2): Double {
+        if (value.isNaN() || value.isInfinite()) return 0.0
+        return BigDecimal.valueOf(value)
+            .setScale(scale.coerceIn(0, 4), RoundingMode.HALF_UP)
+            .toDouble()
+    }
 
     /**
      * تطبيع النص الرقمي المدخل من المستخدم لتحويل الأرقام الهندية/الشرقية والفواصل العربية إلى أرقام غربية قياسية
@@ -63,11 +76,12 @@ object NumberFormatter {
     }
 
     /**
-     * تحويل نص رقمي إلى قيمة عشرية بأمان
+     * تحويل نص رقمي إلى قيمة عشرية مقربة محاسبياً بأمان
      */
     fun parseDouble(input: String, default: Double = 0.0): Double {
         val clean = normalizeNumericInput(input.trim(), allowDecimal = true, allowNegative = true)
-        return clean.toDoubleOrNull() ?: default
+        val raw = clean.toDoubleOrNull() ?: return default
+        return roundCurrency(raw, 4)
     }
 
     /**
@@ -81,15 +95,16 @@ object NumberFormatter {
         showSign: Boolean = false
     ): String {
         if (privacyMode) return "••••••"
-        val absVal = abs(amount)
+        val roundedAmount = roundCurrency(amount, 2)
+        val absVal = abs(roundedAmount)
         val formatted = if (decimalPlaces <= 0 || abs(absVal - absVal.roundToLong()) < 0.005) {
             zeroDecimalsFormat.format(absVal)
         } else {
             twoDecimalsFormat.format(absVal)
         }
         val signPrefix = when {
-            amount < -0.001 -> "-"
-            showSign && amount > 0.001 -> "+"
+            roundedAmount < -0.001 -> "-"
+            showSign && roundedAmount > 0.001 -> "+"
             else -> ""
         }
         return if (currencySymbol.isBlank()) {
@@ -103,13 +118,14 @@ object NumberFormatter {
      * تنسيق رقم بدون رمز عملة
      */
     fun formatAmount(amount: Double, decimalPlaces: Int = 2): String {
-        val absVal = abs(amount)
+        val roundedAmount = roundCurrency(amount, 2)
+        val absVal = abs(roundedAmount)
         val formatted = if (decimalPlaces <= 0 || abs(absVal - absVal.roundToLong()) < 0.005) {
             zeroDecimalsFormat.format(absVal)
         } else {
             twoDecimalsFormat.format(absVal)
         }
-        val sign = if (amount < -0.001) "-" else ""
+        val sign = if (roundedAmount < -0.001) "-" else ""
         return "$sign$formatted"
     }
 
@@ -117,7 +133,7 @@ object NumberFormatter {
      * تنسيق الكميات المخزنية بدون أصفار عشرية زائدة
      */
     fun formatQuantity(qty: Double): String {
-        return cleanQuantityFormat.format(qty)
+        return cleanQuantityFormat.format(roundCurrency(qty, 3))
     }
 
     /**
@@ -133,16 +149,10 @@ object NumberFormatter {
         }
     }
 
-    /**
-     * الحصول على الطابع الزمني القياسي للتخزين في قاعدة البيانات
-     */
     fun nowTimestamp(): String {
         return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
     }
 
-    /**
-     * الحصول على تاريخ اليوم فقط
-     */
     fun todayDate(): String {
         return SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
     }

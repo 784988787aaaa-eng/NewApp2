@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,6 +28,7 @@ import com.smartledger.pro.ui.theme.SmartLedgerColors
 import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.ui.viewmodels.ExpensesViewModel
 import com.smartledger.pro.util.NumberFormatter
+import kotlinx.coroutines.launch
 
 @Composable
 fun ExpensesScreen(
@@ -34,11 +36,13 @@ fun ExpensesScreen(
     viewModel: ExpensesViewModel = viewModel()
 ) {
     val allExpenses by viewModel.expenses.collectAsState()
-    var searchQuery by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf("ALL") }
-    var showAddExpenseDialog by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var selectedCategory by rememberSaveable { mutableStateOf("ALL") }
+    var showAddExpenseDialog by rememberSaveable { mutableStateOf(false) }
     var expenseToDelete by remember { mutableStateOf<ExpenseEntity?>(null) }
-    var statusMessage by remember { mutableStateOf<String?>(null) }
+    var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
     val filteredExpenses = remember(allExpenses, searchQuery, selectedCategory) {
         allExpenses.filter { exp ->
@@ -97,7 +101,7 @@ fun ExpensesScreen(
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                         modifier = Modifier
                             .height(38.dp)
-                            .bounceClick { showAddExpenseDialog = true }
+                            .pressScaleEffect()
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = SmartLedgerColors.TextInverse)
                         Spacer(modifier = Modifier.width(4.dp))
@@ -230,15 +234,29 @@ fun ExpensesScreen(
             item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
-        // نافذة تسجيل نفقة تشغيلية عائمة فوق لوحة المفاتيح
+        // نافذة تسجيل نفقة تشغيلية عائمة فوق لوحة المفاتيح مع حماية كاملة من الإغلاق عند الخطأ
         if (showAddExpenseDialog) {
             FloatingModalDialog(onDismissRequest = { showAddExpenseDialog = false }) {
+                var isSavingExpense by remember { mutableStateOf(false) }
+                var saveExpenseError by remember { mutableStateOf<String?>(null) }
+
                 AddExpenseDialog(
+                    isSaving = isSavingExpense,
+                    errorMessage = saveExpenseError,
                     onDismiss = { showAddExpenseDialog = false },
                     onSave = { amount, statement, category, source ->
-                        viewModel.saveExpense(amount, statement, category, source)
-                        showAddExpenseDialog = false
-                        statusMessage = "تم تسجيل النفقة التشغيلية وخصمها من قائمة الدخل."
+                        isSavingExpense = true
+                        saveExpenseError = null
+                        scope.launch {
+                            val res = viewModel.saveExpenseAsync(amount, statement, category, source)
+                            isSavingExpense = false
+                            if (res.isSuccess) {
+                                showAddExpenseDialog = false
+                                statusMessage = "تم تسجيل النفقة التشغيلية وخصمها من قائمة الدخل."
+                            } else {
+                                saveExpenseError = res.exceptionOrNull()?.message ?: "تعذر حفظ النفقة التشغيلية؛ يرجى التحقق والمحاولة مرة أخرى."
+                            }
+                        }
                     }
                 )
             }
@@ -264,13 +282,15 @@ fun ExpensesScreen(
 
 @Composable
 fun AddExpenseDialog(
+    isSaving: Boolean = false,
+    errorMessage: String? = null,
     onDismiss: () -> Unit,
     onSave: (amount: Double, statement: String, category: String, source: String) -> Unit
 ) {
-    var amountText by remember { mutableStateOf("") }
-    var statement by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("إيجار ومرافق") }
-    var source by remember { mutableStateOf("الخزينة الرئيسية") }
+    var amountText by rememberSaveable { mutableStateOf("") }
+    var statement by rememberSaveable { mutableStateOf("") }
+    var category by rememberSaveable { mutableStateOf("إيجار ومرافق") }
+    var source by rememberSaveable { mutableStateOf("الخزينة الرئيسية") }
 
     val focusStatement = remember { FocusRequester() }
     val amount = NumberFormatter.parseDouble(amountText, 0.0)
@@ -284,6 +304,8 @@ fun AddExpenseDialog(
         primaryButtonText = "تأكيد وقيد المصروف",
         primaryButtonColor = SmartLedgerColors.StateDanger,
         isPrimaryEnabled = isFormValid,
+        isSaving = isSaving,
+        errorMessage = errorMessage,
         hasUnsavedChanges = amountText.isNotBlank() || statement.isNotBlank(),
         onPrimaryClick = {
             if (isFormValid) {
@@ -311,6 +333,7 @@ fun AddExpenseDialog(
                 placeholder = "مثال: 15000",
                 isRequired = true,
                 keyboardType = KeyboardType.Decimal,
+                autoFocusOnAppear = amountText.isBlank(),
                 nextFocusRequester = focusStatement
             )
         }

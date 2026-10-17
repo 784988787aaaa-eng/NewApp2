@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,19 +45,25 @@ fun VouchersScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    var isReceiptMode by remember { mutableStateOf(true) }
-    var amountText by remember { mutableStateOf("") }
-    var selectedAccount by remember { mutableStateOf<AccountBalanceSummary?>(null) }
-    var statementText by remember { mutableStateOf("") }
-    var refNumberText by remember { mutableStateOf("") }
+    var isReceiptMode by rememberSaveable { mutableStateOf(true) }
+    var amountText by rememberSaveable { mutableStateOf("") }
+    var selectedAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var statementText by rememberSaveable { mutableStateOf("") }
+    var refNumberText by rememberSaveable { mutableStateOf("") }
 
-    var showAccountPickerSheet by remember { mutableStateOf(false) }
-    var showConfirmPostDialog by remember { mutableStateOf(false) }
-    var statusMessage by remember { mutableStateOf<String?>(null) }
+    var showAccountPickerSheet by rememberSaveable { mutableStateOf(false) }
+    var showConfirmPostDialog by rememberSaveable { mutableStateOf(false) }
+    var isPostingVoucher by remember { mutableStateOf(false) }
+    var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var isStatusError by rememberSaveable { mutableStateOf(false) }
+
+    val selectedAccount = remember(accounts, selectedAccountId) {
+        selectedAccountId?.let { id -> accounts.firstOrNull { it.PersonId == id } }
+    }
 
     val focusStatement = remember { FocusRequester() }
     val amountVal = NumberFormatter.parseDouble(amountText, 0.0)
-    val isFormValid = amountVal > 0.0 && selectedAccount != null
+    val isFormValid = amountVal > 0.0 && selectedAccount != null && !isPostingVoucher
 
     val currentNet = selectedAccount?.NetBalance ?: 0.0
     val projectedNet = if (isReceiptMode) (currentNet - amountVal) else (currentNet + amountVal)
@@ -138,6 +145,7 @@ fun VouchersScreen(
                 Spacer(modifier = Modifier.height(4.dp))
                 StatusFeedbackBanner(
                     message = statusMessage,
+                    isError = isStatusError,
                     onDismiss = { statusMessage = null }
                 )
             }
@@ -278,7 +286,7 @@ fun VouchersScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(46.dp)
-                                .bounceClick(enabled = isFormValid) { showConfirmPostDialog = true },
+                                .pressScaleEffect(enabled = isFormValid),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = if (isReceiptMode) SmartLedgerColors.StateSuccess else SmartLedgerColors.AccentPrimary
                             ),
@@ -287,7 +295,7 @@ fun VouchersScreen(
                             Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SmartLedgerColors.TextInverse, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = if (isReceiptMode) "اعتماد وترحيل سند القبض (له)" else "اعتماد وترحيل سند الصرف (عليه)",
+                                text = if (isPostingVoucher) "جارٍ ترحيل السند..." else if (isReceiptMode) "اعتماد وترحيل سند القبض (له)" else "اعتماد وترحيل سند الصرف (عليه)",
                                 fontWeight = FontWeight.Bold,
                                 color = SmartLedgerColors.TextInverse,
                                 style = MaterialTheme.typography.bodyLarge
@@ -365,7 +373,7 @@ fun VouchersScreen(
         // نافذة اختيار الحساب العائمة فوق لوحة المفاتيح
         if (showAccountPickerSheet) {
             FloatingModalDialog(onDismissRequest = { showAccountPickerSheet = false }) {
-                var accSearch by remember { mutableStateOf("") }
+                var accSearch by rememberSaveable { mutableStateOf("") }
                 val filtered = remember(accounts, accSearch) {
                     if (accSearch.isBlank()) accounts
                     else accounts.filter {
@@ -401,7 +409,7 @@ fun VouchersScreen(
                                     .background(SmartLedgerColors.SurfaceCard)
                                     .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(10.dp))
                                     .clickable {
-                                        selectedAccount = acc
+                                        selectedAccountId = acc.PersonId
                                         showAccountPickerSheet = false
                                     }
                                     .padding(12.dp),
@@ -422,7 +430,7 @@ fun VouchersScreen(
         }
 
         if (showConfirmPostDialog && selectedAccount != null) {
-            val acc = selectedAccount!!
+            val acc = selectedAccount
             ConfirmActionDialog(
                 title = if (isReceiptMode) "تأكيد ترحيل سند القبض؟" else "تأكيد ترحيل سند الصرف؟",
                 message = "سيتم قيد ${if (isReceiptMode) "سند قبض (له)" else "سند صرف (عليه)"} بمبلغ ${NumberFormatter.formatCurrency(amountVal, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)} على حساب «${acc.PersonName}».",
@@ -430,14 +438,22 @@ fun VouchersScreen(
                 isDestructive = false,
                 onConfirm = {
                     showConfirmPostDialog = false
+                    isPostingVoucher = true
                     scope.launch {
                         val type = if (isReceiptMode) "Receive" else "Payment"
                         val st = statementText.trim().ifBlank { if (isReceiptMode) "سند قبض نقدية" else "سند صرف نقدية" }
-                        viewModel.createVoucher(acc.PersonId, type, amountVal, st, refNumberText.trim().ifBlank { null })
-                        statusMessage = "تم حفظ وترحيل السند لحساب «${acc.PersonName}» بنجاح."
-                        amountText = ""
-                        statementText = ""
-                        refNumberText = ""
+                        val res = viewModel.createVoucher(acc.PersonId, type, amountVal, st, refNumberText.trim().ifBlank { null })
+                        isPostingVoucher = false
+                        if (res.isSuccess) {
+                            isStatusError = false
+                            statusMessage = "تم حفظ وترحيل السند لحساب «${acc.PersonName}» بنجاح."
+                            amountText = ""
+                            statementText = ""
+                            refNumberText = ""
+                        } else {
+                            isStatusError = true
+                            statusMessage = res.exceptionOrNull()?.message ?: "تعذر حفظ السند؛ تم الاحتفاظ بالبيانات المدخلة."
+                        }
                     }
                 },
                 onDismiss = { showConfirmPostDialog = false }

@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -118,16 +119,16 @@ fun SettingsScreen(
     val indexedBackups by viewModel.indexedBackups.collectAsState()
     val biometricCapability = remember { BiometricLockHelper.checkBiometricSupport(context) }
 
-    var searchQuery by remember { mutableStateOf("") }
-    var statusBannerText by remember { mutableStateOf<String?>(null) }
-    var isBannerError by remember { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var statusBannerText by rememberSaveable { mutableStateOf<String?>(null) }
+    var isBannerError by rememberSaveable { mutableStateOf(false) }
 
-    var showEditIdentitySheet by remember { mutableStateOf(false) }
-    var showGoogleDriveConfigSheet by remember { mutableStateOf(false) }
-    var showPrinterPickerSheet by remember { mutableStateOf(false) }
-    var showPinSetupSheet by remember { mutableStateOf(false) }
-    var showBackupsArchiveSheet by remember { mutableStateOf(false) }
-    var showResetConfirmDialog by remember { mutableStateOf(false) }
+    var showEditIdentitySheet by rememberSaveable { mutableStateOf(false) }
+    var showGoogleDriveConfigSheet by rememberSaveable { mutableStateOf(false) }
+    var showPrinterPickerSheet by rememberSaveable { mutableStateOf(false) }
+    var showPinSetupSheet by rememberSaveable { mutableStateOf(false) }
+    var showBackupsArchiveSheet by rememberSaveable { mutableStateOf(false) }
+    var showResetConfirmDialog by rememberSaveable { mutableStateOf(false) }
 
     var isWorkingOnBackup by remember { mutableStateOf(false) }
     var driveState by remember(settings.googleDriveAccountEmail, settings.googleDriveAccessToken, settings.lastCloudBackupTime) {
@@ -220,7 +221,7 @@ fun SettingsScreen(
                             color = SmartLedgerColors.TextPrimary
                         )
                         Text(
-                            text = "الدفتر الذكي Pro — الإصدار 2.3.0 • حفظ دائم وفوري",
+                            text = "الدفتر الذكي Pro — الإصدار 2.4.0 • حفظ دائم وفوري",
                             style = MaterialTheme.typography.labelSmall,
                             color = SmartLedgerColors.TextMuted
                         )
@@ -231,7 +232,7 @@ fun SettingsScreen(
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                         border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.height(34.dp)
+                        modifier = Modifier.height(34.dp).pressScaleEffect()
                     ) {
                         Icon(Icons.Default.RestartAlt, contentDescription = null, tint = SmartLedgerColors.TextSecondary, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -288,7 +289,7 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(40.dp)
-                                .bounceClick { showEditIdentitySheet = true },
+                                .pressScaleEffect(),
                             colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
                             shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                         ) {
@@ -358,7 +359,7 @@ fun SettingsScreen(
                                     }
                                 },
                                 enabled = !isWorkingOnBackup,
-                                modifier = Modifier.weight(1f).height(40.dp),
+                                modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                             ) {
@@ -369,7 +370,7 @@ fun SettingsScreen(
 
                             OutlinedButton(
                                 onClick = { showBackupsArchiveSheet = true },
-                                modifier = Modifier.weight(1f).height(40.dp),
+                                modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
                             ) {
@@ -385,7 +386,7 @@ fun SettingsScreen(
                                     exportSafLauncher.launch(BackupRestoreHelper.generateBackupFileName())
                                 },
                                 enabled = !isWorkingOnBackup,
-                                modifier = Modifier.weight(1f).height(38.dp),
+                                modifier = Modifier.weight(1f).height(38.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle))
                             ) {
@@ -399,7 +400,7 @@ fun SettingsScreen(
                                     importSafLauncher.launch(arrayOf("*/*"))
                                 },
                                 enabled = !isWorkingOnBackup,
-                                modifier = Modifier.weight(1f).height(38.dp),
+                                modifier = Modifier.weight(1f).height(38.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle))
                             ) {
@@ -453,7 +454,7 @@ fun SettingsScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
                                 onClick = { showGoogleDriveConfigSheet = true },
-                                modifier = Modifier.weight(1f).height(40.dp),
+                                modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
                             ) {
@@ -509,7 +510,7 @@ fun SettingsScreen(
                                     }
                                 },
                                 enabled = driveState != DriveConnectionState.UPLOADING,
-                                modifier = Modifier.weight(1f).height(40.dp),
+                                modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(enabled = driveState != DriveConnectionState.UPLOADING),
                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                             ) {
@@ -745,7 +746,7 @@ fun SettingsScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
                                 onClick = { showPrinterPickerSheet = true },
-                                modifier = Modifier.weight(1f).height(40.dp),
+                                modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
                             ) {
@@ -775,7 +776,7 @@ fun SettingsScreen(
                                     }
                                 },
                                 enabled = !isTestingPrinter,
-                                modifier = Modifier.weight(1f).height(40.dp),
+                                modifier = Modifier.weight(1f).height(40.dp).pressScaleEffect(enabled = !isTestingPrinter),
                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                             ) {
@@ -835,7 +836,7 @@ fun SettingsScreen(
 
                             OutlinedButton(
                                 onClick = { showPinSetupSheet = true },
-                                modifier = Modifier.fillMaxWidth().height(38.dp),
+                                modifier = Modifier.fillMaxWidth().height(38.dp).pressScaleEffect(),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
                             ) {
@@ -870,14 +871,14 @@ fun SettingsScreen(
         // نافذة تعديل هوية المنشأة والفواتير العائمة فوق لوحة المفاتيح
         if (showEditIdentitySheet) {
             FloatingModalDialog(onDismissRequest = { showEditIdentitySheet = false }) {
-                var tradeName by remember(identity) { mutableStateOf(identity?.TradeName ?: "الدفتر الذكي للتجارة العامة") }
-                var phone by remember(identity) { mutableStateOf(identity?.Phone1 ?: "777000000") }
-                var address by remember(identity) { mutableStateOf(identity?.Address ?: "صنعاء - شارع الزبيري") }
-                var taxNo by remember(identity) { mutableStateOf(identity?.TaxNumber ?: "") }
-                var header by remember(identity) { mutableStateOf(identity?.ReceiptHeader ?: "أهلاً وسهلاً بكم في متجرنا") }
-                var footer by remember(identity) { mutableStateOf(identity?.ReceiptFooter ?: "البضاعة المباعة ترد وتستبدل خلال 3 أيام بفاتورة الشراء") }
-                var invPrefix by remember(settings) { mutableStateOf(settings.invoicePrefix) }
-                var purPrefix by remember(settings) { mutableStateOf(settings.purchasePrefix) }
+                var tradeName by rememberSaveable { mutableStateOf(identity?.TradeName ?: "الدفتر الذكي للتجارة العامة") }
+                var phone by rememberSaveable { mutableStateOf(identity?.Phone1 ?: "777000000") }
+                var address by rememberSaveable { mutableStateOf(identity?.Address ?: "صنعاء - شارع الزبيري") }
+                var taxNo by rememberSaveable { mutableStateOf(identity?.TaxNumber ?: "") }
+                var header by rememberSaveable { mutableStateOf(identity?.ReceiptHeader ?: "أهلاً وسهلاً بكم في متجرنا") }
+                var footer by rememberSaveable { mutableStateOf(identity?.ReceiptFooter ?: "البضاعة المباعة ترد وتستبدل خلال 3 أيام بفاتورة الشراء") }
+                var invPrefix by rememberSaveable { mutableStateOf(settings.invoicePrefix) }
+                var purPrefix by rememberSaveable { mutableStateOf(settings.purchasePrefix) }
 
                 FormSheetContainer(
                     title = "تحرير بيانات المنشأة والفواتير",
@@ -886,6 +887,8 @@ fun SettingsScreen(
                     onDismiss = { showEditIdentitySheet = false },
                     primaryButtonText = "حفظ بيانات المنشأة",
                     isPrimaryEnabled = tradeName.trim().isNotEmpty(),
+                    hasUnsavedChanges = tradeName != (identity?.TradeName ?: "الدفتر الذكي للتجارة العامة") ||
+                        phone != (identity?.Phone1 ?: "777000000"),
                     onPrimaryClick = {
                         viewModel.saveBusinessIdentity(
                             tradeName = tradeName,
@@ -967,8 +970,8 @@ fun SettingsScreen(
         // نافذة ربط وإدارة Google Drive العائمة فوق لوحة المفاتيح
         if (showGoogleDriveConfigSheet) {
             FloatingModalDialog(onDismissRequest = { showGoogleDriveConfigSheet = false }) {
-                var emailText by remember(settings) { mutableStateOf(settings.googleDriveAccountEmail) }
-                var tokenText by remember(settings) { mutableStateOf(settings.googleDriveAccessToken) }
+                var emailText by rememberSaveable { mutableStateOf(settings.googleDriveAccountEmail) }
+                var tokenText by rememberSaveable { mutableStateOf(settings.googleDriveAccessToken) }
 
                 FormSheetContainer(
                     title = "إعداد وربط Google Drive",
@@ -1045,7 +1048,7 @@ fun SettingsScreen(
                                 isBannerError = false
                                 statusBannerText = "تم فصل الحساب السحابي مع الحفاظ على النسخ السابقة."
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().pressScaleEffect(),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = SmartLedgerColors.StateDanger),
                             border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateDangerBorder))
                         ) {
@@ -1065,8 +1068,8 @@ fun SettingsScreen(
             val errorMsg = pairedResult.exceptionOrNull()?.message
 
             FloatingModalDialog(onDismissRequest = { showPrinterPickerSheet = false }) {
-                var manualAddress by remember(settings) { mutableStateOf(settings.savedPrinterAddress) }
-                var manualName by remember(settings) { mutableStateOf(settings.savedPrinterName) }
+                var manualAddress by rememberSaveable { mutableStateOf(settings.savedPrinterAddress) }
+                var manualName by rememberSaveable { mutableStateOf(settings.savedPrinterName) }
 
                 FormSheetContainer(
                     title = "اختيار طابعة الفواتير الحرارية",
@@ -1140,7 +1143,7 @@ fun SettingsScreen(
         // نافذة إعداد رمز الحماية الشخصي العائمة فوق لوحة المفاتيح
         if (showPinSetupSheet) {
             FloatingModalDialog(onDismissRequest = { showPinSetupSheet = false }) {
-                var pinText by remember(settings) { mutableStateOf(settings.appPinCode) }
+                var pinText by rememberSaveable { mutableStateOf(settings.appPinCode) }
                 FormSheetContainer(
                     title = "إعداد رمز الحماية الشخصي (PIN)",
                     subtitle = "يُستخدم الرمز كوسيلة مصادقة سريعة أو احتياطية بجانب بصمة الإصبع",
@@ -1256,7 +1259,7 @@ fun SettingsScreen(
                                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                                 shape = RoundedCornerShape(8.dp),
-                                                modifier = Modifier.height(32.dp)
+                                                modifier = Modifier.height(32.dp).pressScaleEffect()
                                             ) {
                                                 Text("فحص واستعادة", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                             }

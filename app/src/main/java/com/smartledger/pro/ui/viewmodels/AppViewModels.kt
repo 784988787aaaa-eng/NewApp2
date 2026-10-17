@@ -12,6 +12,7 @@ import com.smartledger.pro.data.local.dao.*
 import com.smartledger.pro.data.local.entity.*
 import com.smartledger.pro.data.repository.*
 import com.smartledger.pro.domain.model.UnitConversionEngine
+import com.smartledger.pro.util.NumberFormatter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -54,7 +55,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     private val _selectedBookId = MutableStateFlow<Long?>(null)
     val selectedBookId = _selectedBookId.asStateFlow()
 
-    private val _balanceFilter = MutableStateFlow("ALL") // ALL, DEBIT (لنا), CREDIT (علينا)
+    private val _balanceFilter = MutableStateFlow("ALL")
     val balanceFilter = _balanceFilter.asStateFlow()
 
     val books: StateFlow<List<BookEntity>> = accountRepo.getAllBooks()
@@ -99,7 +100,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         _balanceFilter.value = "ALL"
     }
 
-    fun saveAccount(
+    suspend fun saveAccountAsync(
         id: Long = 0,
         name: String,
         bookId: Long,
@@ -107,24 +108,20 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         creditLimit: Double,
         openingBalance: Double,
         isDebit: Boolean,
-        note: String?,
-        onComplete: ((Long) -> Unit)? = null
-    ) {
-        viewModelScope.launch {
-            val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-            val person = PersonEntity(
-                Id = id,
-                BookId = bookId,
-                Name = name.trim(),
-                Phone = phone?.trim()?.ifBlank { null },
-                AccountCode = if (id > 0) null else "ACC-" + (System.currentTimeMillis() % 100000),
-                CreditLimit = creditLimit.coerceAtLeast(0.0),
-                Note = note?.trim()?.ifBlank { null },
-                CreatedAt = now
-            )
-            val savedId = accountRepo.saveAccount(person, openingBalance, isDebit)
-            onComplete?.invoke(savedId)
-        }
+        note: String?
+    ): Result<Long> {
+        val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+        val person = PersonEntity(
+            Id = id,
+            BookId = bookId,
+            Name = name.trim(),
+            Phone = phone?.trim()?.ifBlank { null },
+            AccountCode = if (id > 0) null else "ACC-" + (System.currentTimeMillis() % 100000),
+            CreditLimit = NumberFormatter.roundCurrency(creditLimit.coerceAtLeast(0.0)),
+            Note = note?.trim()?.ifBlank { null },
+            CreatedAt = now
+        )
+        return accountRepo.saveAccount(person, openingBalance, isDebit)
     }
 
     fun deleteAccount(id: Long, reason: String? = null) {
@@ -143,18 +140,14 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun createQuickVoucher(
+    suspend fun createQuickVoucherAsync(
         personId: Long,
         type: String,
         amount: Double,
         statement: String,
-        refNumber: String? = null,
-        onComplete: (() -> Unit)? = null
-    ) {
-        viewModelScope.launch {
-            voucherRepo.createVoucher(personId, type, amount, statement, refNumber)
-            onComplete?.invoke()
-        }
+        refNumber: String? = null
+    ): Result<Long> {
+        return voucherRepo.createVoucher(personId, type, amount, statement, refNumber)
     }
 }
 
@@ -166,7 +159,7 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
-    private val _stockFilter = MutableStateFlow("ALL") // ALL, LOW_STOCK, OUT_OF_STOCK, MULTI_UNIT
+    private val _stockFilter = MutableStateFlow("ALL")
     val stockFilter = _stockFilter.asStateFlow()
 
     val products: StateFlow<List<ProductStockItem>> = combine(
@@ -203,7 +196,7 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
         return inventoryRepo.getProductMovements(productId)
     }
 
-    fun saveProduct(
+    suspend fun saveProductAsync(
         id: Long = 0,
         barcode: String?,
         name: String,
@@ -218,36 +211,32 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
         wholesalePrice: Double = 0.0,
         alertThreshold: Double,
         openingMajorQty: Double = 0.0,
-        openingMinorQty: Double = 0.0,
-        onComplete: ((Long) -> Unit)? = null
-    ) {
-        viewModelScope.launch {
-            val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-            val safeFactor = if (unitFactor <= 0.0 || largeUnit.isNullOrBlank()) 1.0 else unitFactor
-            val totalOpeningMinor = UnitConversionEngine.toMinorQuantity(openingMajorQty, openingMinorQty, safeFactor)
-            val effectiveMajorPrice = if (wholesalePrice > 0.0) wholesalePrice else (retailPrice * safeFactor)
+        openingMinorQty: Double = 0.0
+    ): Result<Long> {
+        val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+        val safeFactor = if (unitFactor <= 0.0 || largeUnit.isNullOrBlank()) 1.0 else unitFactor
+        val totalOpeningMinor = UnitConversionEngine.toMinorQuantity(openingMajorQty, openingMinorQty, safeFactor)
+        val effectiveMajorPrice = if (wholesalePrice > 0.0) wholesalePrice else (retailPrice * safeFactor)
 
-            val product = ProductEntity(
-                Id = id,
-                Barcode = barcode?.trim()?.ifBlank { null },
-                Name = name.trim(),
-                CategoryId = categoryId,
-                Warehouse = warehouse.trim().ifBlank { "المستودع الرئيسي" },
-                ShelfLocation = shelfLocation?.trim()?.ifBlank { null },
-                SmallUnit = smallUnit.trim().ifBlank { "قطعة" },
-                LargeUnit = largeUnit?.trim()?.ifBlank { null },
-                UnitFactor = safeFactor,
-                CostPrice = costPrice.coerceAtLeast(0.0),
-                RetailPrice = retailPrice.coerceAtLeast(0.0),
-                WholesalePrice = effectiveMajorPrice.coerceAtLeast(0.0),
-                AlertThreshold = alertThreshold.coerceAtLeast(0.0),
-                OpeningQuantityMinor = totalOpeningMinor,
-                OpeningCost = costPrice.coerceAtLeast(0.0),
-                CreatedAt = now
-            )
-            val savedId = inventoryRepo.saveProduct(product, totalOpeningMinor)
-            onComplete?.invoke(savedId)
-        }
+        val product = ProductEntity(
+            Id = id,
+            Barcode = barcode?.trim()?.ifBlank { null },
+            Name = name.trim(),
+            CategoryId = categoryId,
+            Warehouse = warehouse.trim().ifBlank { "المستودع الرئيسي" },
+            ShelfLocation = shelfLocation?.trim()?.ifBlank { null },
+            SmallUnit = smallUnit.trim().ifBlank { "قطعة" },
+            LargeUnit = largeUnit?.trim()?.ifBlank { null },
+            UnitFactor = safeFactor,
+            CostPrice = NumberFormatter.roundCurrency(costPrice.coerceAtLeast(0.0)),
+            RetailPrice = NumberFormatter.roundCurrency(retailPrice.coerceAtLeast(0.0)),
+            WholesalePrice = NumberFormatter.roundCurrency(effectiveMajorPrice.coerceAtLeast(0.0)),
+            AlertThreshold = alertThreshold.coerceAtLeast(0.0),
+            OpeningQuantityMinor = totalOpeningMinor,
+            OpeningCost = NumberFormatter.roundCurrency(costPrice.coerceAtLeast(0.0)),
+            CreatedAt = now
+        )
+        return inventoryRepo.saveProduct(product, totalOpeningMinor)
     }
 
     fun deleteProduct(id: Long, reason: String? = null) {
@@ -256,10 +245,13 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun commitStockAdjustment(productId: Long, actualQty: Double, currentQty: Double, notes: String? = null) {
-        viewModelScope.launch {
-            inventoryRepo.commitStockAdjustment(productId, actualQty, currentQty, notes)
-        }
+    suspend fun commitStockAdjustmentAsync(
+        productId: Long,
+        actualQty: Double,
+        currentQty: Double,
+        notes: String? = null
+    ): Result<Long> {
+        return inventoryRepo.commitStockAdjustment(productId, actualQty, currentQty, notes)
     }
 }
 
@@ -335,8 +327,8 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         val index = cartLines.indexOfFirst { it.productId == productId }
         if (index >= 0) {
             cartLines[index] = cartLines[index].copy(
-                minorUnitPrice = newMinorPrice.coerceAtLeast(0.0),
-                majorUnitPrice = newMajorPrice.coerceAtLeast(0.0)
+                minorUnitPrice = NumberFormatter.roundCurrency(newMinorPrice.coerceAtLeast(0.0)),
+                majorUnitPrice = NumberFormatter.roundCurrency(newMajorPrice.coerceAtLeast(0.0))
             )
         }
     }
@@ -386,15 +378,17 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         val prefix = settings.invoicePrefix.ifBlank { "INV" }
         val invoiceNo = "$prefix-$dateCode-${(System.currentTimeMillis() % 10000)}"
 
-        val subtotal = cartLines.sumOf { it.calculatedLineTotal }
-        val safeDiscount = discount.coerceIn(0.0, subtotal)
-        val finalTotal = kotlin.math.max(0.0, subtotal - safeDiscount)
-        val actualPaid = when (paymentType) {
-            "Cash" -> finalTotal
-            "Credit" -> 0.0
-            else -> paidAmount.coerceIn(0.0, finalTotal)
-        }
-        val remaining = kotlin.math.max(0.0, finalTotal - actualPaid)
+        val subtotal = NumberFormatter.roundCurrency(cartLines.sumOf { it.calculatedLineTotal })
+        val safeDiscount = NumberFormatter.roundCurrency(discount.coerceIn(0.0, subtotal))
+        val finalTotal = NumberFormatter.roundCurrency(kotlin.math.max(0.0, subtotal - safeDiscount))
+        val actualPaid = NumberFormatter.roundCurrency(
+            when (paymentType) {
+                "Cash" -> finalTotal
+                "Credit" -> 0.0
+                else -> paidAmount.coerceIn(0.0, finalTotal)
+            }
+        )
+        val remaining = NumberFormatter.roundCurrency(kotlin.math.max(0.0, finalTotal - actualPaid))
 
         val invoice = InvoiceEntity(
             InvoiceNumber = invoiceNo,
@@ -425,9 +419,9 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 IsMajorUnit = item.majorQuantity > 0,
                 ConversionFactor = item.unitFactor,
                 QuantityMinor = totalMinorQty,
-                UnitPrice = effectiveUnitPrice,
-                LineCost = item.minorUnitCost,
-                LineTotal = item.calculatedLineTotal,
+                UnitPrice = NumberFormatter.roundCurrency(effectiveUnitPrice, 4),
+                LineCost = NumberFormatter.roundCurrency(item.minorUnitCost, 4),
+                LineTotal = NumberFormatter.roundCurrency(item.calculatedLineTotal, 2),
                 SortOrder = index + 1
             )
         }
@@ -496,17 +490,12 @@ class VouchersViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun createVoucher(
         personId: Long,
-        type: String, // Receive, Payment
+        type: String,
         amount: Double,
         statement: String,
         refNumber: String? = null
     ): Result<Long> {
-        return try {
-            val id = voucherRepo.createVoucher(personId, type, amount, statement, refNumber)
-            Result.success(id)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        return voucherRepo.createVoucher(personId, type, amount, statement, refNumber)
     }
 }
 
@@ -517,24 +506,28 @@ class ExpensesViewModel(application: Application) : AndroidViewModel(application
     val expenses: StateFlow<List<ExpenseEntity>> = expenseRepo.getAllExpenses()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun saveExpense(amount: Double, statement: String, category: String, source: String, photoUri: String? = null) {
-        viewModelScope.launch {
-            val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-            val fullStatement = if (category.isNotBlank() && !statement.startsWith("[$category]")) {
-                "[$category] ${statement.trim()}"
-            } else {
-                statement.trim()
-            }
-            val entity = ExpenseEntity(
-                ExpenseDate = now,
-                Amount = amount,
-                Statement = fullStatement,
-                PaymentSource = source.trim().ifBlank { "الخزينة الرئيسية" },
-                ReceiptPhotoUri = photoUri,
-                CreatedAt = now
-            )
-            expenseRepo.saveExpense(entity)
+    suspend fun saveExpenseAsync(
+        amount: Double,
+        statement: String,
+        category: String,
+        source: String,
+        photoUri: String? = null
+    ): Result<Long> {
+        val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+        val fullStatement = if (category.isNotBlank() && !statement.startsWith("[$category]")) {
+            "[$category] ${statement.trim()}"
+        } else {
+            statement.trim()
         }
+        val entity = ExpenseEntity(
+            ExpenseDate = now,
+            Amount = NumberFormatter.roundCurrency(amount),
+            Statement = fullStatement,
+            PaymentSource = source.trim().ifBlank { "الخزينة الرئيسية" },
+            ReceiptPhotoUri = photoUri,
+            CreatedAt = now
+        )
+        return expenseRepo.saveExpense(entity)
     }
 
     fun deleteExpense(id: Long, reason: String? = null) {
@@ -553,7 +546,7 @@ class ReportsViewModel(application: Application) : AndroidViewModel(application)
     val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityDao.getIdentity()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    private val _selectedPeriod = MutableStateFlow("ALL") // ALL, TODAY, WEEK, MONTH, YEAR
+    private val _selectedPeriod = MutableStateFlow("ALL")
     val selectedPeriod = _selectedPeriod.asStateFlow()
 
     val summary: StateFlow<FinancialReportSummary> = _selectedPeriod

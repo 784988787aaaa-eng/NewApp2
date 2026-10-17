@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -71,14 +72,17 @@ class PurchasesViewModel(application: android.app.Application) : AndroidViewMode
     ): Result<Long> {
         val safeFactor = if (product.UnitFactor <= 0.0 || product.LargeUnit.isNullOrBlank()) 1.0 else product.UnitFactor
         val totalMinorQty = if (useMajorUnit && safeFactor > 1.0) quantity * safeFactor else quantity
-        val minorCost = if (useMajorUnit && safeFactor > 1.0) {
-            UnitConversionEngine.minorCostFromMajorCost(unitPurchaseCost, safeFactor)
-        } else {
-            unitPurchaseCost
-        }
-        val total = quantity * unitPurchaseCost
-        val safePaid = paidCash.coerceIn(0.0, total)
-        val remaining = kotlin.math.max(0.0, total - safePaid)
+        val minorCost = NumberFormatter.roundCurrency(
+            if (useMajorUnit && safeFactor > 1.0) {
+                UnitConversionEngine.minorCostFromMajorCost(unitPurchaseCost, safeFactor)
+            } else {
+                unitPurchaseCost
+            },
+            4
+        )
+        val total = NumberFormatter.roundCurrency(quantity * unitPurchaseCost)
+        val safePaid = NumberFormatter.roundCurrency(paidCash.coerceIn(0.0, total))
+        val remaining = NumberFormatter.roundCurrency(kotlin.math.max(0.0, total - safePaid))
 
         if (remaining > 0.0 && supplier == null) {
             return Result.failure(Exception("المشتريات الآجلة أو الجزئية تتطلب اختيار مورد مسجل لقيد الالتزام له."))
@@ -143,11 +147,11 @@ fun PurchasesScreen(
     val products by viewModel.products.collectAsState()
     val scope = rememberCoroutineScope()
 
-    var searchQuery by remember { mutableStateOf("") }
-    var showAddPurchaseSheet by remember { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var showAddPurchaseSheet by rememberSaveable { mutableStateOf(false) }
     var purchaseToReverse by remember { mutableStateOf<InvoiceEntity?>(null) }
-    var statusMessage by remember { mutableStateOf<String?>(null) }
-    var isStatusError by remember { mutableStateOf(false) }
+    var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var isStatusError by rememberSaveable { mutableStateOf(false) }
 
     val purchaseList = remember(allInvoices, searchQuery) {
         allInvoices
@@ -208,7 +212,7 @@ fun PurchasesScreen(
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                         modifier = Modifier
                             .height(38.dp)
-                            .bounceClick { showAddPurchaseSheet = true }
+                            .pressScaleEffect()
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -331,17 +335,23 @@ fun PurchasesScreen(
             item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
-        // نافذة إضافة فاتورة مشتريات العائمة فوق لوحة المفاتيح
+        // نافذة إضافة فاتورة مشتريات العائمة فوق لوحة المفاتيح مع حماية كاملة للبيانات
         if (showAddPurchaseSheet) {
             FloatingModalDialog(onDismissRequest = { showAddPurchaseSheet = false }) {
+                var isSavingPurchase by remember { mutableStateOf(false) }
                 var formError by remember { mutableStateOf<String?>(null) }
+
                 AddPurchaseSheetContent(
                     suppliers = suppliers,
                     products = products,
+                    isSaving = isSavingPurchase,
                     errorMessage = formError,
                     onCommit = { supplier, product, useMajor, qty, cost, paid, notes ->
+                        isSavingPurchase = true
+                        formError = null
                         scope.launch {
                             val res = viewModel.createPurchase(supplier, product, useMajor, qty, cost, paid, notes)
+                            isSavingPurchase = false
                             if (res.isSuccess) {
                                 showAddPurchaseSheet = false
                                 isStatusError = false
@@ -382,6 +392,7 @@ fun PurchasesScreen(
 fun AddPurchaseSheetContent(
     suppliers: List<AccountBalanceSummary>,
     products: List<ProductStockItem>,
+    isSaving: Boolean = false,
     errorMessage: String?,
     onCommit: (
         supplier: AccountBalanceSummary?,
@@ -399,25 +410,27 @@ fun AddPurchaseSheetContent(
     var useMajorUnit by remember(selectedProduct) {
         mutableStateOf(selectedProduct != null && !selectedProduct!!.LargeUnit.isNullOrBlank() && selectedProduct!!.UnitFactor > 1.0)
     }
-    var quantityText by remember { mutableStateOf("1") }
-    var costPriceText by remember(selectedProduct, useMajorUnit) {
+    var quantityText by rememberSaveable { mutableStateOf("1") }
+    var costPriceText by rememberSaveable(selectedProduct?.Id, useMajorUnit) {
         val p = selectedProduct
         val initialCost = if (p == null) 0.0 else if (useMajorUnit && p.UnitFactor > 1.0) (p.CostPrice * p.UnitFactor) else p.CostPrice
         mutableStateOf(if (initialCost > 0.0) NumberFormatter.formatQuantity(initialCost) else "")
     }
-    var paymentType by remember { mutableStateOf("Cash") }
-    var paidCashText by remember { mutableStateOf("") }
-    var notes by remember { mutableStateOf("") }
+    var paymentType by rememberSaveable { mutableStateOf("Cash") }
+    var paidCashText by rememberSaveable { mutableStateOf("") }
+    var notes by rememberSaveable { mutableStateOf("") }
 
     val qty = NumberFormatter.parseDouble(quantityText, 0.0)
     val unitCost = NumberFormatter.parseDouble(costPriceText, 0.0)
-    val total = qty * unitCost
-    val paid = when (paymentType) {
-        "Cash" -> total
-        "Credit" -> 0.0
-        else -> NumberFormatter.parseDouble(paidCashText, 0.0).coerceIn(0.0, total)
-    }
-    val remaining = (total - paid).coerceAtLeast(0.0)
+    val total = NumberFormatter.roundCurrency(qty * unitCost)
+    val paid = NumberFormatter.roundCurrency(
+        when (paymentType) {
+            "Cash" -> total
+            "Credit" -> 0.0
+            else -> NumberFormatter.parseDouble(paidCashText, 0.0).coerceIn(0.0, total)
+        }
+    )
+    val remaining = NumberFormatter.roundCurrency((total - paid).coerceAtLeast(0.0))
 
     val requiresSupplier = remaining > 0.0 && selectedSupplier == null
     val isFormValid = selectedProduct != null && qty > 0.0 && unitCost > 0.0 && !requiresSupplier
@@ -429,7 +442,9 @@ fun AddPurchaseSheetContent(
         onDismiss = onDismiss,
         primaryButtonText = "تأكيد وتوريد الفاتورة",
         isPrimaryEnabled = isFormValid,
+        isSaving = isSaving,
         errorMessage = errorMessage,
+        hasUnsavedChanges = quantityText != "1" || paidCashText.isNotBlank() || notes.isNotBlank(),
         onPrimaryClick = {
             val prod = selectedProduct
             if (isFormValid && prod != null) {

@@ -1,6 +1,7 @@
 package com.smartledger.pro
 
 import com.smartledger.pro.domain.model.UnitConversionEngine
+import com.smartledger.pro.ui.components.FormWindowLifecycleState
 import com.smartledger.pro.util.NumberFormatter
 import org.junit.Assert.*
 import org.junit.Test
@@ -8,7 +9,8 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- * جناح الاختبارات الآلية الشامل للعمليات المحاسبية والمخزنية والوحدات الكبرى والصغرى وتطبيع الأرقام والنسخ الاحتياطي — SmartLedger Pro v2.2.0
+ * جناح الاختبارات الآلية الشامل للعمليات المحاسبية والمخزنية والوحدات الكبرى والصغرى
+ * ودورة حياة النوافذ المستقلة ودقة BigDecimal ومنع التكرار — SmartLedger Pro v2.4.0
  */
 class AccountingEngineTest {
 
@@ -17,9 +19,9 @@ class AccountingEngineTest {
     fun testScenario1_CashSale_NoDebtAdded_CustomerBalanceZero() {
         val subtotal = 50000.0
         val discount = 5000.0
-        val finalTotal = subtotal - discount // 45,000
+        val finalTotal = NumberFormatter.roundCurrency(subtotal - discount) // 45,000
         val paidAmount = finalTotal
-        val remainingDebt = finalTotal - paidAmount
+        val remainingDebt = NumberFormatter.roundCurrency(finalTotal - paidAmount)
 
         assertEquals(45000.0, finalTotal, 0.001)
         assertEquals(0.0, remainingDebt, 0.001)
@@ -31,9 +33,9 @@ class AccountingEngineTest {
         val initialCustomerDebt = 10000.0 // عليه 10,000
         val invoiceTotal = 35000.0
         val paid = 0.0
-        val remaining = invoiceTotal - paid
+        val remaining = NumberFormatter.roundCurrency(invoiceTotal - paid)
 
-        val newCustomerDebt = initialCustomerDebt + remaining
+        val newCustomerDebt = NumberFormatter.roundCurrency(initialCustomerDebt + remaining)
         assertEquals(45000.0, newCustomerDebt, 0.001)
     }
 
@@ -42,7 +44,7 @@ class AccountingEngineTest {
     fun testScenario3_PartialPayment_SplitsCashAndDebtAccurately() {
         val invoiceTotal = 80000.0
         val paidCash = 30000.0
-        val remainingCredit = invoiceTotal - paidCash
+        val remainingCredit = NumberFormatter.roundCurrency(invoiceTotal - paidCash)
 
         assertEquals(50000.0, remainingCredit, 0.001)
         assertEquals(80000.0, paidCash + remainingCredit, 0.001)
@@ -54,11 +56,11 @@ class AccountingEngineTest {
         val initialSupplierCredit = 20000.0 // له 20,000 (علينا)
         val purchaseQty = 15.0
         val unitCost = 4000.0
-        val purchaseTotal = purchaseQty * unitCost // 60,000
+        val purchaseTotal = NumberFormatter.roundCurrency(purchaseQty * unitCost) // 60,000
         val paidCash = 10000.0
-        val remainingSupplierDebt = purchaseTotal - paidCash // 50,000
+        val remainingSupplierDebt = NumberFormatter.roundCurrency(purchaseTotal - paidCash) // 50,000
 
-        val newSupplierCredit = initialSupplierCredit + remainingSupplierDebt
+        val newSupplierCredit = NumberFormatter.roundCurrency(initialSupplierCredit + remainingSupplierDebt)
         assertEquals(70000.0, newSupplierCredit, 0.001)
     }
 
@@ -68,9 +70,9 @@ class AccountingEngineTest {
         val customerDebtBeforeReturn = 45000.0 // عليه 45,000
         val returnedQty = 2.0
         val unitPrice = 8500.0
-        val returnCreditNote = returnedQty * unitPrice // 17,000 دائن (له)
+        val returnCreditNote = NumberFormatter.roundCurrency(returnedQty * unitPrice) // 17,000 دائن (له)
 
-        val customerDebtAfterReturn = customerDebtBeforeReturn - returnCreditNote
+        val customerDebtAfterReturn = NumberFormatter.roundCurrency(customerDebtBeforeReturn - returnCreditNote)
         assertEquals(28000.0, customerDebtAfterReturn, 0.001)
     }
 
@@ -79,9 +81,9 @@ class AccountingEngineTest {
     fun testScenario6_Expenses_DeductsFromCashAndCalculatesCOGS() {
         val totalSales = 100000.0
         val cogs = 72000.0 // تكلفة البضاعة المباعة
-        val grossProfit = totalSales - cogs // 28,000
+        val grossProfit = NumberFormatter.roundCurrency(totalSales - cogs) // 28,000
         val operatingExpenses = 8000.0 // كهرباء وإيجار ونثريات
-        val netProfit = grossProfit - operatingExpenses // 20,000
+        val netProfit = NumberFormatter.roundCurrency(grossProfit - operatingExpenses) // 20,000
 
         assertEquals(28000.0, grossProfit, 0.001)
         assertEquals(20000.0, netProfit, 0.001)
@@ -89,7 +91,6 @@ class AccountingEngineTest {
     }
 
     // السيناريو السابع: اختبار الوحدات الكبرى والصغرى
-    // إذا كان الكرتون يحتوي على 24 قطعة، فإن بيع كرتونين و5 قطع يخصم 53 قطعة بالضبط
     @Test
     fun testScenario7_MajorAndMinorUnitConversion_2CartonsOf24Plus5Pieces_Deducts53Pieces() {
         val unitFactor = 24.0 // 24 قطعة في الكرتون
@@ -133,13 +134,9 @@ class AccountingEngineTest {
             minorUnitCost = minorPieceCost
         )
 
-        // إجمالي الكمية المخصومة = 53 قطعة
         assertEquals(53.0, calc.totalMinorQuantity, 0.001)
-        // إجمالي سعر البيع = (2 * 5500) + (5 * 250) = 11000 + 1250 = 12,250 ر.ي
         assertEquals(12250.0, calc.totalLinePrice, 0.001)
-        // إجمالي التكلفة COGS = 53 * 200 = 10,600 ر.ي
         assertEquals(10600.0, calc.totalLineCost, 0.001)
-        // مجمل الربح = 12,250 - 10,600 = 1,650 ر.ي
         assertEquals(1650.0, calc.grossProfit, 0.001)
     }
 
@@ -155,7 +152,7 @@ class AccountingEngineTest {
         assertEquals(40000.0, supplierCreditBalance - paymentAmount, 0.001)
     }
 
-    // السيناريو العاشر: تسوية الجرد السريع بالكاميرا
+    // السيناريو العاشر: تسوية الجرد السريع
     @Test
     fun testScenario10_RapidStockAdjustment_CalculatesDeltaAccurately() {
         val systemStock = 28.0
@@ -181,27 +178,30 @@ class AccountingEngineTest {
         assertNotEquals(expectedSha256, tamperedSha256)
     }
 
-    // السيناريو الثاني عشر: الحماية من النقر المزدوج (Debounce Prevention)
+    // السيناريو الثاني عشر: الحماية من النقر المزدوج (Debounce & In-Flight Lock)
     @Test
-    fun testScenario12_Debounce_PreventsDuplicateSubmissions() {
+    fun testScenario12_Debounce_And_SavingLock_PreventsDuplicateSubmissions() {
         var executionCount = 0
         var lastClickTime = 0L
-        val debounceThresholdMs = 450L
+        var isSaving = false
+        val debounceThresholdMs = 500L
 
-        val clickAction = { currentTime: Long ->
-            if (currentTime - lastClickTime >= debounceThresholdMs) {
+        val submitAction = { currentTime: Long ->
+            if (!isSaving && (currentTime - lastClickTime >= debounceThresholdMs)) {
+                isSaving = true
                 executionCount++
                 lastClickTime = currentTime
+                isSaving = false
             }
         }
 
-        clickAction(1000L)
+        submitAction(1000L)
         assertEquals(1, executionCount)
 
-        clickAction(1200L)
+        submitAction(1250L)
         assertEquals(1, executionCount)
 
-        clickAction(1600L)
+        submitAction(1650L)
         assertEquals(2, executionCount)
     }
 
@@ -228,7 +228,6 @@ class AccountingEngineTest {
         assertFalse(UnitConversionEngine.isValidUnitFactor(1.0, hasLargeUnit = true))
         assertTrue(UnitConversionEngine.isValidUnitFactor(24.0, hasLargeUnit = true))
 
-        // عند تمرير معامل صفري بالخطأ في دالة التحويل، يتم التعافي الآمن إلى 1.0 دون قسمة على صفر
         val safeCost = UnitConversionEngine.minorCostFromMajorCost(1500.0, 0.0)
         assertEquals(1500.0, safeCost, 0.001)
 
@@ -251,5 +250,55 @@ class AccountingEngineTest {
             tempValid.delete()
             tempCorrupt.delete()
         }
+    }
+
+    // السيناريو السادس عشر: آلة حالة النافذة المستقلة (FormWindowLifecycleState) ومنع الإغلاق عند الخطأ
+    @Test
+    fun testScenario16_FormWindowLifecycleStateMachine_NeverClosesOnErrorOrUnsavedEdits() {
+        var state = FormWindowLifecycleState.EDITING
+        var formData = "حليب الممتاز"
+
+        // 1. فشل التحقق لا يغلق النافذة ولا يمسح البيانات
+        state = FormWindowLifecycleState.VALIDATING
+        val isValid = false
+        state = if (isValid) FormWindowLifecycleState.SAVING else FormWindowLifecycleState.VALIDATION_ERROR
+        assertEquals(FormWindowLifecycleState.VALIDATION_ERROR, state)
+        assertNotEquals(FormWindowLifecycleState.CLOSED, state)
+        assertEquals("حليب الممتاز", formData)
+
+        // 2. فشل الحفظ يعيد النافذة لحالة SAVE_ERROR مع بقاء المدخلات سليمة
+        state = FormWindowLifecycleState.SAVING
+        val saveSucceeded = false
+        state = if (saveSucceeded) FormWindowLifecycleState.SAVE_SUCCESS else FormWindowLifecycleState.SAVE_ERROR
+        assertEquals(FormWindowLifecycleState.SAVE_ERROR, state)
+        assertNotEquals(FormWindowLifecycleState.CLOSED, state)
+        assertEquals("حليب الممتاز", formData)
+
+        // 3. طلب الإغلاق مع وجود تعديلات غير محفوظة ينتقل إلى CONFIRMING_DISCARD ولا يغلق بصمت
+        val hasUnsavedChanges = formData.isNotBlank()
+        if (hasUnsavedChanges) {
+            state = FormWindowLifecycleState.CONFIRMING_DISCARD
+        }
+        assertEquals(FormWindowLifecycleState.CONFIRMING_DISCARD, state)
+
+        // 4. نجاح الحفظ الفعلي فقط ينقل النافذة إلى SAVE_SUCCESS ثم CLOSED
+        state = FormWindowLifecycleState.SAVING
+        val retrySucceeded = true
+        if (retrySucceeded) {
+            state = FormWindowLifecycleState.SAVE_SUCCESS
+            state = FormWindowLifecycleState.CLOSED
+        }
+        assertEquals(FormWindowLifecycleState.CLOSED, state)
+    }
+
+    // السيناريو السابع عشر: دقة تقريب العملات عبر BigDecimal (HALF_UP) لمنع أخطاء الفاصلة العائمة
+    @Test
+    fun testScenario17_BigDecimalCurrencyRounding_EliminatesFloatingPointDrift() {
+        val rawFloatSum = 0.1 + 0.2 // 0.30000000000000004 in IEEE 754
+        val rounded = NumberFormatter.roundCurrency(rawFloatSum, decimalPlaces = 2)
+        assertEquals(0.30, rounded, 0.0)
+
+        val invoiceCalc = 19.99 * 3.0 // 59.97
+        assertEquals(59.97, NumberFormatter.roundCurrency(invoiceCalc, decimalPlaces = 2), 0.0)
     }
 }

@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,22 +54,22 @@ fun PosSalesScreen(
     val prefsRepo = remember { AppPreferencesRepository.getInstance(context) }
     val settings by prefsRepo.settings.collectAsState()
 
-    var quickSearchQuery by remember { mutableStateOf("") }
-    var showProductPickerSheet by remember { mutableStateOf(false) }
-    var showCustomerPickerSheet by remember { mutableStateOf(false) }
-    var showCheckoutSheet by remember { mutableStateOf(false) }
-    var showInvoicesHistorySheet by remember { mutableStateOf(false) }
-    var showBarcodeScanner by remember { mutableStateOf(false) }
-    var showClearCartConfirm by remember { mutableStateOf(false) }
+    var quickSearchQuery by rememberSaveable { mutableStateOf("") }
+    var showProductPickerSheet by rememberSaveable { mutableStateOf(false) }
+    var showCustomerPickerSheet by rememberSaveable { mutableStateOf(false) }
+    var showCheckoutSheet by rememberSaveable { mutableStateOf(false) }
+    var showInvoicesHistorySheet by rememberSaveable { mutableStateOf(false) }
+    var showBarcodeScanner by rememberSaveable { mutableStateOf(false) }
+    var showClearCartConfirm by rememberSaveable { mutableStateOf(false) }
 
     var lineToEditQuantityOrPrice by remember { mutableStateOf<CartLineItem?>(null) }
     var lastRemovedItem by remember { mutableStateOf<CartLineItem?>(null) }
-    var statusMessage by remember { mutableStateOf<String?>(null) }
-    var isStatusError by remember { mutableStateOf(false) }
+    var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var isStatusError by rememberSaveable { mutableStateOf(false) }
 
     var completedInvoiceResult by remember { mutableStateOf<Pair<InvoiceEntity, List<Triple<String, String, Double>>>?>(null) }
 
-    val subtotal = cartLines.sumOf { it.calculatedLineTotal }
+    val subtotal = NumberFormatter.roundCurrency(cartLines.sumOf { it.calculatedLineTotal })
 
     val knownBarcodes = remember(products) {
         products.mapNotNull { p ->
@@ -117,7 +118,7 @@ fun PosSalesScreen(
                             shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                             border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.height(36.dp)
+                            modifier = Modifier.height(36.dp).pressScaleEffect()
                         ) {
                             Icon(Icons.Default.History, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -281,7 +282,7 @@ fun PosSalesScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
                                 onClick = { showProductPickerSheet = true },
-                                modifier = Modifier.height(42.dp),
+                                modifier = Modifier.height(42.dp).pressScaleEffect(),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
                                 contentPadding = PaddingValues(horizontal = 12.dp)
@@ -298,9 +299,7 @@ fun PosSalesScreen(
                                 enabled = cartLines.isNotEmpty(),
                                 modifier = Modifier
                                     .height(42.dp)
-                                    .bounceClick(enabled = cartLines.isNotEmpty()) {
-                                        showCheckoutSheet = true
-                                    },
+                                    .pressScaleEffect(enabled = cartLines.isNotEmpty()),
                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                                 contentPadding = PaddingValues(horizontal = 16.dp)
@@ -402,10 +401,10 @@ fun PosSalesScreen(
         if (lineToEditQuantityOrPrice != null) {
             val targetLine = lineToEditQuantityOrPrice!!
             FloatingModalDialog(onDismissRequest = { lineToEditQuantityOrPrice = null }) {
-                var minorQtyText by remember(targetLine) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.minorQuantity)) }
-                var majorQtyText by remember(targetLine) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.majorQuantity)) }
-                var minorPriceText by remember(targetLine) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.minorUnitPrice)) }
-                var majorPriceText by remember(targetLine) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.majorUnitPrice)) }
+                var minorQtyText by rememberSaveable(targetLine.productId) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.minorQuantity)) }
+                var majorQtyText by rememberSaveable(targetLine.productId) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.majorQuantity)) }
+                var minorPriceText by rememberSaveable(targetLine.productId) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.minorUnitPrice)) }
+                var majorPriceText by rememberSaveable(targetLine.productId) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.majorUnitPrice)) }
                 val hasMajor = !targetLine.largeUnit.isNullOrBlank() && targetLine.unitFactor > 1.0
 
                 FormSheetContainer(
@@ -471,7 +470,7 @@ fun PosSalesScreen(
         // نافذة اختيار الأصناف العائمة فوق لوحة المفاتيح
         if (showProductPickerSheet) {
             FloatingModalDialog(onDismissRequest = { showProductPickerSheet = false }) {
-                var pickerSearch by remember { mutableStateOf("") }
+                var pickerSearch by rememberSaveable { mutableStateOf("") }
                 val filtered = remember(products, pickerSearch) {
                     if (pickerSearch.isBlank()) products
                     else products.filter {
@@ -545,7 +544,8 @@ fun PosSalesScreen(
                                                     viewModel.addItemToCart(product, asMajorUnit = true)
                                                 },
                                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                                shape = RoundedCornerShape(8.dp)
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier.pressScaleEffect()
                                             ) {
                                                 Text(
                                                     text = "+1 ${product.LargeUnit}",
@@ -561,7 +561,8 @@ fun PosSalesScreen(
                                             },
                                             colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                            shape = RoundedCornerShape(8.dp)
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.pressScaleEffect()
                                         ) {
                                             Text(
                                                 text = "+1 ${product.SmallUnit}",
@@ -581,7 +582,7 @@ fun PosSalesScreen(
         // نافذة اختيار العميل العائمة فوق لوحة المفاتيح
         if (showCustomerPickerSheet) {
             FloatingModalDialog(onDismissRequest = { showCustomerPickerSheet = false }) {
-                var custSearch by remember { mutableStateOf("") }
+                var custSearch by rememberSaveable { mutableStateOf("") }
                 val filteredCustomers = remember(customers, custSearch) {
                     if (custSearch.isBlank()) customers
                     else customers.filter {
@@ -787,7 +788,7 @@ fun PosSalesScreen(
                                 }
                             },
                             enabled = !isPrinting,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).pressScaleEffect(enabled = !isPrinting),
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(16.dp), tint = SmartLedgerColors.AccentLight)
@@ -813,7 +814,7 @@ fun PosSalesScreen(
                                 )
                                 ThermalPrinterHelper.shareTextSafely(context, "فاتورة ${inv.InvoiceNumber}", text)
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).pressScaleEffect(),
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp), tint = SmartLedgerColors.StateSuccess)
@@ -899,7 +900,7 @@ fun PosSalesScreen(
                                                     border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateDangerBorder)),
                                                     shape = RoundedCornerShape(6.dp),
                                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                                    modifier = Modifier.height(32.dp)
+                                                    modifier = Modifier.height(32.dp).pressScaleEffect()
                                                 ) {
                                                     Text("إرجاع الفاتورة", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                                 }
@@ -1118,24 +1119,26 @@ fun CheckoutSheetContent(
     onCommit: (payType: String, discount: Double, paid: Double, notes: String?) -> Unit,
     onClose: () -> Unit
 ) {
-    var paymentType by remember { mutableStateOf("Cash") }
-    var discountText by remember { mutableStateOf("") }
-    var paidAmountText by remember { mutableStateOf("") }
-    var receivedCashText by remember { mutableStateOf("") }
-    var notes by remember { mutableStateOf("") }
+    var paymentType by rememberSaveable { mutableStateOf("Cash") }
+    var discountText by rememberSaveable { mutableStateOf("") }
+    var paidAmountText by rememberSaveable { mutableStateOf("") }
+    var receivedCashText by rememberSaveable { mutableStateOf("") }
+    var notes by rememberSaveable { mutableStateOf("") }
 
-    val discountVal = NumberFormatter.parseDouble(discountText, 0.0).coerceIn(0.0, subtotalAmount)
-    val finalTotal = (subtotalAmount - discountVal).coerceAtLeast(0.0)
+    val discountVal = NumberFormatter.roundCurrency(NumberFormatter.parseDouble(discountText, 0.0).coerceIn(0.0, subtotalAmount))
+    val finalTotal = NumberFormatter.roundCurrency((subtotalAmount - discountVal).coerceAtLeast(0.0))
 
-    val paidAmount = when (paymentType) {
-        "Cash" -> finalTotal
-        "Credit" -> 0.0
-        else -> NumberFormatter.parseDouble(paidAmountText, 0.0).coerceIn(0.0, finalTotal)
-    }
-    val remaining = (finalTotal - paidAmount).coerceAtLeast(0.0)
+    val paidAmount = NumberFormatter.roundCurrency(
+        when (paymentType) {
+            "Cash" -> finalTotal
+            "Credit" -> 0.0
+            else -> NumberFormatter.parseDouble(paidAmountText, 0.0).coerceIn(0.0, finalTotal)
+        }
+    )
+    val remaining = NumberFormatter.roundCurrency((finalTotal - paidAmount).coerceAtLeast(0.0))
 
     val receivedCash = NumberFormatter.parseDouble(receivedCashText, finalTotal)
-    val changeDue = if (paymentType == "Cash" && receivedCash > finalTotal) (receivedCash - finalTotal) else 0.0
+    val changeDue = if (paymentType == "Cash" && receivedCash > finalTotal) NumberFormatter.roundCurrency(receivedCash - finalTotal) else 0.0
 
     val requiresNamedCustomer = (paymentType == "Credit" || paymentType == "Partial") && selectedCustomer == null
     val exceedsCreditLimit = selectedCustomer != null &&
@@ -1151,6 +1154,7 @@ fun CheckoutSheetContent(
         isPrimaryEnabled = finalTotal > 0.0 && !requiresNamedCustomer,
         isSaving = isSaving,
         errorMessage = errorMessage,
+        hasUnsavedChanges = discountText.isNotBlank() || paidAmountText.isNotBlank() || notes.isNotBlank(),
         onPrimaryClick = {
             if (!requiresNamedCustomer) {
                 onCommit(paymentType, discountVal, paidAmount, notes)
@@ -1189,7 +1193,7 @@ fun CheckoutSheetContent(
                         colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.height(32.dp)
+                        modifier = Modifier.height(32.dp).pressScaleEffect()
                     ) {
                         Text("اختيار عميل", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                     }

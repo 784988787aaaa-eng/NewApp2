@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,7 +28,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smartledger.pro.data.local.dao.FinancialReportSummary
 import com.smartledger.pro.ui.components.FilterChipRow
 import com.smartledger.pro.ui.components.StatusFeedbackBanner
-import com.smartledger.pro.ui.components.bounceClick
+import com.smartledger.pro.ui.components.pressScaleEffect
 import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
 import com.smartledger.pro.ui.theme.SmartLedgerTokens
@@ -46,8 +47,8 @@ fun ReportsScreen(
     val identity by viewModel.businessIdentity.collectAsState()
     val context = LocalContext.current
 
-    var statusBanner by remember { mutableStateOf<String?>(null) }
-    var isErrorBanner by remember { mutableStateOf(false) }
+    var statusBanner by rememberSaveable { mutableStateOf<String?>(null) }
+    var isErrorBanner by rememberSaveable { mutableStateOf(false) }
 
     val periodLabel = when (selectedPeriod) {
         "TODAY" -> "اليوم (${NumberFormatter.todayDate()})"
@@ -164,6 +165,7 @@ fun ReportsScreen(
                             .size(36.dp)
                             .clip(CircleShape)
                             .background(SmartLedgerColors.SurfaceCardElevated)
+                            .pressScaleEffect()
                     ) {
                         Icon(Icons.Default.Share, contentDescription = "مشاركة ملخص التقرير", tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(18.dp))
                     }
@@ -341,7 +343,7 @@ fun ReportsScreen(
                 }
             }
 
-            // 4. أزرار التصدير الفعلي (بدون أي أزرار شكلية)
+            // 4. أزرار التصدير الفعلي (بدون أي أزرار شكلية أو استدعاء مزدوج)
             item {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
@@ -352,10 +354,7 @@ fun ReportsScreen(
                         modifier = Modifier
                             .weight(1f)
                             .height(44.dp)
-                            .bounceClick {
-                                val fileName = "SmartLedger_Report_${NumberFormatter.todayDate()}.html"
-                                htmlReportLauncher.launch(fileName)
-                            },
+                            .pressScaleEffect(),
                         colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                     ) {
@@ -372,10 +371,7 @@ fun ReportsScreen(
                         modifier = Modifier
                             .weight(1f)
                             .height(44.dp)
-                            .bounceClick {
-                                val fileName = "SmartLedger_Report_${NumberFormatter.todayDate()}.csv"
-                                csvReportLauncher.launch(fileName)
-                            },
+                            .pressScaleEffect(),
                         border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateSuccess)),
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                     ) {

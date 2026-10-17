@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,6 +32,7 @@ import com.smartledger.pro.ui.theme.SmartLedgerColors
 import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.ui.viewmodels.InventoryViewModel
 import com.smartledger.pro.util.NumberFormatter
+import kotlinx.coroutines.launch
 
 @Composable
 fun InventoryScreen(
@@ -39,17 +41,25 @@ fun InventoryScreen(
     val products by viewModel.products.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val stockFilter by viewModel.stockFilter.collectAsState()
+    val scope = rememberCoroutineScope()
 
-    var showAddOrEditSheet by remember { mutableStateOf(false) }
-    var editingProduct by remember { mutableStateOf<ProductStockItem?>(null) }
-    var initialScannedBarcode by remember { mutableStateOf<String?>(null) }
+    var showAddOrEditSheet by rememberSaveable { mutableStateOf(false) }
+    var editingProductId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var initialScannedBarcode by rememberSaveable { mutableStateOf<String?>(null) }
 
-    var selectedProductForDetails by remember { mutableStateOf<ProductStockItem?>(null) }
+    var selectedProductIdForDetails by rememberSaveable { mutableStateOf<Long?>(null) }
     var productToDelete by remember { mutableStateOf<ProductStockItem?>(null) }
-    var showRapidStockCountSheet by remember { mutableStateOf(false) }
-    var initialStockCountProductId by remember { mutableStateOf<Long?>(null) }
-    var showBarcodeScanner by remember { mutableStateOf(false) }
-    var statusBanner by remember { mutableStateOf<String?>(null) }
+    var showRapidStockCountSheet by rememberSaveable { mutableStateOf(false) }
+    var initialStockCountProductId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var showBarcodeScanner by rememberSaveable { mutableStateOf(false) }
+    var statusBanner by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val editingProduct = remember(products, editingProductId) {
+        editingProductId?.let { id -> products.firstOrNull { it.Id == id } }
+    }
+    val selectedProductForDetails = remember(products, selectedProductIdForDetails) {
+        selectedProductIdForDetails?.let { id -> products.firstOrNull { it.Id == id } }
+    }
 
     val knownBarcodes = remember(products) {
         products.mapNotNull { p ->
@@ -97,7 +107,9 @@ fun InventoryScreen(
                             ),
                             shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                            modifier = Modifier.height(38.dp)
+                            modifier = Modifier
+                                .height(38.dp)
+                                .pressScaleEffect()
                         ) {
                             Icon(Icons.Default.FactCheck, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -106,7 +118,7 @@ fun InventoryScreen(
 
                         Button(
                             onClick = {
-                                editingProduct = null
+                                editingProductId = null
                                 initialScannedBarcode = null
                                 showAddOrEditSheet = true
                             },
@@ -115,11 +127,7 @@ fun InventoryScreen(
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             modifier = Modifier
                                 .height(38.dp)
-                                .bounceClick {
-                                    editingProduct = null
-                                    initialScannedBarcode = null
-                                    showAddOrEditSheet = true
-                                }
+                                .pressScaleEffect()
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -175,7 +183,7 @@ fun InventoryScreen(
                         subtitle = "اضغط على «صنف جديد» لتعريف البضاعة ووحداتها الصغرى والكبرى وأسعار البيع.",
                         actionText = "إضافة أول صنف",
                         onActionClick = {
-                            editingProduct = null
+                            editingProductId = null
                             initialScannedBarcode = null
                             showAddOrEditSheet = true
                         },
@@ -187,9 +195,9 @@ fun InventoryScreen(
                 items(products, key = { it.Id }) { product ->
                     ProductCardItem(
                         product = product,
-                        onClick = { selectedProductForDetails = product },
+                        onClick = { selectedProductIdForDetails = product.Id },
                         onEdit = {
-                            editingProduct = product
+                            editingProductId = product.Id
                             initialScannedBarcode = null
                             showAddOrEditSheet = true
                         },
@@ -215,9 +223,9 @@ fun InventoryScreen(
                     showBarcodeScanner = false
                     val existing = products.firstOrNull { it.Barcode.equals(scannedCode, ignoreCase = true) }
                     if (existing != null) {
-                        selectedProductForDetails = existing
+                        selectedProductIdForDetails = existing.Id
                     } else {
-                        editingProduct = null
+                        editingProductId = null
                         initialScannedBarcode = scannedCode
                         showAddOrEditSheet = true
                     }
@@ -228,23 +236,23 @@ fun InventoryScreen(
 
         // نافذة تفاصيل الصنف وسجل حركاته العائمة
         if (selectedProductForDetails != null) {
-            FloatingModalDialog(onDismissRequest = { selectedProductForDetails = null }) {
+            FloatingModalDialog(onDismissRequest = { selectedProductIdForDetails = null }) {
                 ProductDetailsSheetContent(
-                    product = selectedProductForDetails!!,
+                    product = selectedProductForDetails,
                     viewModel = viewModel,
                     onEdit = {
-                        val p = selectedProductForDetails
-                        selectedProductForDetails = null
-                        editingProduct = p
+                        val pId = selectedProductForDetails.Id
+                        selectedProductIdForDetails = null
+                        editingProductId = pId
                         showAddOrEditSheet = true
                     },
                     onAdjustStock = {
-                        val p = selectedProductForDetails
-                        selectedProductForDetails = null
-                        initialStockCountProductId = p?.Id
+                        val pId = selectedProductForDetails.Id
+                        selectedProductIdForDetails = null
+                        initialStockCountProductId = pId
                         showRapidStockCountSheet = true
                     },
-                    onClose = { selectedProductForDetails = null }
+                    onClose = { selectedProductIdForDetails = null }
                 )
             }
         }
@@ -252,52 +260,79 @@ fun InventoryScreen(
         // نافذة الجرد المخزني العائمة فوق لوحة المفاتيح
         if (showRapidStockCountSheet) {
             FloatingModalDialog(onDismissRequest = { showRapidStockCountSheet = false }) {
+                var isAdjusting by remember { mutableStateOf(false) }
+                var adjustError by remember { mutableStateOf<String?>(null) }
+
                 RapidStockCountSheetContent(
                     products = products,
                     initialProductId = initialStockCountProductId,
-                    onCommitAdjustment = { productId, actual, current, notes ->
-                        viewModel.commitStockAdjustment(productId, actual, current, notes)
-                        statusBanner = "تم تسجيل تسوية الجرد وحفظ أثر الحركة في سجل المخزون."
+                    isSaving = isAdjusting,
+                    errorMessage = adjustError,
+                    onCommitAdjustment = { productId, actual, current, notes, onSuccessStep ->
+                        isAdjusting = true
+                        adjustError = null
+                        scope.launch {
+                            val res = viewModel.commitStockAdjustmentAsync(productId, actual, current, notes)
+                            isAdjusting = false
+                            if (res.isSuccess) {
+                                statusBanner = "تم تسجيل تسوية الجرد وحفظ أثر الحركة في سجل المخزون."
+                                onSuccessStep()
+                            } else {
+                                adjustError = res.exceptionOrNull()?.message ?: "تعذر حفظ تسوية الجرد."
+                            }
+                        }
                     },
                     onClose = { showRapidStockCountSheet = false }
                 )
             }
         }
 
-        // نافذة إدخال المخزن العائمة الرشيقة والأنيقة (فوق لوحة المفاتيح)
+        // نافذة إدخال المخزن العائمة الرشيقة والأنيقة (فوق لوحة المفاتيح) مع حماية كاملة من الإغلاق عند الخطأ
         if (showAddOrEditSheet) {
             FloatingModalDialog(onDismissRequest = { showAddOrEditSheet = false }) {
+                var isSavingProduct by remember { mutableStateOf(false) }
+                var saveProductError by remember { mutableStateOf<String?>(null) }
+
                 AddProductDialog(
                     existingProduct = editingProduct,
                     initialBarcode = initialScannedBarcode,
                     allProducts = products,
+                    isSaving = isSavingProduct,
+                    saveErrorMessage = saveProductError,
                     onOpenExistingProduct = { duplicateProduct ->
                         showAddOrEditSheet = false
-                        selectedProductForDetails = duplicateProduct
+                        selectedProductIdForDetails = duplicateProduct.Id
                     },
                     onDismiss = { showAddOrEditSheet = false },
                     onSave = { id, barcode, name, warehouse, shelf, sUnit, lUnit, factor, cost, retail, wholesale, threshold, openMaj, openMin ->
-                        viewModel.saveProduct(
-                            id = id,
-                            barcode = barcode,
-                            name = name,
-                            categoryId = null,
-                            warehouse = warehouse,
-                            shelfLocation = shelf,
-                            smallUnit = sUnit,
-                            largeUnit = lUnit,
-                            unitFactor = factor,
-                            costPrice = cost,
-                            retailPrice = retail,
-                            wholesalePrice = wholesale,
-                            alertThreshold = threshold,
-                            openingMajorQty = openMaj,
-                            openingMinorQty = openMin,
-                            onComplete = {
+                        isSavingProduct = true
+                        saveProductError = null
+                        scope.launch {
+                            val res = viewModel.saveProductAsync(
+                                id = id,
+                                barcode = barcode,
+                                name = name,
+                                categoryId = null,
+                                warehouse = warehouse,
+                                shelfLocation = shelf,
+                                smallUnit = sUnit,
+                                largeUnit = lUnit,
+                                unitFactor = factor,
+                                costPrice = cost,
+                                retailPrice = retail,
+                                wholesalePrice = wholesale,
+                                alertThreshold = threshold,
+                                openingMajorQty = openMaj,
+                                openingMinorQty = openMin
+                            )
+                            isSavingProduct = false
+                            if (res.isSuccess) {
                                 showAddOrEditSheet = false
                                 statusBanner = if (id > 0) "تم تحديث بيانات الصنف «$name» بنجاح." else "تمت إضافة الصنف «$name» إلى المخزن بنجاح."
+                            } else {
+                                saveProductError = res.exceptionOrNull()?.message ?: "تعذر حفظ بيانات الصنف؛ يرجى التحقق من المدخلات والمحاولة مجدداً."
                             }
-                        )
+                        }
                     }
                 )
             }
@@ -579,7 +614,7 @@ fun ProductDetailsSheetContent(
 
         OutlinedButton(
             onClick = onAdjustStock,
-            modifier = Modifier.fillMaxWidth().height(40.dp),
+            modifier = Modifier.fillMaxWidth().height(40.dp).pressScaleEffect(),
             shape = RoundedCornerShape(10.dp),
             border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateWarning))
         ) {
@@ -654,7 +689,9 @@ fun ProductDetailsSheetContent(
 fun RapidStockCountSheetContent(
     products: List<ProductStockItem>,
     initialProductId: Long? = null,
-    onCommitAdjustment: (productId: Long, actual: Double, current: Double, notes: String?) -> Unit,
+    isSaving: Boolean = false,
+    errorMessage: String? = null,
+    onCommitAdjustment: (productId: Long, actual: Double, current: Double, notes: String?, onSuccessStep: () -> Unit) -> Unit,
     onClose: () -> Unit
 ) {
     val startIndex = remember(products, initialProductId) {
@@ -662,13 +699,13 @@ fun RapidStockCountSheetContent(
             products.indexOfFirst { it.Id == initialProductId }.coerceAtLeast(0)
         } else 0
     }
-    var selectedIndex by remember { mutableStateOf(startIndex) }
+    var selectedIndex by rememberSaveable { mutableStateOf(startIndex) }
     val currentProduct = products.getOrNull(selectedIndex)
 
-    var actualCountText by remember(currentProduct) {
+    var actualCountText by rememberSaveable(currentProduct?.Id) {
         mutableStateOf(NumberFormatter.formatQuantity(currentProduct?.CurrentStockMinor ?: 0.0))
     }
-    var adjustmentReason by remember(currentProduct) { mutableStateOf("") }
+    var adjustmentReason by rememberSaveable(currentProduct?.Id) { mutableStateOf("") }
 
     val actualCount = NumberFormatter.parseDouble(actualCountText, currentProduct?.CurrentStockMinor ?: 0.0).coerceAtLeast(0.0)
     val bookCount = currentProduct?.CurrentStockMinor ?: 0.0
@@ -681,13 +718,17 @@ fun RapidStockCountSheetContent(
         onDismiss = onClose,
         primaryButtonText = if (selectedIndex < products.size - 1) "اعتماد التسوية والتالي ↵" else "اعتماد التسوية وإنهاء الجرد ✔",
         isPrimaryEnabled = currentProduct != null,
+        isSaving = isSaving,
+        errorMessage = errorMessage,
+        hasUnsavedChanges = kotlin.math.abs(delta) > 0.001 || adjustmentReason.isNotBlank(),
         onPrimaryClick = {
             if (currentProduct != null) {
-                onCommitAdjustment(currentProduct.Id, actualCount, bookCount, adjustmentReason)
-                if (selectedIndex < products.size - 1) {
-                    selectedIndex++
-                } else {
-                    onClose()
+                onCommitAdjustment(currentProduct.Id, actualCount, bookCount, adjustmentReason) {
+                    if (selectedIndex < products.size - 1) {
+                        selectedIndex++
+                    } else {
+                        onClose()
+                    }
                 }
             }
         }
@@ -812,15 +853,18 @@ fun RapidStockCountSheetContent(
 
 /**
  * نافذة تعريف أو تعديل صنف بالمخزن (AddProductDialog)
- * - تعيد كافة حقول نافذة إدخال المخزن الشاملة (اسم الصنف، الباركود، الوحدة الصغرى والكبرى، معامل التحويل،
- *   تكلفة وسعر بيع الوحدة الصغرى، سعر بيع الوحدة الكبرى، الرصيد الافتتاحي بالوحدتين، وحد التنبيه)
- * - مرتبة بأناقة ورشاقة داخل 3 مجموعات بطاقات غير ملتصقة أو متشابكة، وتعمل كنافذة عائمة فوق لوحة المفاتيح.
+ * - تحتفظ بجميع حقول نافذة إدخال المخزن الشاملة (اسم الصنف، الباركود، الوحدة الصغرى والكبرى، معامل التحويل،
+ *   تكلفة وسعر بيع الوحدة الصغرى، سعر بيع الوحدة الكبرى، الرصيد الافتتاحي بالوحدتين، وحد التنبيه وموقع الرف)
+ * - تحفظ حالة المدخلات عبر rememberSaveable لمنع ضياع البيانات عند دوران الشاشة أو ظهور لوحة المفاتيح أو حدوث خطأ حفظ
+ * - لا تُغلق إلا بعد التأكد من نجاح الحفظ في قاعدة البيانات.
  */
 @Composable
 fun AddProductDialog(
     existingProduct: ProductStockItem?,
     initialBarcode: String?,
     allProducts: List<ProductStockItem>,
+    isSaving: Boolean = false,
+    saveErrorMessage: String? = null,
     onOpenExistingProduct: (ProductStockItem) -> Unit,
     onDismiss: () -> Unit,
     onSave: (
@@ -841,34 +885,35 @@ fun AddProductDialog(
     ) -> Unit
 ) {
     val isEditing = existingProduct != null
+    val stateKey = existingProduct?.Id ?: -1L
 
-    var name by remember { mutableStateOf(existingProduct?.Name ?: "") }
-    var barcode by remember { mutableStateOf(existingProduct?.Barcode ?: initialBarcode ?: "") }
-    var smallUnit by remember { mutableStateOf(existingProduct?.SmallUnit ?: "قطعة") }
-    var largeUnit by remember { mutableStateOf(existingProduct?.LargeUnit ?: "كرتون") }
-    var factorText by remember {
+    var name by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.Name ?: "") }
+    var barcode by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.Barcode ?: initialBarcode ?: "") }
+    var smallUnit by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.SmallUnit ?: "قطعة") }
+    var largeUnit by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.LargeUnit ?: "كرتون") }
+    var factorText by rememberSaveable(stateKey) {
         mutableStateOf(
             if (existingProduct != null) NumberFormatter.formatQuantity(existingProduct.UnitFactor) else "24"
         )
     }
-    var costPriceText by remember {
+    var costPriceText by rememberSaveable(stateKey) {
         mutableStateOf(if (existingProduct != null) NumberFormatter.formatQuantity(existingProduct.CostPrice) else "")
     }
-    var retailPriceText by remember {
+    var retailPriceText by rememberSaveable(stateKey) {
         mutableStateOf(if (existingProduct != null) NumberFormatter.formatQuantity(existingProduct.RetailPrice) else "")
     }
-    var wholesalePriceText by remember {
+    var wholesalePriceText by rememberSaveable(stateKey) {
         mutableStateOf(
             if (existingProduct != null && existingProduct.WholesalePrice > 0.0) NumberFormatter.formatQuantity(existingProduct.WholesalePrice) else ""
         )
     }
-    var openingMajorText by remember { mutableStateOf("0") }
-    var openingMinorText by remember { mutableStateOf("0") }
-    var thresholdText by remember {
+    var openingMajorText by rememberSaveable(stateKey) { mutableStateOf("0") }
+    var openingMinorText by rememberSaveable(stateKey) { mutableStateOf("0") }
+    var thresholdText by rememberSaveable(stateKey) {
         mutableStateOf(NumberFormatter.formatQuantity(existingProduct?.AlertThreshold ?: 5.0))
     }
-    var warehouse by remember { mutableStateOf(existingProduct?.Warehouse ?: "المستودع الرئيسي") }
-    var shelfLocation by remember { mutableStateOf(existingProduct?.ShelfLocation ?: "") }
+    var warehouse by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.Warehouse ?: "المستودع الرئيسي") }
+    var shelfLocation by rememberSaveable(stateKey) { mutableStateOf(existingProduct?.ShelfLocation ?: "") }
 
     // مراجع انتقال التركيز السلس عبر لوحة المفاتيح (Next -> Next -> Done)
     val focusBarcode = remember { FocusRequester() }
@@ -900,6 +945,7 @@ fun AddProductDialog(
     val isFormValid = name.trim().isNotEmpty() && costVal >= 0.0 && retailVal > 0.0 && duplicateBarcodeProduct == null
     val hasUnsavedChanges = name != (existingProduct?.Name ?: "") ||
         barcode != (existingProduct?.Barcode ?: initialBarcode ?: "") ||
+        costPriceText != (if (existingProduct != null) NumberFormatter.formatQuantity(existingProduct.CostPrice) else "") ||
         retailPriceText != (if (existingProduct != null) NumberFormatter.formatQuantity(existingProduct.RetailPrice) else "")
 
     FormSheetContainer(
@@ -909,7 +955,9 @@ fun AddProductDialog(
         onDismiss = onDismiss,
         primaryButtonText = if (isEditing) "حفظ التعديلات" else "تأكيد وحفظ الصنف",
         isPrimaryEnabled = isFormValid,
+        isSaving = isSaving,
         hasUnsavedChanges = hasUnsavedChanges,
+        errorMessage = saveErrorMessage,
         onPrimaryClick = {
             if (isFormValid) {
                 val wholesale = NumberFormatter.parseDouble(wholesalePriceText, defaultWholesale)
@@ -944,6 +992,7 @@ fun AddProductDialog(
                 placeholder = "مثال: حليب الممتاز بودرة 2.5 كجم",
                 isRequired = true,
                 leadingIcon = Icons.Default.ShoppingBag,
+                autoFocusOnAppear = !isEditing && name.isBlank(),
                 nextFocusRequester = if (AppDesignState.showBarcodeField) focusBarcode else focusSmallUnit
             )
 

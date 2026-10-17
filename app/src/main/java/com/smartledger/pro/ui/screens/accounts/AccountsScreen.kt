@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,6 +36,7 @@ import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.ui.viewmodels.AccountsViewModel
 import com.smartledger.pro.util.NumberFormatter
 import com.smartledger.pro.util.ThermalPrinterHelper
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 @Composable
@@ -48,14 +50,26 @@ fun AccountsScreen(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedBookId by viewModel.selectedBookId.collectAsState()
     val balanceFilter by viewModel.balanceFilter.collectAsState()
+    val scope = rememberCoroutineScope()
 
-    var showAddOrEditDialog by remember { mutableStateOf(false) }
-    var editingAccount by remember { mutableStateOf<AccountBalanceSummary?>(null) }
-    var selectedAccountForStatement by remember { mutableStateOf<AccountBalanceSummary?>(null) }
-    var quickVoucherTarget by remember { mutableStateOf<Pair<AccountBalanceSummary, Boolean>?>(null) }
+    var showAddOrEditDialog by rememberSaveable { mutableStateOf(false) }
+    var editingAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var selectedAccountIdForStatement by rememberSaveable { mutableStateOf<Long?>(null) }
+    var quickVoucherPersonId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var quickVoucherInitialReceipt by rememberSaveable { mutableStateOf(true) }
     var accountToDelete by remember { mutableStateOf<AccountBalanceSummary?>(null) }
-    var statusMessage by remember { mutableStateOf<String?>(null) }
-    var isStatusError by remember { mutableStateOf(false) }
+    var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var isStatusError by rememberSaveable { mutableStateOf(false) }
+
+    val editingAccount = remember(accounts, editingAccountId) {
+        editingAccountId?.let { id -> accounts.firstOrNull { it.PersonId == id } }
+    }
+    val selectedAccountForStatement = remember(accounts, selectedAccountIdForStatement) {
+        selectedAccountIdForStatement?.let { id -> accounts.firstOrNull { it.PersonId == id } }
+    }
+    val quickVoucherTargetAccount = remember(accounts, quickVoucherPersonId) {
+        quickVoucherPersonId?.let { id -> accounts.firstOrNull { it.PersonId == id } }
+    }
 
     val context = LocalContext.current
     val bookNameMap = remember(books) { books.associate { it.Id to it.Name } }
@@ -129,7 +143,9 @@ fun AccountsScreen(
                             shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                             border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                            modifier = Modifier.height(38.dp)
+                            modifier = Modifier
+                                .height(38.dp)
+                                .pressScaleEffect()
                         ) {
                             Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -138,7 +154,7 @@ fun AccountsScreen(
 
                         Button(
                             onClick = {
-                                editingAccount = null
+                                editingAccountId = null
                                 showAddOrEditDialog = true
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
@@ -146,10 +162,7 @@ fun AccountsScreen(
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             modifier = Modifier
                                 .height(38.dp)
-                                .bounceClick {
-                                    editingAccount = null
-                                    showAddOrEditDialog = true
-                                }
+                                .pressScaleEffect()
                         ) {
                             Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -211,7 +224,7 @@ fun AccountsScreen(
                         subtitle = "أضف حسابات العملاء والموردين لمتابعة الأرصدة وإصدار كشوف الحساب والسندات.",
                         actionText = "تعريف حساب جديد",
                         onActionClick = {
-                            editingAccount = null
+                            editingAccountId = null
                             showAddOrEditDialog = true
                         },
                         isFiltered = isFiltered,
@@ -224,11 +237,17 @@ fun AccountsScreen(
                         account = account,
                         bookName = bookNameMap[account.BookId] ?: "دفتر عام",
                         privacyMode = privacyMode,
-                        onOpenStatement = { selectedAccountForStatement = account },
-                        onQuickReceipt = { quickVoucherTarget = Pair(account, true) },
-                        onQuickPayment = { quickVoucherTarget = Pair(account, false) },
+                        onOpenStatement = { selectedAccountIdForStatement = account.PersonId },
+                        onQuickReceipt = {
+                            quickVoucherPersonId = account.PersonId
+                            quickVoucherInitialReceipt = true
+                        },
+                        onQuickPayment = {
+                            quickVoucherPersonId = account.PersonId
+                            quickVoucherInitialReceipt = false
+                        },
                         onEdit = {
-                            editingAccount = account
+                            editingAccountId = account.PersonId
                             showAddOrEditDialog = true
                         },
                         onCall = { safeCallPhone(account.Phone) },
@@ -243,74 +262,99 @@ fun AccountsScreen(
 
         // نافذة كشف الحساب العائمة
         if (selectedAccountForStatement != null) {
-            val liveAccount = accounts.find { it.PersonId == selectedAccountForStatement!!.PersonId } ?: selectedAccountForStatement!!
-            FloatingModalDialog(onDismissRequest = { selectedAccountForStatement = null }) {
+            val liveAccount = selectedAccountForStatement
+            FloatingModalDialog(onDismissRequest = { selectedAccountIdForStatement = null }) {
                 AccountStatementSheetContent(
                     account = liveAccount,
                     bookName = bookNameMap[liveAccount.BookId] ?: "دفتر عام",
                     privacyMode = privacyMode,
                     viewModel = viewModel,
                     onQuickVoucher = { isReceipt ->
-                        selectedAccountForStatement = null
-                        quickVoucherTarget = Pair(liveAccount, isReceipt)
+                        selectedAccountIdForStatement = null
+                        quickVoucherPersonId = liveAccount.PersonId
+                        quickVoucherInitialReceipt = isReceipt
                     },
                     onShareStatement = { safeShareWhatsApp(liveAccount) },
                     onCall = { safeCallPhone(liveAccount.Phone) },
-                    onClose = { selectedAccountForStatement = null }
+                    onClose = { selectedAccountIdForStatement = null }
                 )
             }
         }
 
-        // نافذة سند قبض/صرف سريع العائمة فوق لوحة المفاتيح
-        if (quickVoucherTarget != null) {
-            val (targetAcc, initialIsReceipt) = quickVoucherTarget!!
-            FloatingModalDialog(onDismissRequest = { quickVoucherTarget = null }) {
+        // نافذة سند قبض/صرف سريع العائمة فوق لوحة المفاتيح مع منع الإغلاق قبل نجاح الحفظ
+        if (quickVoucherTargetAccount != null) {
+            val targetAcc = quickVoucherTargetAccount
+            FloatingModalDialog(onDismissRequest = { quickVoucherPersonId = null }) {
+                var isSavingVoucher by remember { mutableStateOf(false) }
+                var voucherError by remember { mutableStateOf<String?>(null) }
+
                 QuickAccountVoucherSheet(
                     account = targetAcc,
-                    initialIsReceipt = initialIsReceipt,
-                    onDismiss = { quickVoucherTarget = null },
+                    initialIsReceipt = quickVoucherInitialReceipt,
+                    isSaving = isSavingVoucher,
+                    errorMessage = voucherError,
+                    onDismiss = { quickVoucherPersonId = null },
                     onConfirm = { isReceipt, amount, statement, refNo ->
-                        viewModel.createQuickVoucher(
-                            personId = targetAcc.PersonId,
-                            type = if (isReceipt) "Receive" else "Payment",
-                            amount = amount,
-                            statement = statement,
-                            refNumber = refNo,
-                            onComplete = {
-                                quickVoucherTarget = null
+                        isSavingVoucher = true
+                        voucherError = null
+                        scope.launch {
+                            val res = viewModel.createQuickVoucherAsync(
+                                personId = targetAcc.PersonId,
+                                type = if (isReceipt) "Receive" else "Payment",
+                                amount = amount,
+                                statement = statement,
+                                refNumber = refNo
+                            )
+                            isSavingVoucher = false
+                            if (res.isSuccess) {
+                                quickVoucherPersonId = null
                                 isStatusError = false
                                 statusMessage = "تم ترحيل ${if (isReceipt) "سند القبض" else "سند الصرف"} لحساب «${targetAcc.PersonName}» بنجاح."
+                            } else {
+                                voucherError = res.exceptionOrNull()?.message ?: "تعذر حفظ السند؛ يرجى التحقق والمحاولة مرة أخرى."
                             }
-                        )
+                        }
                     }
                 )
             }
         }
 
-        // نافذة إضافة أو تعديل حساب العائمة فوق لوحة المفاتيح
+        // نافذة إضافة أو تعديل حساب العائمة فوق لوحة المفاتيح مع حماية كاملة للبيانات
         if (showAddOrEditDialog) {
             FloatingModalDialog(onDismissRequest = { showAddOrEditDialog = false }) {
+                var isSavingAccount by remember { mutableStateOf(false) }
+                var accountSaveError by remember { mutableStateOf<String?>(null) }
+
                 AddEditAccountDialog(
                     books = books,
                     defaultBookId = selectedBookId ?: 1L,
                     existingAccount = editingAccount,
+                    isSaving = isSavingAccount,
+                    errorMessage = accountSaveError,
                     onDismiss = { showAddOrEditDialog = false },
                     onSave = { id, name, bookId, phone, limit, opening, isDebit, note ->
-                        viewModel.saveAccount(
-                            id = id,
-                            name = name,
-                            bookId = bookId,
-                            phone = phone,
-                            creditLimit = limit,
-                            openingBalance = opening,
-                            isDebit = isDebit,
-                            note = note,
-                            onComplete = {
+                        isSavingAccount = true
+                        accountSaveError = null
+                        scope.launch {
+                            val res = viewModel.saveAccountAsync(
+                                id = id,
+                                name = name,
+                                bookId = bookId,
+                                phone = phone,
+                                creditLimit = limit,
+                                openingBalance = opening,
+                                isDebit = isDebit,
+                                note = note
+                            )
+                            isSavingAccount = false
+                            if (res.isSuccess) {
                                 showAddOrEditDialog = false
                                 isStatusError = false
                                 statusMessage = if (id > 0) "تم تحديث بيانات الحساب «$name» بنجاح." else "تم فتح الحساب «$name» بنجاح."
+                            } else {
+                                accountSaveError = res.exceptionOrNull()?.message ?: "تعذر حفظ بيانات الحساب؛ يرجى التحقق من المدخلات."
                             }
-                        )
+                        }
                     }
                 )
             }
@@ -560,7 +604,7 @@ fun AccountCardItem(
                         shape = RoundedCornerShape(8.dp),
                         border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.height(34.dp)
+                        modifier = Modifier.height(34.dp).pressScaleEffect()
                     ) {
                         Text("سند +", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
                     }
@@ -570,7 +614,7 @@ fun AccountCardItem(
                         colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentSubtle),
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.height(34.dp)
+                        modifier = Modifier.height(34.dp).pressScaleEffect()
                     ) {
                         Text("كشف الحساب", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
                     }
@@ -592,8 +636,8 @@ fun AccountStatementSheetContent(
     onClose: () -> Unit
 ) {
     val allOperations by viewModel.getOperationsForAccount(account.PersonId).collectAsState(initial = emptyList())
-    var periodFilter by remember { mutableStateOf("ALL") }
-    var typeFilter by remember { mutableStateOf("ALL") }
+    var periodFilter by rememberSaveable { mutableStateOf("ALL") }
+    var typeFilter by rememberSaveable { mutableStateOf("ALL") }
     var operationToDelete by remember { mutableStateOf<OperationEntity?>(null) }
 
     val operationsWithRunningBalance = remember(allOperations) {
@@ -683,7 +727,7 @@ fun AccountStatementSheetContent(
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { onQuickVoucher(true) },
-                modifier = Modifier.weight(1f).height(38.dp),
+                modifier = Modifier.weight(1f).height(38.dp).pressScaleEffect(),
                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.StateSuccess),
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 8.dp)
@@ -694,7 +738,7 @@ fun AccountStatementSheetContent(
             }
             Button(
                 onClick = { onQuickVoucher(false) },
-                modifier = Modifier.weight(1f).height(38.dp),
+                modifier = Modifier.weight(1f).height(38.dp).pressScaleEffect(),
                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.StateDanger),
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 8.dp)
@@ -706,7 +750,7 @@ fun AccountStatementSheetContent(
             if (!account.Phone.isNullOrBlank()) {
                 OutlinedButton(
                     onClick = onCall,
-                    modifier = Modifier.height(38.dp),
+                    modifier = Modifier.height(38.dp).pressScaleEffect(),
                     shape = RoundedCornerShape(10.dp),
                     border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
                     contentPadding = PaddingValues(horizontal = 10.dp)
@@ -831,13 +875,18 @@ fun AccountStatementSheetContent(
 fun QuickAccountVoucherSheet(
     account: AccountBalanceSummary,
     initialIsReceipt: Boolean,
+    isSaving: Boolean = false,
+    errorMessage: String? = null,
     onDismiss: () -> Unit,
     onConfirm: (isReceipt: Boolean, amount: Double, statement: String, refNumber: String?) -> Unit
 ) {
-    var isReceipt by remember { mutableStateOf(initialIsReceipt) }
-    var amountText by remember { mutableStateOf("") }
-    var statement by remember { mutableStateOf("") }
-    var refNumber by remember { mutableStateOf("") }
+    var isReceipt by rememberSaveable(account.PersonId) { mutableStateOf(initialIsReceipt) }
+    var amountText by rememberSaveable(account.PersonId) { mutableStateOf("") }
+    var statement by rememberSaveable(account.PersonId) { mutableStateOf("") }
+    var refNumber by rememberSaveable(account.PersonId) { mutableStateOf("") }
+
+    val focusStatement = remember { FocusRequester() }
+    val focusRef = remember { FocusRequester() }
 
     val amountVal = NumberFormatter.parseDouble(amountText, 0.0)
     val isValid = amountVal > 0.0
@@ -850,7 +899,9 @@ fun QuickAccountVoucherSheet(
         primaryButtonText = if (isReceipt) "ترحيل سند القبض" else "ترحيل سند الصرف",
         primaryButtonColor = if (isReceipt) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger,
         isPrimaryEnabled = isValid,
-        hasUnsavedChanges = amountText.isNotBlank() || statement.isNotBlank(),
+        isSaving = isSaving,
+        errorMessage = errorMessage,
+        hasUnsavedChanges = amountText.isNotBlank() || statement.isNotBlank() || refNumber.isNotBlank(),
         onPrimaryClick = {
             if (isValid) {
                 val finalStatement = statement.trim().ifBlank {
@@ -878,7 +929,9 @@ fun QuickAccountVoucherSheet(
                 placeholder = "0",
                 isRequired = true,
                 keyboardType = KeyboardType.Decimal,
-                imeAction = ImeAction.Next
+                autoFocusOnAppear = amountText.isBlank(),
+                imeAction = ImeAction.Next,
+                nextFocusRequester = focusStatement
             )
 
             SmartTextField(
@@ -886,6 +939,8 @@ fun QuickAccountVoucherSheet(
                 onValueChange = { statement = it },
                 label = "البيان والشرح المحاسبي",
                 placeholder = if (isReceipt) "دفعة نقدية من الحساب..." else "دفعة مسددة للحساب...",
+                focusRequester = focusStatement,
+                nextFocusRequester = focusRef,
                 imeAction = ImeAction.Next
             )
 
@@ -894,6 +949,7 @@ fun QuickAccountVoucherSheet(
                 onValueChange = { refNumber = it },
                 label = "رقم السند الورقي / الحوالة (اختياري)",
                 placeholder = "مثال: RV-1042",
+                focusRequester = focusRef,
                 imeAction = ImeAction.Done
             )
         }
@@ -905,22 +961,25 @@ fun AddEditAccountDialog(
     books: List<BookEntity>,
     defaultBookId: Long,
     existingAccount: AccountBalanceSummary?,
+    isSaving: Boolean = false,
+    errorMessage: String? = null,
     onDismiss: () -> Unit,
     onSave: (id: Long, name: String, bookId: Long, phone: String?, limit: Double, opening: Double, isDebit: Boolean, note: String?) -> Unit
 ) {
     val isEditing = existingAccount != null
+    val stateKey = existingAccount?.PersonId ?: -1L
 
-    var name by remember { mutableStateOf(existingAccount?.PersonName ?: "") }
-    var selectedBookId by remember { mutableStateOf(existingAccount?.BookId ?: defaultBookId.coerceAtLeast(1L)) }
-    var phone by remember { mutableStateOf(existingAccount?.Phone ?: "") }
-    var openingBalanceText by remember { mutableStateOf("") }
-    var isDebitOpening by remember {
+    var name by rememberSaveable(stateKey) { mutableStateOf(existingAccount?.PersonName ?: "") }
+    var selectedBookId by rememberSaveable(stateKey) { mutableStateOf(existingAccount?.BookId ?: defaultBookId.coerceAtLeast(1L)) }
+    var phone by rememberSaveable(stateKey) { mutableStateOf(existingAccount?.Phone ?: "") }
+    var openingBalanceText by rememberSaveable(stateKey) { mutableStateOf("") }
+    var isDebitOpening by rememberSaveable(stateKey) {
         mutableStateOf(existingAccount?.BookId != 2L && defaultBookId != 2L)
     }
-    var creditLimitText by remember {
+    var creditLimitText by rememberSaveable(stateKey) {
         mutableStateOf(if (existingAccount != null && existingAccount.CreditLimit > 0) NumberFormatter.formatQuantity(existingAccount.CreditLimit) else "")
     }
-    var note by remember { mutableStateOf(existingAccount?.Note ?: "") }
+    var note by rememberSaveable(stateKey) { mutableStateOf(existingAccount?.Note ?: "") }
 
     val focusPhone = remember { FocusRequester() }
     val focusOpening = remember { FocusRequester() }
@@ -928,7 +987,10 @@ fun AddEditAccountDialog(
     val focusNote = remember { FocusRequester() }
 
     val isFormValid = name.trim().length >= 2
-    val hasUnsavedChanges = name != (existingAccount?.PersonName ?: "") || phone != (existingAccount?.Phone ?: "")
+    val hasUnsavedChanges = name != (existingAccount?.PersonName ?: "") ||
+        phone != (existingAccount?.Phone ?: "") ||
+        openingBalanceText.isNotBlank() ||
+        note != (existingAccount?.Note ?: "")
 
     FormSheetContainer(
         title = if (isEditing) "تعديل بيانات الحساب" else "تعريف حساب جديد",
@@ -937,7 +999,9 @@ fun AddEditAccountDialog(
         onDismiss = onDismiss,
         primaryButtonText = if (isEditing) "حفظ التعديلات" else "تأكيد وحفظ الحساب",
         isPrimaryEnabled = isFormValid,
+        isSaving = isSaving,
         hasUnsavedChanges = hasUnsavedChanges,
+        errorMessage = errorMessage,
         onPrimaryClick = {
             if (isFormValid) {
                 val limit = NumberFormatter.parseDouble(creditLimitText, 0.0)
@@ -978,6 +1042,7 @@ fun AddEditAccountDialog(
                 placeholder = "مثال: مؤسسة الأمل للتجارة",
                 isRequired = true,
                 leadingIcon = Icons.Default.Person,
+                autoFocusOnAppear = !isEditing && name.isBlank(),
                 errorText = if (name.isNotBlank() && name.trim().length < 2) "الرجاء إدخال اسم واضح للحساب" else null,
                 nextFocusRequester = focusPhone
             )

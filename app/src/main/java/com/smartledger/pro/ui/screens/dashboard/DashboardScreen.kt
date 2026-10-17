@@ -24,6 +24,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smartledger.pro.data.local.dao.RecentOperationWithPerson
 import com.smartledger.pro.ui.components.SmartEmptyState
 import com.smartledger.pro.ui.components.bounceClick
+import com.smartledger.pro.ui.components.pressScaleEffect
 import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
 import com.smartledger.pro.ui.theme.SmartLedgerTokens
@@ -99,7 +100,7 @@ fun DashboardScreen(
                             .size(38.dp)
                             .clip(CircleShape)
                             .background(SmartLedgerColors.SurfaceCardElevated)
-                            .bounceClick { onTogglePrivacy() }
+                            .pressScaleEffect()
                     ) {
                         Icon(
                             imageVector = if (privacyMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
@@ -114,7 +115,7 @@ fun DashboardScreen(
                             .size(38.dp)
                             .clip(CircleShape)
                             .background(SmartLedgerColors.SurfaceCardElevated)
-                            .bounceClick { onNavigate("reports") }
+                            .pressScaleEffect()
                     ) {
                         Icon(
                             imageVector = Icons.Default.Assessment,

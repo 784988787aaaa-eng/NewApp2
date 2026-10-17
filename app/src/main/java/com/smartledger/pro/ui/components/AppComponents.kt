@@ -3,12 +3,15 @@ package com.smartledger.pro.ui.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -17,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,6 +33,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -38,14 +43,17 @@ import androidx.compose.ui.unit.dp
 import com.smartledger.pro.ui.theme.SmartLedgerColors
 import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.util.NumberFormatter
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
- * حقل إدخال عصري ورشيق وغير متشابك (SmartTextField)
- * - يفصل التسمية العلوية (Label) فوق حقل الإدخال مباشرة بدلاً من قطع إطار الحقل،
- *   مما يمنع تماماً تداخل أو اقتصاص النصوص العربية الطويلة عند وضع حقلين متجاورين في صف واحد.
- * - يضبط الأرقام المدخلة إلى الأرقام الغربية القياسية (123) تلقائياً.
- * - يدعم التنقل السلس بين الحقول عبر لوحة المفاتيح (ImeAction.Next / ImeAction.Done).
+ * حقل إدخال عصري وذكي (SmartTextField)
+ * - يفصل التسمية العلوية (Label) فوق حقل الإدخال لمنع تشابك أو اقتصاص التسميات العربية.
+ * - يدعم `BringIntoViewRequester` بحيث يتم تمرير الحقل النشط تلقائياً ليظهر كاملاً فوق لوحة المفاتيح وشريط الأزرار.
+ * - يدعم التركيز التلقائي الاختياري (`autoFocusOnAppear`) للنماذج السريعة فقط دون إرباك المستخدم في الشاشات الأخرى.
+ * - يضبط `ImeAction.Done` لإخفاء لوحة المفاتيح بأمان دون تنفيذ عملية حفظ مالية غير مقصودة.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SmartTextField(
     value: String,
@@ -62,6 +70,7 @@ fun SmartTextField(
     minLines: Int = 1,
     keyboardType: KeyboardType = KeyboardType.Text,
     imeAction: ImeAction = ImeAction.Next,
+    autoFocusOnAppear: Boolean = false,
     focusRequester: FocusRequester? = null,
     nextFocusRequester: FocusRequester? = null,
     onDoneAction: (() -> Unit)? = null,
@@ -70,14 +79,25 @@ fun SmartTextField(
 ) {
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val internalFocusRequester = remember { FocusRequester() }
+    val activeFocusRequester = focusRequester ?: internalFocusRequester
+    val coroutineScope = rememberCoroutineScope()
+
     val isError = !errorText.isNullOrBlank()
     var isFocused by remember { mutableStateOf(false) }
 
+    LaunchedEffect(autoFocusOnAppear) {
+        if (autoFocusOnAppear && enabled && !readOnly) {
+            delay(120)
+            runCatching { activeFocusRequester.requestFocus() }
+        }
+    }
+
     Column(
-        modifier = modifier,
+        modifier = modifier.bringIntoViewRequester(bringIntoViewRequester),
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
-        // تسمية علوية نظيفة ومنفصلة عن الإطار لمنع أي تشابك أو اقتصاص
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(horizontal = 2.dp)
@@ -105,7 +125,6 @@ fun SmartTextField(
             }
         }
 
-        // حاوية الإدخال العصرية المستديرة
         OutlinedTextField(
             value = value,
             onValueChange = { raw ->
@@ -189,8 +208,16 @@ fun SmartTextField(
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .onFocusChanged { isFocused = it.isFocused }
-                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                .focusRequester(activeFocusRequester)
+                .onFocusChanged { state ->
+                    isFocused = state.isFocused
+                    if (state.isFocused) {
+                        coroutineScope.launch {
+                            delay(80)
+                            runCatching { bringIntoViewRequester.bringIntoView() }
+                        }
+                    }
+                }
         )
 
         if (isError) {
@@ -346,7 +373,7 @@ fun CompactSearchBar(
 }
 
 /**
- * أزرار الاختيار المجمّعة (Segmented Control)
+ * أزرار الاختيار المجمّعة (Segmented Control) مع استجابة لمسية خفيفة (TICK)
  */
 @Composable
 fun <T> SegmentedOptionRow(
@@ -356,6 +383,7 @@ fun <T> SegmentedOptionRow(
     modifier: Modifier = Modifier,
     activeColor: Color = SmartLedgerColors.AccentPrimary
 ) {
+    val view = LocalView.current
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -371,7 +399,12 @@ fun <T> SegmentedOptionRow(
                     .weight(1f)
                     .clip(RoundedCornerShape(9.dp))
                     .background(if (isSelected) activeColor else Color.Transparent)
-                    .clickable { onOptionSelected(value) }
+                    .clickable {
+                        if (!isSelected) {
+                            AppHaptics.perform(view, AppHapticType.TICK)
+                        }
+                        onOptionSelected(value)
+                    }
                     .padding(vertical = 8.dp, horizontal = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -399,6 +432,7 @@ fun <T> FilterChipRow(
     modifier: Modifier = Modifier,
     counts: Map<T, Int>? = null
 ) {
+    val view = LocalView.current
     LazyRow(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -415,7 +449,12 @@ fun <T> FilterChipRow(
                         color = if (isSelected) SmartLedgerColors.AccentPrimary else SmartLedgerColors.BorderSubtle,
                         shape = RoundedCornerShape(SmartLedgerTokens.chipCorner)
                     )
-                    .clickable { onItemSelected(key) }
+                    .clickable {
+                        if (!isSelected) {
+                            AppHaptics.perform(view, AppHapticType.TICK)
+                        }
+                        onItemSelected(key)
+                    }
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -516,7 +555,7 @@ fun SmartEmptyState(
                     onClick = onActionClick,
                     colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                     shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                    modifier = Modifier.bounceClick { onActionClick() }
+                    modifier = Modifier.pressScaleEffect()
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
@@ -528,7 +567,7 @@ fun SmartEmptyState(
 }
 
 /**
- * حوار تأكيد العمليات الحساسة أو المدمرة (ConfirmActionDialog) — نافذة عائمة فوق لوحة المفاتيح
+ * حوار تأكيد العمليات الحساسة أو المدمرة (ConfirmActionDialog) — نافذة قرار قصيرة ومستقلة
  */
 @Composable
 fun ConfirmActionDialog(
@@ -541,7 +580,7 @@ fun ConfirmActionDialog(
     requireReason: Boolean = false,
     reasonLabel: String = "سبب العملية (اختياري)"
 ) {
-    var reason by remember { mutableStateOf("") }
+    var reason by rememberSaveable { mutableStateOf("") }
 
     FloatingModalDialog(onDismissRequest = onDismiss, maxWidth = 440.dp) {
         FormSheetContainer(
