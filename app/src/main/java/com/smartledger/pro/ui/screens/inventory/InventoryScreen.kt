@@ -22,7 +22,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smartledger.pro.data.local.dao.ProductStockItem
 import com.smartledger.pro.domain.model.UnitConversionEngine
@@ -33,7 +32,6 @@ import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.ui.viewmodels.InventoryViewModel
 import com.smartledger.pro.util.NumberFormatter
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InventoryScreen(
     viewModel: InventoryViewModel = viewModel()
@@ -103,7 +101,7 @@ fun InventoryScreen(
                         ) {
                             Icon(Icons.Default.FactCheck, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("الجرد", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                            Text("الجرد السريع", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                         }
 
                         Button(
@@ -130,7 +128,6 @@ fun InventoryScreen(
                     }
                 }
 
-                // شريط بحث مدمج مع زر مسح الباركود بالكاميرا
                 CompactSearchBar(
                     query = searchQuery,
                     onQueryChange = { viewModel.onSearchQueryChanged(it) },
@@ -141,7 +138,6 @@ fun InventoryScreen(
                     } else null
                 )
 
-                // شرائح التصفية السريعة للمخزون
                 FilterChipRow(
                     items = listOf(
                         "ALL" to "كل الأصناف",
@@ -176,7 +172,7 @@ fun InventoryScreen(
                     SmartEmptyState(
                         icon = Icons.Default.Inventory2,
                         title = "لا توجد أصناف في المخزن بعد",
-                        subtitle = "ابدأ بتعريف أصنافك مع وحداتها الصغرى والكبرى وأسعار البيع لمتابعة المخزون بدقة.",
+                        subtitle = "اضغط على «صنف جديد» لتعريف البضاعة ووحداتها الصغرى والكبرى وأسعار البيع.",
                         actionText = "إضافة أول صنف",
                         onActionClick = {
                             editingProduct = null
@@ -209,11 +205,11 @@ fun InventoryScreen(
             item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
-        // نافذة مسح الباركود بالكاميرا أو الإدخال اليدوي
+        // نافذة مسح الباركود العائمة
         if (showBarcodeScanner) {
             BarcodeScannerSheet(
                 title = "مسح باركود الصنف",
-                subtitle = "امسح الباركود للبحث عن الصنف أو إضافته إن كان جديداً",
+                subtitle = "امسح الباركود للبحث عن الصنف أو تعريفه في المخزن",
                 knownBarcodes = knownBarcodes,
                 onBarcodeResult = { scannedCode ->
                     showBarcodeScanner = false
@@ -221,7 +217,6 @@ fun InventoryScreen(
                     if (existing != null) {
                         selectedProductForDetails = existing
                     } else {
-                        // باركود غير مسجل بعد -> نفتح نافذة تعريف صنف جديد مع تعبئة الباركود تلقائياً
                         editingProduct = null
                         initialScannedBarcode = scannedCode
                         showAddOrEditSheet = true
@@ -231,12 +226,9 @@ fun InventoryScreen(
             )
         }
 
-        // نافذة تفاصيل الصنف وسجل حركاته المخزنية
+        // نافذة تفاصيل الصنف وسجل حركاته العائمة
         if (selectedProductForDetails != null) {
-            ModalBottomSheet(
-                onDismissRequest = { selectedProductForDetails = null },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { selectedProductForDetails = null }) {
                 ProductDetailsSheetContent(
                     product = selectedProductForDetails!!,
                     viewModel = viewModel,
@@ -257,12 +249,9 @@ fun InventoryScreen(
             }
         }
 
-        // نافذة الجرد المخزني وتسوية الفروق الموثقة
+        // نافذة الجرد المخزني العائمة فوق لوحة المفاتيح
         if (showRapidStockCountSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showRapidStockCountSheet = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { showRapidStockCountSheet = false }) {
                 RapidStockCountSheetContent(
                     products = products,
                     initialProductId = initialStockCountProductId,
@@ -275,13 +264,10 @@ fun InventoryScreen(
             }
         }
 
-        // نافذة إضافة أو تعديل صنف مع الإفصاح التدريجي وكشف تكرار الباركود
+        // نافذة إدخال المخزن العائمة الرشيقة والأنيقة (فوق لوحة المفاتيح)
         if (showAddOrEditSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showAddOrEditSheet = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
-                AddEditProductDialog(
+            FloatingModalDialog(onDismissRequest = { showAddOrEditSheet = false }) {
+                AddProductDialog(
                     existingProduct = editingProduct,
                     initialBarcode = initialScannedBarcode,
                     allProducts = products,
@@ -317,7 +303,7 @@ fun InventoryScreen(
             }
         }
 
-        // تأكيد أرشفة/حذف صنف
+        // تأكيد أرشفة صنف
         if (productToDelete != null) {
             val target = productToDelete!!
             ConfirmActionDialog(
@@ -389,7 +375,7 @@ fun ProductCardItem(
 
                     val metaParts = buildList {
                         if (AppDesignState.showBarcodeField && !product.Barcode.isNullOrBlank()) {
-                            add("#${product.Barcode}")
+                            add("باركود: ${product.Barcode}")
                         }
                         if (AppDesignState.showShelfLocation && !product.ShelfLocation.isNullOrBlank()) {
                             add("رف: ${product.ShelfLocation}")
@@ -418,7 +404,7 @@ fun ProductCardItem(
                                 .padding(horizontal = 8.dp, vertical = 3.dp)
                         ) {
                             Text(
-                                text = if (isOutOfStock) "نافد" else "قارب النفاد",
+                                text = if (isOutOfStock) "نافد" else "حد النفاد!",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = if (isOutOfStock) SmartLedgerColors.StateDanger else SmartLedgerColors.StateWarning
@@ -491,7 +477,7 @@ fun ProductCardItem(
             ) {
                 Column {
                     Text(
-                        text = "الكمية المتاحة",
+                        text = "الرصيد المتاح",
                         style = MaterialTheme.typography.labelSmall,
                         color = SmartLedgerColors.TextMuted
                     )
@@ -547,45 +533,20 @@ fun ProductDetailsSheetContent(
     }
     val totalValuation = product.CurrentStockMinor.coerceAtLeast(0.0) * product.CostPrice
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    FormSheetContainer(
+        title = product.Name,
+        subtitle = "باركود: ${product.Barcode ?: "غير محدد"} • ${product.Warehouse}" +
+            if (!product.ShelfLocation.isNullOrBlank()) " • رف: ${product.ShelfLocation}" else "",
+        headerIcon = Icons.Default.Inventory2,
+        onDismiss = onClose,
+        primaryButtonText = "تعديل بيانات الصنف",
+        secondaryButtonText = "إغلاق",
+        onPrimaryClick = onEdit
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = product.Name,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = SmartLedgerColors.TextPrimary
-                )
-                Text(
-                    text = "باركود: ${product.Barcode ?: "غير محدد"} • ${product.Warehouse}" +
-                        if (!product.ShelfLocation.isNullOrBlank()) " • رف: ${product.ShelfLocation}" else "",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = SmartLedgerColors.TextMuted
-                )
-            }
-            IconButton(
-                onClick = onClose,
-                modifier = Modifier.size(32.dp).clip(CircleShape).background(SmartLedgerColors.SurfaceCardElevated)
-            ) {
-                Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = SmartLedgerColors.TextMuted, modifier = Modifier.size(16.dp))
-            }
-        }
-
-        // بطاقة ملخص الرصيد والتقييم المالي للصنف
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
-            shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
+            shape = RoundedCornerShape(14.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -616,28 +577,15 @@ fun ProductDetailsSheetContent(
             }
         }
 
-        // أزرار الإجراءات السريعة للصنف
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(
-                onClick = onEdit,
-                modifier = Modifier.weight(1f).height(40.dp),
-                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
-            ) {
-                Icon(Icons.Default.Edit, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("تعديل البيانات", color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
-            }
-            Button(
-                onClick = onAdjustStock,
-                modifier = Modifier.weight(1f).height(40.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.StateWarning),
-                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
-            ) {
-                Icon(Icons.Default.FactCheck, contentDescription = null, tint = SmartLedgerColors.SurfaceWindow, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("تسوية جرد", color = SmartLedgerColors.SurfaceWindow, fontWeight = FontWeight.Bold)
-            }
+        OutlinedButton(
+            onClick = onAdjustStock,
+            modifier = Modifier.fillMaxWidth().height(40.dp),
+            shape = RoundedCornerShape(10.dp),
+            border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateWarning))
+        ) {
+            Icon(Icons.Default.FactCheck, contentDescription = null, tint = SmartLedgerColors.StateWarning, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("تسوية جرد فورية لهذا الصنف", color = SmartLedgerColors.StateWarning, fontWeight = FontWeight.Bold)
         }
 
         Text(
@@ -651,7 +599,7 @@ fun ProductDetailsSheetContent(
             Text("لا توجد حركات مسجلة لهذا الصنف بعد.", style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.TextMuted)
         } else {
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(movements, key = { it.Id }) { mov ->
@@ -669,9 +617,9 @@ fun ProductDetailsSheetContent(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(10.dp))
                             .background(SmartLedgerColors.SurfaceCard)
-                            .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
+                            .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(10.dp))
                             .padding(10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -727,8 +675,9 @@ fun RapidStockCountSheetContent(
     val delta = actualCount - bookCount
 
     FormSheetContainer(
-        title = "الجرد المخزني وتسوية الفروق",
-        subtitle = if (currentProduct != null) "الصنف (${selectedIndex + 1} من ${products.size}) — يحفظ أثر التسوية في سجل الحركات" else "لا توجد أصناف للجرد",
+        title = "أداة الجرد السريع وتسوية الفروق",
+        subtitle = if (currentProduct != null) "الصنف (${selectedIndex + 1} من ${products.size}) — يحفظ أثر التسوية في سجل المخزون" else "لا توجد أصناف للجرد",
+        headerIcon = Icons.Default.FactCheck,
         onDismiss = onClose,
         primaryButtonText = if (selectedIndex < products.size - 1) "اعتماد التسوية والتالي ↵" else "اعتماد التسوية وإنهاء الجرد ✔",
         isPrimaryEnabled = currentProduct != null,
@@ -746,7 +695,6 @@ fun RapidStockCountSheetContent(
         if (currentProduct == null) {
             Text("لا توجد أصناف مسجلة في المخزن لإجراء الجرد.", color = SmartLedgerColors.TextMuted)
         } else {
-            // شريط تنقل سريع بين الأصناف
             if (products.size > 1) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(products.size) { idx ->
@@ -754,11 +702,11 @@ fun RapidStockCountSheetContent(
                         val isCurrent = idx == selectedIndex
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
+                                .clip(RoundedCornerShape(8.dp))
                                 .background(if (isCurrent) SmartLedgerColors.AccentSubtle else SmartLedgerColors.SurfaceCardElevated)
-                                .border(1.dp, if (isCurrent) SmartLedgerColors.AccentPrimary else SmartLedgerColors.BorderSubtle, RoundedCornerShape(6.dp))
+                                .border(1.dp, if (isCurrent) SmartLedgerColors.AccentPrimary else SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
                                 .clickable { selectedIndex = idx }
-                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
                         ) {
                             Text(
                                 text = p.Name,
@@ -774,7 +722,7 @@ fun RapidStockCountSheetContent(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
-                shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
+                shape = RoundedCornerShape(14.dp)
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(currentProduct.Name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
@@ -785,7 +733,7 @@ fun RapidStockCountSheetContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("الرصيد الدفتري المسجل", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
+                            Text("الرصيد الدفتري", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
                             Text(
                                 "${NumberFormatter.formatQuantity(bookCount)} ${currentProduct.SmallUnit}",
                                 style = MaterialTheme.typography.titleMedium,
@@ -862,8 +810,14 @@ fun RapidStockCountSheetContent(
     }
 }
 
+/**
+ * نافذة تعريف أو تعديل صنف بالمخزن (AddProductDialog)
+ * - تعيد كافة حقول نافذة إدخال المخزن الشاملة (اسم الصنف، الباركود، الوحدة الصغرى والكبرى، معامل التحويل،
+ *   تكلفة وسعر بيع الوحدة الصغرى، سعر بيع الوحدة الكبرى، الرصيد الافتتاحي بالوحدتين، وحد التنبيه)
+ * - مرتبة بأناقة ورشاقة داخل 3 مجموعات بطاقات غير ملتصقة أو متشابكة، وتعمل كنافذة عائمة فوق لوحة المفاتيح.
+ */
 @Composable
-fun AddEditProductDialog(
+fun AddProductDialog(
     existingProduct: ProductStockItem?,
     initialBarcode: String?,
     allProducts: List<ProductStockItem>,
@@ -891,38 +845,44 @@ fun AddEditProductDialog(
     var name by remember { mutableStateOf(existingProduct?.Name ?: "") }
     var barcode by remember { mutableStateOf(existingProduct?.Barcode ?: initialBarcode ?: "") }
     var smallUnit by remember { mutableStateOf(existingProduct?.SmallUnit ?: "قطعة") }
+    var largeUnit by remember { mutableStateOf(existingProduct?.LargeUnit ?: "كرتون") }
+    var factorText by remember {
+        mutableStateOf(
+            if (existingProduct != null) NumberFormatter.formatQuantity(existingProduct.UnitFactor) else "24"
+        )
+    }
     var costPriceText by remember {
         mutableStateOf(if (existingProduct != null) NumberFormatter.formatQuantity(existingProduct.CostPrice) else "")
     }
     var retailPriceText by remember {
         mutableStateOf(if (existingProduct != null) NumberFormatter.formatQuantity(existingProduct.RetailPrice) else "")
     }
-    var openingMinorText by remember { mutableStateOf("") }
-
-    // الحقول المتقدمة (الإفصاح التدريجي)
-    var enableMultiUnit by remember {
-        mutableStateOf(existingProduct != null && !existingProduct.LargeUnit.isNullOrBlank() && existingProduct.UnitFactor > 1.0)
-    }
-    var largeUnit by remember { mutableStateOf(existingProduct?.LargeUnit ?: "كرتون") }
-    var factorText by remember {
-        mutableStateOf(if (existingProduct != null && existingProduct.UnitFactor > 1.0) NumberFormatter.formatQuantity(existingProduct.UnitFactor) else "24")
-    }
     var wholesalePriceText by remember {
-        mutableStateOf(if (existingProduct != null && existingProduct.WholesalePrice > 0.0) NumberFormatter.formatQuantity(existingProduct.WholesalePrice) else "")
+        mutableStateOf(
+            if (existingProduct != null && existingProduct.WholesalePrice > 0.0) NumberFormatter.formatQuantity(existingProduct.WholesalePrice) else ""
+        )
     }
-    var openingMajorText by remember { mutableStateOf("") }
+    var openingMajorText by remember { mutableStateOf("0") }
+    var openingMinorText by remember { mutableStateOf("0") }
     var thresholdText by remember {
         mutableStateOf(NumberFormatter.formatQuantity(existingProduct?.AlertThreshold ?: 5.0))
     }
     var warehouse by remember { mutableStateOf(existingProduct?.Warehouse ?: "المستودع الرئيسي") }
     var shelfLocation by remember { mutableStateOf(existingProduct?.ShelfLocation ?: "") }
 
+    // مراجع انتقال التركيز السلس عبر لوحة المفاتيح (Next -> Next -> Done)
     val focusBarcode = remember { FocusRequester() }
+    val focusSmallUnit = remember { FocusRequester() }
+    val focusLargeUnit = remember { FocusRequester() }
+    val focusFactor = remember { FocusRequester() }
     val focusCost = remember { FocusRequester() }
     val focusRetail = remember { FocusRequester() }
-    val focusOpening = remember { FocusRequester() }
+    val focusWholesale = remember { FocusRequester() }
+    val focusOpenMajor = remember { FocusRequester() }
+    val focusOpenMinor = remember { FocusRequester() }
+    val focusThreshold = remember { FocusRequester() }
+    val focusShelf = remember { FocusRequester() }
 
-    // كشف تكرار الباركود مع صنف آخر
     val duplicateBarcodeProduct = remember(barcode, allProducts, existingProduct) {
         val clean = barcode.trim()
         if (clean.isEmpty()) null
@@ -931,37 +891,28 @@ fun AddEditProductDialog(
 
     val costVal = NumberFormatter.parseDouble(costPriceText, 0.0)
     val retailVal = NumberFormatter.parseDouble(retailPriceText, 0.0)
-    val rawFactorVal = NumberFormatter.parseDouble(factorText, 1.0)
-    val effectiveFactor = if (enableMultiUnit) rawFactorVal else 1.0
-    val openMajVal = if (enableMultiUnit) NumberFormatter.parseDouble(openingMajorText, 0.0) else 0.0
+    val factorVal = NumberFormatter.parseDouble(factorText, 1.0).coerceAtLeast(1.0)
+    val openMajVal = NumberFormatter.parseDouble(openingMajorText, 0.0)
     val openMinVal = NumberFormatter.parseDouble(openingMinorText, 0.0)
-    val totalOpeningMinor = UnitConversionEngine.toMinorQuantity(openMajVal, openMinVal, effectiveFactor.coerceAtLeast(1.0))
+    val totalOpeningMinor = UnitConversionEngine.toMinorQuantity(openMajVal, openMinVal, factorVal)
+    val defaultWholesale = retailVal * factorVal
 
-    val nameError = if (name.isNotBlank() && name.trim().length < 2) "اسم الصنف قصير جداً" else null
-    val retailError = if (retailPriceText.isNotBlank() && retailVal <= 0.0) "يجب أن يكون سعر البيع أكبر من صفر" else null
-    val factorError = if (enableMultiUnit && rawFactorVal <= 1.0) "معامل التحويل للوحدة الكبرى يجب أن يكون أكبر من 1" else null
-
-    val isFormValid = name.trim().length >= 2 &&
-        retailVal > 0.0 &&
-        costVal >= 0.0 &&
-        duplicateBarcodeProduct == null &&
-        (!enableMultiUnit || (largeUnit.isNotBlank() && rawFactorVal > 1.0))
-
+    val isFormValid = name.trim().isNotEmpty() && costVal >= 0.0 && retailVal > 0.0 && duplicateBarcodeProduct == null
     val hasUnsavedChanges = name != (existingProduct?.Name ?: "") ||
         barcode != (existingProduct?.Barcode ?: initialBarcode ?: "") ||
         retailPriceText != (if (existingProduct != null) NumberFormatter.formatQuantity(existingProduct.RetailPrice) else "")
 
     FormSheetContainer(
-        title = if (isEditing) "تعديل بيانات الصنف" else "تعريف صنف جديد بالمخزن",
-        subtitle = if (isEditing) "تحديث الأسعار والوحدات وحد التنبيه" else "أدخل البيانات الأساسية، أو افتح الخيارات المتقدمة لتعدد الوحدات",
+        title = if (isEditing) "تعديل بيانات الصنف بالمخزن" else "تعريف صنف جديد بالمخزن",
+        subtitle = "ضبط الوحدات الكبرى والصغرى ومعامل التحويل وأسعار البيع",
+        headerIcon = Icons.Default.Inventory2,
         onDismiss = onDismiss,
-        primaryButtonText = if (isEditing) "حفظ التعديلات" else "إضافة الصنف للمخزن",
+        primaryButtonText = if (isEditing) "حفظ التعديلات" else "تأكيد وحفظ الصنف",
         isPrimaryEnabled = isFormValid,
         hasUnsavedChanges = hasUnsavedChanges,
         onPrimaryClick = {
             if (isFormValid) {
-                val safeFactor = if (enableMultiUnit) rawFactorVal.coerceAtLeast(1.0) else 1.0
-                val wholesale = NumberFormatter.parseDouble(wholesalePriceText, retailVal * safeFactor)
+                val wholesale = NumberFormatter.parseDouble(wholesalePriceText, defaultWholesale)
                 val threshold = NumberFormatter.parseDouble(thresholdText, 5.0)
                 onSave(
                     existingProduct?.Id ?: 0L,
@@ -970,8 +921,8 @@ fun AddEditProductDialog(
                     warehouse.trim().ifBlank { "المستودع الرئيسي" },
                     shelfLocation.trim().ifBlank { null },
                     smallUnit.trim().ifBlank { "قطعة" },
-                    if (enableMultiUnit) largeUnit.trim().ifBlank { null } else null,
-                    safeFactor,
+                    largeUnit.trim().ifBlank { null },
+                    factorVal,
                     costVal,
                     retailVal,
                     wholesale,
@@ -982,218 +933,206 @@ fun AddEditProductDialog(
             }
         }
     ) {
-        // 1. الحقول الأساسية السريعة
-        SmartTextField(
-            value = name,
-            onValueChange = { name = it },
-            label = "اسم الصنف التجاري",
-            placeholder = "مثال: حليب بودرة 2.5 كجم",
-            isRequired = true,
-            errorText = nameError,
-            nextFocusRequester = if (AppDesignState.showBarcodeField) focusBarcode else focusCost
-        )
-
-        if (AppDesignState.showBarcodeField) {
-            SmartTextField(
-                value = barcode,
-                onValueChange = { barcode = it },
-                label = "الباركود (اختياري)",
-                placeholder = "أدخل الرمز أو ولّد باركود تلقائياً",
-                errorText = if (duplicateBarcodeProduct != null) "هذا الباركود مستخدم بالفعل للصنف «${duplicateBarcodeProduct.Name}»" else null,
-                focusRequester = focusBarcode,
-                nextFocusRequester = focusCost,
-                trailingContent = {
-                    TextButton(
-                        onClick = { barcode = "629" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0') },
-                        contentPadding = PaddingValues(horizontal = 6.dp)
-                    ) {
-                        Text("توليد", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
-                    }
-                }
-            )
-
-            if (duplicateBarcodeProduct != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SmartLedgerColors.StateWarningSubtle)
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "الباركود مسجل للصنف: ${duplicateBarcodeProduct.Name}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = SmartLedgerColors.StateWarning
-                    )
-                    TextButton(onClick = { onOpenExistingProduct(duplicateBarcodeProduct) }) {
-                        Text("فتح الصنف الموجود", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SmartLedgerColors.AccentLight)
-                    }
-                }
-            }
-        }
-
-        // شرائح اختيار سريع للوحدة الأساسية
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        // المجموعة 1: هوية الصنف والباركود
+        FormSectionGroup(
+            title = "1. بيانات الصنف والباركود"
         ) {
             SmartTextField(
-                value = smallUnit,
-                onValueChange = { smallUnit = it },
-                label = "الوحدة الأساسية (الصغرى)",
+                value = name,
+                onValueChange = { name = it },
+                label = "اسم الصنف التجاري",
+                placeholder = "مثال: حليب الممتاز بودرة 2.5 كجم",
                 isRequired = true,
-                modifier = Modifier.weight(1f),
-                nextFocusRequester = focusCost
+                leadingIcon = Icons.Default.ShoppingBag,
+                nextFocusRequester = if (AppDesignState.showBarcodeField) focusBarcode else focusSmallUnit
             )
-            Column(modifier = Modifier.weight(1.2f)) {
-                Text("اختيار سريع:", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf("قطعة", "حبة", "كجم", "علبة").forEach { unitPreset ->
-                        val selected = smallUnit == unitPreset
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (selected) SmartLedgerColors.AccentPrimary else SmartLedgerColors.SurfaceCardElevated)
-                                .clickable { smallUnit = unitPreset }
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
+
+            if (AppDesignState.showBarcodeField) {
+                SmartTextField(
+                    value = barcode,
+                    onValueChange = { barcode = it },
+                    label = "الباركود الدولي / المحلي",
+                    placeholder = "أدخل الرمز أو اضغط توليد تلقائي",
+                    leadingIcon = Icons.Default.QrCode,
+                    errorText = if (duplicateBarcodeProduct != null) "هذا الباركود مسجل مسبقاً للصنف «${duplicateBarcodeProduct.Name}»" else null,
+                    focusRequester = focusBarcode,
+                    nextFocusRequester = focusSmallUnit,
+                    trailingContent = {
+                        TextButton(
+                            onClick = {
+                                barcode = "629" + (System.currentTimeMillis() % 1000000000L).toString().padStart(9, '0')
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp)
                         ) {
-                            Text(
-                                text = unitPreset,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (selected) SmartLedgerColors.TextInverse else SmartLedgerColors.TextSecondary,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Text("توليد", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                )
+
+                if (duplicateBarcodeProduct != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(SmartLedgerColors.StateWarningSubtle)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "الصنف الموجود: ${duplicateBarcodeProduct.Name}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SmartLedgerColors.StateWarning
+                        )
+                        TextButton(onClick = { onOpenExistingProduct(duplicateBarcodeProduct) }) {
+                            Text("فتح الصنف", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = SmartLedgerColors.AccentLight)
                         }
                     }
                 }
             }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SmartTextField(
-                value = costPriceText,
-                onValueChange = { costPriceText = it },
-                label = "تكلفة الـ $smallUnit",
-                placeholder = "0",
-                keyboardType = KeyboardType.Decimal,
-                focusRequester = focusCost,
-                nextFocusRequester = focusRetail,
-                modifier = Modifier.weight(1f)
-            )
-            SmartTextField(
-                value = retailPriceText,
-                onValueChange = { retailPriceText = it },
-                label = "سعر بيع الـ $smallUnit",
-                placeholder = "0",
-                isRequired = true,
-                errorText = retailError,
-                keyboardType = KeyboardType.Decimal,
-                focusRequester = focusRetail,
-                nextFocusRequester = if (!isEditing) focusOpening else null,
-                imeAction = if (!isEditing) ImeAction.Next else ImeAction.Done,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        if (!isEditing) {
-            SmartTextField(
-                value = openingMinorText,
-                onValueChange = { openingMinorText = it },
-                label = "الرصيد الافتتاحي بالوحدة الأساسية ($smallUnit)",
-                placeholder = "0",
-                helperText = if (totalOpeningMinor > 0) "إجمالي الرصيد الافتتاحي الموحد: ${NumberFormatter.formatQuantity(totalOpeningMinor)} $smallUnit" else null,
-                keyboardType = KeyboardType.Decimal,
-                focusRequester = focusOpening,
-                imeAction = ImeAction.Done
-            )
-        }
-
-        // 2. قسم الإفصاح التدريجي للخيارات المتقدمة (الوحدات الكبرى، حد الطلب، موقع الرف)
-        ExpandableAdvancedSection(
-            title = "تفاصيل الوحدات الكبرى والمخزن المتقدمة",
-            subtitle = "العبوات الكبرى (كرتون/درزن)، حد إعادة الطلب، وموقع الرف",
-            initiallyExpanded = enableMultiUnit || !existingProduct?.ShelfLocation.isNullOrBlank(),
-            badgeText = if (enableMultiUnit) "1 $largeUnit = ${NumberFormatter.formatQuantity(rawFactorVal)} $smallUnit" else null
+        // المجموعة 2: هيكلة الوحدات الصغرى والكبرى ومعامل التحويل
+        FormSectionGroup(
+            title = "2. الوحدات ومعامل التحويل",
+            badgeText = if (largeUnit.isNotBlank() && factorVal > 1.0) "1 $largeUnit = ${NumberFormatter.formatQuantity(factorVal)} $smallUnit" else "وحدة مفردة"
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("تفعيل البيع والشراء بوحدة كبرى (عبوة/كرتون)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = SmartLedgerColors.TextPrimary)
-                    Text(
-                        UnitConversionEngine.explainUnitRelation(smallUnit, if (enableMultiUnit) largeUnit else null, rawFactorVal),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = SmartLedgerColors.AccentLight
-                    )
-                }
-                Switch(
-                    checked = enableMultiUnit,
-                    onCheckedChange = { enableMultiUnit = it }
+                SmartTextField(
+                    value = smallUnit,
+                    onValueChange = { smallUnit = it },
+                    label = "الوحدة الصغرى (الأساسية)",
+                    placeholder = "قطعة / حبة",
+                    isRequired = true,
+                    focusRequester = focusSmallUnit,
+                    nextFocusRequester = focusLargeUnit,
+                    modifier = Modifier.weight(1f)
+                )
+                SmartTextField(
+                    value = largeUnit,
+                    onValueChange = { largeUnit = it },
+                    label = "الوحدة الكبرى (العبوة)",
+                    placeholder = "كرتون / درزن",
+                    focusRequester = focusLargeUnit,
+                    nextFocusRequester = focusFactor,
+                    modifier = Modifier.weight(1f)
                 )
             }
 
-            if (enableMultiUnit) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SmartTextField(
-                        value = largeUnit,
-                        onValueChange = { largeUnit = it },
-                        label = "اسم الوحدة الكبرى",
-                        placeholder = "كرتون",
-                        isRequired = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    SmartTextField(
-                        value = factorText,
-                        onValueChange = { factorText = it },
-                        label = "عدد الـ $smallUnit في الـ $largeUnit",
-                        placeholder = "24",
-                        isRequired = true,
-                        errorText = factorError,
-                        keyboardType = KeyboardType.Decimal,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+            SmartTextField(
+                value = factorText,
+                onValueChange = { factorText = it },
+                label = "معامل التحويل (كم $smallUnit داخل الـ ${largeUnit.ifBlank { "عبوة" }})",
+                placeholder = "24",
+                isRequired = true,
+                keyboardType = KeyboardType.Decimal,
+                focusRequester = focusFactor,
+                nextFocusRequester = focusCost
+            )
+        }
 
+        // المجموعة 3: التكلفة وأسعار البيع (التجزئة والجملة)
+        FormSectionGroup(
+            title = "3. التكلفة وأسعار البيع (${AppDesignState.currencySymbol})"
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 SmartTextField(
-                    value = wholesalePriceText,
-                    onValueChange = { wholesalePriceText = it },
-                    label = "سعر بيع الـ $largeUnit (الجملة)",
-                    placeholder = "الافتراضي: ${NumberFormatter.formatQuantity(retailVal * rawFactorVal.coerceAtLeast(1.0))}",
-                    keyboardType = KeyboardType.Decimal
+                    value = costPriceText,
+                    onValueChange = { costPriceText = it },
+                    label = "تكلفة الـ $smallUnit",
+                    placeholder = "0",
+                    isRequired = true,
+                    keyboardType = KeyboardType.Decimal,
+                    focusRequester = focusCost,
+                    nextFocusRequester = focusRetail,
+                    modifier = Modifier.weight(1f)
                 )
+                SmartTextField(
+                    value = retailPriceText,
+                    onValueChange = { retailPriceText = it },
+                    label = "سعر بيع الـ $smallUnit",
+                    placeholder = "0",
+                    isRequired = true,
+                    keyboardType = KeyboardType.Decimal,
+                    focusRequester = focusRetail,
+                    nextFocusRequester = focusWholesale,
+                    modifier = Modifier.weight(1f)
+                )
+            }
 
-                if (!isEditing) {
+            SmartTextField(
+                value = wholesalePriceText,
+                onValueChange = { wholesalePriceText = it },
+                label = "سعر بيع الـ ${largeUnit.ifBlank { "عبوة" }} (اختياري)",
+                placeholder = "الافتراضي التلقائي: ${NumberFormatter.formatQuantity(defaultWholesale)}",
+                keyboardType = KeyboardType.Decimal,
+                focusRequester = focusWholesale,
+                nextFocusRequester = if (!isEditing) focusOpenMajor else focusThreshold
+            )
+        }
+
+        // المجموعة 4: الرصيد الافتتاحي وحد التنبيه وموقع الرف
+        FormSectionGroup(
+            title = if (isEditing) "4. حد التنبيه وموقع التخزين" else "4. الرصيد الافتتاحي وحد التنبيه",
+            badgeText = if (!isEditing && totalOpeningMinor > 0) "الإجمالي: ${NumberFormatter.formatQuantity(totalOpeningMinor)} $smallUnit" else null
+        ) {
+            if (!isEditing) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     SmartTextField(
                         value = openingMajorText,
                         onValueChange = { openingMajorText = it },
-                        label = "كمية افتتاحية إضافية بالـ $largeUnit",
+                        label = "رصيد افتتاحي (${largeUnit.ifBlank { "كبرى" }})",
                         placeholder = "0",
-                        keyboardType = KeyboardType.Decimal
+                        keyboardType = KeyboardType.Decimal,
+                        focusRequester = focusOpenMajor,
+                        nextFocusRequester = focusOpenMinor,
+                        modifier = Modifier.weight(1f)
+                    )
+                    SmartTextField(
+                        value = openingMinorText,
+                        onValueChange = { openingMinorText = it },
+                        label = "رصيد افتتاحي ($smallUnit)",
+                        placeholder = "0",
+                        keyboardType = KeyboardType.Decimal,
+                        focusRequester = focusOpenMinor,
+                        nextFocusRequester = focusThreshold,
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 SmartTextField(
                     value = thresholdText,
                     onValueChange = { thresholdText = it },
                     label = "حد تنبيه النفاد ($smallUnit)",
+                    placeholder = "5",
                     keyboardType = KeyboardType.Decimal,
+                    focusRequester = focusThreshold,
+                    nextFocusRequester = if (AppDesignState.showShelfLocation) focusShelf else null,
                     imeAction = if (AppDesignState.showShelfLocation) ImeAction.Next else ImeAction.Done,
                     modifier = Modifier.weight(1f)
                 )
+
                 if (AppDesignState.showShelfLocation) {
                     SmartTextField(
                         value = shelfLocation,
                         onValueChange = { shelfLocation = it },
-                        label = "موقع الرف / الممر",
+                        label = "موقع الرف (اختياري)",
                         placeholder = "مثال: A-12",
+                        focusRequester = focusShelf,
                         imeAction = ImeAction.Done,
                         modifier = Modifier.weight(1f)
                     )

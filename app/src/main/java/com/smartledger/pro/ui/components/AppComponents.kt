@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -34,17 +35,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.smartledger.pro.ui.theme.SmartLedgerColors
 import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.util.NumberFormatter
 
 /**
- * حقل إدخال ذكي موحد (SmartTextField)
- * - يدعم التسمية الدائمة الواضحة وعلامة الإلزام (*).
- * - يحول الأرقام الشرقية (٠-٩) تلقائياً إلى أرقام غربية (0-9).
- * - يدعم التنقل الذكي عبر لوحة المفاتيح (ImeAction.Next -> الحقل التالي، ImeAction.Done -> إغلاق آمن للوحة المفاتيح).
- * - يعرض رسائل الخطأ السياقية والنصوص المساعدة بجوار الحقل مباشرة.
+ * حقل إدخال عصري ورشيق وغير متشابك (SmartTextField)
+ * - يفصل التسمية العلوية (Label) فوق حقل الإدخال مباشرة بدلاً من قطع إطار الحقل،
+ *   مما يمنع تماماً تداخل أو اقتصاص النصوص العربية الطويلة عند وضع حقلين متجاورين في صف واحد.
+ * - يضبط الأرقام المدخلة إلى الأرقام الغربية القياسية (123) تلقائياً.
+ * - يدعم التنقل السلس بين الحقول عبر لوحة المفاتيح (ImeAction.Next / ImeAction.Done).
  */
 @Composable
 fun SmartTextField(
@@ -71,8 +71,41 @@ fun SmartTextField(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val isError = !errorText.isNullOrBlank()
+    var isFocused by remember { mutableStateOf(false) }
 
-    Column(modifier = modifier) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        // تسمية علوية نظيفة ومنفصلة عن الإطار لمنع أي تشابك أو اقتصاص
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 2.dp)
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (isFocused) FontWeight.Bold else FontWeight.SemiBold,
+                color = when {
+                    isError -> SmartLedgerColors.StateDanger
+                    isFocused -> SmartLedgerColors.AccentLight
+                    else -> SmartLedgerColors.TextSecondary
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (isRequired) {
+                Spacer(modifier = Modifier.width(3.dp))
+                Text(
+                    text = "*",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = SmartLedgerColors.StateDanger,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // حاوية الإدخال العصرية المستديرة
         OutlinedTextField(
             value = value,
             onValueChange = { raw ->
@@ -84,20 +117,26 @@ fun SmartTextField(
                 }
                 onValueChange(normalized)
             },
-            label = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = label, style = MaterialTheme.typography.labelMedium)
-                    if (isRequired) {
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text(text = "*", color = SmartLedgerColors.StateDanger, fontWeight = FontWeight.Bold)
-                    }
-                }
-            },
             placeholder = if (!placeholder.isNullOrBlank()) {
-                { Text(text = placeholder, style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.TextMuted) }
+                {
+                    Text(
+                        text = placeholder,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = SmartLedgerColors.TextMuted.copy(alpha = 0.75f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             } else null,
             leadingIcon = if (leadingIcon != null) {
-                { Icon(leadingIcon, contentDescription = null, tint = SmartLedgerColors.TextMuted, modifier = Modifier.size(18.dp)) }
+                {
+                    Icon(
+                        imageVector = leadingIcon,
+                        contentDescription = null,
+                        tint = if (isFocused) SmartLedgerColors.AccentLight else SmartLedgerColors.TextMuted,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             } else null,
             trailingIcon = trailingContent,
             enabled = enabled,
@@ -105,6 +144,10 @@ fun SmartTextField(
             isError = isError,
             singleLine = singleLine,
             minLines = minLines,
+            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                fontWeight = FontWeight.Medium,
+                color = SmartLedgerColors.TextPrimary
+            ),
             keyboardOptions = KeyboardOptions(
                 keyboardType = keyboardType,
                 imeAction = imeAction
@@ -141,13 +184,12 @@ fun SmartTextField(
                 focusedBorderColor = if (isError) SmartLedgerColors.StateDanger else SmartLedgerColors.AccentLight,
                 unfocusedBorderColor = if (isError) SmartLedgerColors.StateDangerBorder else SmartLedgerColors.BorderSubtle,
                 focusedTextColor = SmartLedgerColors.TextPrimary,
-                unfocusedTextColor = SmartLedgerColors.TextPrimary,
-                focusedLabelColor = if (isError) SmartLedgerColors.StateDanger else SmartLedgerColors.AccentLight,
-                unfocusedLabelColor = SmartLedgerColors.TextMuted
+                unfocusedTextColor = SmartLedgerColors.TextPrimary
             ),
-            shape = RoundedCornerShape(SmartLedgerTokens.inputCorner),
+            shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
+                .onFocusChanged { isFocused = it.isFocused }
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
         )
 
@@ -157,14 +199,14 @@ fun SmartTextField(
                 style = MaterialTheme.typography.labelSmall,
                 color = SmartLedgerColors.StateDanger,
                 fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(start = 6.dp, top = 3.dp)
+                modifier = Modifier.padding(start = 4.dp)
             )
         } else if (!helperText.isNullOrBlank()) {
             Text(
                 text = helperText,
                 style = MaterialTheme.typography.labelSmall,
-                color = SmartLedgerColors.TextMuted,
-                modifier = Modifier.padding(start = 6.dp, top = 3.dp)
+                color = SmartLedgerColors.AccentLight,
+                modifier = Modifier.padding(start = 4.dp)
             )
         }
     }
@@ -172,7 +214,6 @@ fun SmartTextField(
 
 /**
  * شريط بحث مدمج وذكي (CompactSearchBar)
- * لا يستهلك ارتفاعاً مفرطاً، ويدعم المسح السريع، مسح الباركود، وعرض عدد النتائج الفعلي.
  */
 @Composable
 fun CompactSearchBar(
@@ -191,12 +232,12 @@ fun CompactSearchBar(
         modifier = modifier
             .fillMaxWidth()
             .height(44.dp)
-            .clip(RoundedCornerShape(SmartLedgerTokens.inputCorner))
+            .clip(RoundedCornerShape(12.dp))
             .background(SmartLedgerColors.SurfaceInput)
             .border(
                 width = 1.dp,
                 color = if (query.isNotEmpty()) SmartLedgerColors.AccentPrimary else SmartLedgerColors.BorderSubtle,
-                shape = RoundedCornerShape(SmartLedgerTokens.inputCorner)
+                shape = RoundedCornerShape(12.dp)
             )
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -285,7 +326,7 @@ fun CompactSearchBar(
                 onClick = onBarcodeClick,
                 modifier = Modifier
                     .size(32.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RoundedCornerShape(8.dp))
                     .background(SmartLedgerColors.AccentSubtle)
             ) {
                 Icon(
@@ -318,9 +359,9 @@ fun <T> SegmentedOptionRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(SmartLedgerTokens.inputCorner))
+            .clip(RoundedCornerShape(12.dp))
             .background(SmartLedgerColors.SurfaceCardElevated)
-            .padding(3.dp),
+            .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         options.forEach { (value, label) ->
@@ -328,7 +369,7 @@ fun <T> SegmentedOptionRow(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(9.dp))
                     .background(if (isSelected) activeColor else Color.Transparent)
                     .clickable { onOptionSelected(value) }
                     .padding(vertical = 8.dp, horizontal = 6.dp),
@@ -400,7 +441,6 @@ fun <T> FilterChipRow(
 
 /**
  * حالة فارغة ذكية وسياقية (SmartEmptyState)
- * تفرّق بين عدم وجود بيانات أصلية وبين عدم وجود نتائج مطابقة للبحث أو التصفية.
  */
 @Composable
 fun SmartEmptyState(
@@ -488,7 +528,7 @@ fun SmartEmptyState(
 }
 
 /**
- * حوار تأكيد العمليات الحساسة أو المدمرة (ConfirmActionDialog)
+ * حوار تأكيد العمليات الحساسة أو المدمرة (ConfirmActionDialog) — نافذة عائمة فوق لوحة المفاتيح
  */
 @Composable
 fun ConfirmActionDialog(
@@ -503,62 +543,31 @@ fun ConfirmActionDialog(
 ) {
     var reason by remember { mutableStateOf("") }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = SmartLedgerColors.SurfacePanel,
-        shape = RoundedCornerShape(16.dp),
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = if (isDestructive) Icons.Default.WarningAmber else Icons.Default.Info,
-                    contentDescription = null,
-                    tint = if (isDestructive) SmartLedgerColors.StateDanger else SmartLedgerColors.AccentLight,
-                    modifier = Modifier.size(22.dp)
+    FloatingModalDialog(onDismissRequest = onDismiss, maxWidth = 440.dp) {
+        FormSheetContainer(
+            title = title,
+            headerIcon = if (isDestructive) Icons.Default.WarningAmber else Icons.Default.Info,
+            onDismiss = onDismiss,
+            primaryButtonText = confirmText,
+            primaryButtonColor = if (isDestructive) SmartLedgerColors.StateDanger else SmartLedgerColors.AccentPrimary,
+            onPrimaryClick = { onConfirm(reason.trim().ifBlank { null }) }
+        ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = SmartLedgerColors.TextSecondary
+            )
+            if (requireReason) {
+                SmartTextField(
+                    value = reason,
+                    onValueChange = { reason = it },
+                    label = reasonLabel,
+                    placeholder = "توثيق السبب في سجل المراجعة...",
+                    imeAction = ImeAction.Done
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = SmartLedgerColors.TextPrimary
-                )
-            }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = SmartLedgerColors.TextSecondary
-                )
-                if (requireReason) {
-                    SmartTextField(
-                        value = reason,
-                        onValueChange = { reason = it },
-                        label = reasonLabel,
-                        placeholder = "توثيق السبب في سجل المراجعة...",
-                        imeAction = ImeAction.Done
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onConfirm(reason.trim().ifBlank { null }) },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isDestructive) SmartLedgerColors.StateDanger else SmartLedgerColors.AccentPrimary
-                ),
-                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
-            ) {
-                Text(confirmText, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextInverse)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("إلغاء", color = SmartLedgerColors.TextSecondary, fontWeight = FontWeight.SemiBold)
             }
         }
-    )
+    }
 }
 
 /**

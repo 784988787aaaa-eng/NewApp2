@@ -18,7 +18,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -38,7 +37,6 @@ import com.smartledger.pro.util.NumberFormatter
 import com.smartledger.pro.util.ThermalPrinterHelper
 import kotlin.math.abs
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountsScreen(
     privacyMode: Boolean,
@@ -54,7 +52,7 @@ fun AccountsScreen(
     var showAddOrEditDialog by remember { mutableStateOf(false) }
     var editingAccount by remember { mutableStateOf<AccountBalanceSummary?>(null) }
     var selectedAccountForStatement by remember { mutableStateOf<AccountBalanceSummary?>(null) }
-    var quickVoucherTarget by remember { mutableStateOf<Pair<AccountBalanceSummary, Boolean>?>(null) } // Pair(Account, isReceipt)
+    var quickVoucherTarget by remember { mutableStateOf<Pair<AccountBalanceSummary, Boolean>?>(null) }
     var accountToDelete by remember { mutableStateOf<AccountBalanceSummary?>(null) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var isStatusError by remember { mutableStateOf(false) }
@@ -160,7 +158,6 @@ fun AccountsScreen(
                     }
                 }
 
-                // بحث مدمج وسريع بالاسم أو الهاتف أو الكود
                 CompactSearchBar(
                     query = searchQuery,
                     onQueryChange = { viewModel.onSearchQueryChanged(it) },
@@ -168,7 +165,6 @@ fun AccountsScreen(
                     resultCount = accounts.size
                 )
 
-                // تبويبات الدفاتر القابلة للتمرير (الكل، العملاء، الموردين، الموظفين...)
                 val bookChips = remember(books) {
                     listOf<Pair<Long?, String>>(null to "كل الدفاتر") + books.map { it.Id to it.Name }
                 }
@@ -178,7 +174,6 @@ fun AccountsScreen(
                     onItemSelected = { viewModel.onBookSelected(it) }
                 )
 
-                // فلتر حالة الرصيد (الكل / مستحق لنا / مستحق علينا)
                 SegmentedOptionRow(
                     options = listOf(
                         "ALL" to "الكل",
@@ -246,14 +241,10 @@ fun AccountsScreen(
             item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
-        // نافذة كشف الحساب التفصيلي مع الرصيد التراكمي وفلاتر الفترة
+        // نافذة كشف الحساب العائمة
         if (selectedAccountForStatement != null) {
-            // نحدث بيانات ملخص الحساب من القائمة الحية إن تغير الرصيد
             val liveAccount = accounts.find { it.PersonId == selectedAccountForStatement!!.PersonId } ?: selectedAccountForStatement!!
-            ModalBottomSheet(
-                onDismissRequest = { selectedAccountForStatement = null },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { selectedAccountForStatement = null }) {
                 AccountStatementSheetContent(
                     account = liveAccount,
                     bookName = bookNameMap[liveAccount.BookId] ?: "دفتر عام",
@@ -270,13 +261,10 @@ fun AccountsScreen(
             }
         }
 
-        // نافذة سند قبض/صرف سريع مرتبط بالحساب مباشرة
+        // نافذة سند قبض/صرف سريع العائمة فوق لوحة المفاتيح
         if (quickVoucherTarget != null) {
             val (targetAcc, initialIsReceipt) = quickVoucherTarget!!
-            ModalBottomSheet(
-                onDismissRequest = { quickVoucherTarget = null },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { quickVoucherTarget = null }) {
                 QuickAccountVoucherSheet(
                     account = targetAcc,
                     initialIsReceipt = initialIsReceipt,
@@ -299,12 +287,9 @@ fun AccountsScreen(
             }
         }
 
-        // نافذة إضافة أو تعديل حساب
+        // نافذة إضافة أو تعديل حساب العائمة فوق لوحة المفاتيح
         if (showAddOrEditDialog) {
-            ModalBottomSheet(
-                onDismissRequest = { showAddOrEditDialog = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { showAddOrEditDialog = false }) {
                 AddEditAccountDialog(
                     books = books,
                     defaultBookId = selectedBookId ?: 1L,
@@ -557,7 +542,6 @@ fun AccountCardItem(
                     )
                 }
 
-                // إجراءات هادئة وواضحة دون ازدحام الأزرار الدائرية الصارخة
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (AppDesignState.showPhoneInAccounts && !account.Phone.isNullOrBlank()) {
                         IconButton(
@@ -608,11 +592,10 @@ fun AccountStatementSheetContent(
     onClose: () -> Unit
 ) {
     val allOperations by viewModel.getOperationsForAccount(account.PersonId).collectAsState(initial = emptyList())
-    var periodFilter by remember { mutableStateOf("ALL") } // ALL, TODAY, MONTH
-    var typeFilter by remember { mutableStateOf("ALL") } // ALL, DEBIT, CREDIT
+    var periodFilter by remember { mutableStateOf("ALL") }
+    var typeFilter by remember { mutableStateOf("ALL") }
     var operationToDelete by remember { mutableStateOf<OperationEntity?>(null) }
 
-    // حساب الرصيد التراكمي بعد كل حركة بترتيب زمني تصاعدي ثم عكسها للعرض من الأحدث للأقدم
     val operationsWithRunningBalance = remember(allOperations) {
         val chronological = allOperations.sortedWith(compareBy<OperationEntity> { it.OccurredAt }.thenBy { it.Id })
         var running = 0.0
@@ -642,40 +625,19 @@ fun AccountStatementSheetContent(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+    FormSheetContainer(
+        title = account.PersonName,
+        subtitle = "$bookName • الهاتف: ${account.Phone ?: "غير مسجل"}",
+        headerIcon = Icons.Default.AccountBalanceWallet,
+        onDismiss = onClose,
+        primaryButtonText = "إرسال كشف واتساب / مشاركة",
+        secondaryButtonText = "إغلاق",
+        onPrimaryClick = onShareStatement
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(account.PersonName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                Text(
-                    text = "$bookName • الهاتف: ${account.Phone ?: "غير مسجل"}" +
-                        if (account.CreditLimit > 0) " • سقف الائتمان: ${NumberFormatter.formatCurrency(account.CreditLimit, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}" else "",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = SmartLedgerColors.TextMuted
-                )
-            }
-            IconButton(
-                onClick = onClose,
-                modifier = Modifier.size(32.dp).clip(CircleShape).background(SmartLedgerColors.SurfaceCardElevated)
-            ) {
-                Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = SmartLedgerColors.TextMuted, modifier = Modifier.size(16.dp))
-            }
-        }
-
-        // بطاقة ملخص الأرصدة (إجمالي عليه، إجمالي له، الصافي)
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
-            shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
+            shape = RoundedCornerShape(14.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -718,13 +680,12 @@ fun AccountStatementSheetContent(
             }
         }
 
-        // شريط الإجراءات السريعة داخل كشف الحساب
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { onQuickVoucher(true) },
                 modifier = Modifier.weight(1f).height(38.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.StateSuccess),
-                shape = RoundedCornerShape(8.dp),
+                shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 8.dp)
             ) {
                 Icon(Icons.Default.ArrowDownward, contentDescription = null, tint = SmartLedgerColors.TextInverse, modifier = Modifier.size(15.dp))
@@ -735,27 +696,18 @@ fun AccountStatementSheetContent(
                 onClick = { onQuickVoucher(false) },
                 modifier = Modifier.weight(1f).height(38.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.StateDanger),
-                shape = RoundedCornerShape(8.dp),
+                shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 8.dp)
             ) {
                 Icon(Icons.Default.ArrowUpward, contentDescription = null, tint = SmartLedgerColors.TextInverse, modifier = Modifier.size(15.dp))
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("سند صرف (عليه)", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextInverse, fontWeight = FontWeight.Bold)
             }
-            OutlinedButton(
-                onClick = onShareStatement,
-                modifier = Modifier.height(38.dp),
-                shape = RoundedCornerShape(8.dp),
-                border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary)),
-                contentPadding = PaddingValues(horizontal = 10.dp)
-            ) {
-                Icon(Icons.Default.Share, contentDescription = "مشاركة", tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(15.dp))
-            }
             if (!account.Phone.isNullOrBlank()) {
                 OutlinedButton(
                     onClick = onCall,
                     modifier = Modifier.height(38.dp),
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(10.dp),
                     border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
                     contentPadding = PaddingValues(horizontal = 10.dp)
                 ) {
@@ -764,19 +716,15 @@ fun AccountStatementSheetContent(
             }
         }
 
-        // فلاتر الفترة ونوع الحركة لكشف الحساب
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChipRow(
-                items = listOf(
-                    "ALL" to "كل الفترات (${allOperations.size})",
-                    "TODAY" to "اليوم",
-                    "MONTH" to "هذا الشهر"
-                ),
-                selectedItem = periodFilter,
-                onItemSelected = { periodFilter = it },
-                modifier = Modifier.weight(1f)
-            )
-        }
+        FilterChipRow(
+            items = listOf(
+                "ALL" to "كل الفترات (${allOperations.size})",
+                "TODAY" to "اليوم",
+                "MONTH" to "هذا الشهر"
+            ),
+            selectedItem = periodFilter,
+            onItemSelected = { periodFilter = it }
+        )
 
         SegmentedOptionRow(
             options = listOf(
@@ -789,12 +737,12 @@ fun AccountStatementSheetContent(
         )
 
         if (filteredOperations.isEmpty()) {
-            Box(modifier = Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.Center) {
                 Text("لا توجد حركات مطابقة للفترة أو النوع المحدد.", style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.TextMuted)
             }
         } else {
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(filteredOperations, key = { it.first.Id }) { (op, runningBalance) ->
@@ -813,9 +761,9 @@ fun AccountStatementSheetContent(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(10.dp))
                             .background(SmartLedgerColors.SurfaceCard)
-                            .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
+                            .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(10.dp))
                             .padding(10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -897,6 +845,7 @@ fun QuickAccountVoucherSheet(
     FormSheetContainer(
         title = if (isReceipt) "سند قبض سريع (له)" else "سند صرف سريع (عليه)",
         subtitle = "الحساب: ${account.PersonName} • الرصيد الحالي: ${NumberFormatter.formatCurrency(abs(account.NetBalance), AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}",
+        headerIcon = Icons.Default.ReceiptLong,
         onDismiss = onDismiss,
         primaryButtonText = if (isReceipt) "ترحيل سند القبض" else "ترحيل سند الصرف",
         primaryButtonColor = if (isReceipt) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger,
@@ -921,29 +870,29 @@ fun QuickAccountVoucherSheet(
             activeColor = if (isReceipt) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger
         )
 
-        SmartTextField(
-            value = amountText,
-            onValueChange = { amountText = it },
-            label = "مبلغ السند (${AppDesignState.currencySymbol})",
-            placeholder = "0",
-            isRequired = true,
-            keyboardType = KeyboardType.Decimal,
-            imeAction = ImeAction.Next
-        )
+        FormSectionGroup(title = "تفاصيل السند المالي") {
+            SmartTextField(
+                value = amountText,
+                onValueChange = { amountText = it },
+                label = "مبلغ السند (${AppDesignState.currencySymbol})",
+                placeholder = "0",
+                isRequired = true,
+                keyboardType = KeyboardType.Decimal,
+                imeAction = ImeAction.Next
+            )
 
-        SmartTextField(
-            value = statement,
-            onValueChange = { statement = it },
-            label = "البيان والشرح المحاسبي",
-            placeholder = if (isReceipt) "دفعة نقدية من الحساب..." else "دفعة مسددة للحساب...",
-            imeAction = ImeAction.Done
-        )
+            SmartTextField(
+                value = statement,
+                onValueChange = { statement = it },
+                label = "البيان والشرح المحاسبي",
+                placeholder = if (isReceipt) "دفعة نقدية من الحساب..." else "دفعة مسددة للحساب...",
+                imeAction = ImeAction.Next
+            )
 
-        ExpandableAdvancedSection(title = "رقم مرجعي أو سند ورقي (اختياري)") {
             SmartTextField(
                 value = refNumber,
                 onValueChange = { refNumber = it },
-                label = "رقم السند الورقي / الحوالة",
+                label = "رقم السند الورقي / الحوالة (اختياري)",
                 placeholder = "مثال: RV-1042",
                 imeAction = ImeAction.Done
             )
@@ -966,7 +915,7 @@ fun AddEditAccountDialog(
     var phone by remember { mutableStateOf(existingAccount?.Phone ?: "") }
     var openingBalanceText by remember { mutableStateOf("") }
     var isDebitOpening by remember {
-        mutableStateOf(existingAccount?.BookId != 2L && defaultBookId != 2L) // الموردون افتراضياً (له/دائن) والعملاء (عليه/مدين)
+        mutableStateOf(existingAccount?.BookId != 2L && defaultBookId != 2L)
     }
     var creditLimitText by remember {
         mutableStateOf(if (existingAccount != null && existingAccount.CreditLimit > 0) NumberFormatter.formatQuantity(existingAccount.CreditLimit) else "")
@@ -975,6 +924,8 @@ fun AddEditAccountDialog(
 
     val focusPhone = remember { FocusRequester() }
     val focusOpening = remember { FocusRequester() }
+    val focusLimit = remember { FocusRequester() }
+    val focusNote = remember { FocusRequester() }
 
     val isFormValid = name.trim().length >= 2
     val hasUnsavedChanges = name != (existingAccount?.PersonName ?: "") || phone != (existingAccount?.Phone ?: "")
@@ -982,8 +933,9 @@ fun AddEditAccountDialog(
     FormSheetContainer(
         title = if (isEditing) "تعديل بيانات الحساب" else "تعريف حساب جديد",
         subtitle = if (isEditing) "تحديث الاسم، الدفتر، الهاتف، وسقف الائتمان" else "أضف عميلاً أو مورداً أو حساباً عاماً إلى دفاترك",
+        headerIcon = Icons.Default.PersonAdd,
         onDismiss = onDismiss,
-        primaryButtonText = if (isEditing) "حفظ التعديلات" else "فتح وحفظ الحساب",
+        primaryButtonText = if (isEditing) "حفظ التعديلات" else "تأكيد وحفظ الحساب",
         isPrimaryEnabled = isFormValid,
         hasUnsavedChanges = hasUnsavedChanges,
         onPrimaryClick = {
@@ -1003,81 +955,78 @@ fun AddEditAccountDialog(
             }
         }
     ) {
-        // اختيار الدفتر (العملاء، الموردين، الموظفين، حسابات عامة)
-        Text("تصنيف الحساب (الدفتر) *", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
-        val bookOptions = remember(books) {
-            if (books.isNotEmpty()) books.map { it.Id to it.Name }
-            else listOf(1L to "العملاء", 2L to "الموردين", 3L to "الموظفين", 4L to "حسابات عامة")
-        }
-        FilterChipRow(
-            items = bookOptions,
-            selectedItem = selectedBookId,
-            onItemSelected = { bookId ->
-                selectedBookId = bookId
-                if (!isEditing) {
-                    isDebitOpening = (bookId != 2L)
-                }
+        FormSectionGroup(title = "1. تصنيف الدفتر وبيانات الحساب") {
+            val bookOptions = remember(books) {
+                if (books.isNotEmpty()) books.map { it.Id to it.Name }
+                else listOf(1L to "العملاء", 2L to "الموردين", 3L to "الموظفين", 4L to "حسابات عامة")
             }
-        )
-
-        SmartTextField(
-            value = name,
-            onValueChange = { name = it },
-            label = "اسم صاحب الحساب / المنشأة",
-            placeholder = "مثال: مؤسسة الأمل للتجارة",
-            isRequired = true,
-            errorText = if (name.isNotBlank() && name.trim().length < 2) "الرجاء إدخال اسم واضح للحساب" else null,
-            nextFocusRequester = focusPhone
-        )
-
-        SmartTextField(
-            value = phone,
-            onValueChange = { phone = it },
-            label = "رقم الهاتف للتواصل والواتساب",
-            placeholder = "مثال: 777000000",
-            keyboardType = KeyboardType.Phone,
-            focusRequester = focusPhone,
-            nextFocusRequester = if (!isEditing) focusOpening else null,
-            imeAction = if (!isEditing) ImeAction.Next else ImeAction.Done
-        )
-
-        // الرصيد الافتتاحي يظهر فقط عند إنشاء الحساب لأول مرة لمنع الأثر المزدوج عند التعديل
-        if (!isEditing) {
-            SmartTextField(
-                value = openingBalanceText,
-                onValueChange = { openingBalanceText = it },
-                label = "الرصيد الافتتاحي السابق (${AppDesignState.currencySymbol})",
-                placeholder = "0",
-                keyboardType = KeyboardType.Decimal,
-                focusRequester = focusOpening,
-                imeAction = ImeAction.Done
+            FilterChipRow(
+                items = bookOptions,
+                selectedItem = selectedBookId,
+                onItemSelected = { bookId ->
+                    selectedBookId = bookId
+                    if (!isEditing) {
+                        isDebitOpening = (bookId != 2L)
+                    }
+                }
             )
 
-            SegmentedOptionRow(
-                options = listOf(
-                    true to "عليه / مستحق لنا (مدين)",
-                    false to "له / مستحق علينا (دائن)"
-                ),
-                selectedOption = isDebitOpening,
-                onOptionSelected = { isDebitOpening = it },
-                activeColor = if (isDebitOpening) SmartLedgerColors.StateDanger else SmartLedgerColors.StateSuccess
+            SmartTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = "اسم صاحب الحساب / المنشأة",
+                placeholder = "مثال: مؤسسة الأمل للتجارة",
+                isRequired = true,
+                leadingIcon = Icons.Default.Person,
+                errorText = if (name.isNotBlank() && name.trim().length < 2) "الرجاء إدخال اسم واضح للحساب" else null,
+                nextFocusRequester = focusPhone
+            )
+
+            SmartTextField(
+                value = phone,
+                onValueChange = { phone = it },
+                label = "رقم الهاتف للتواصل والواتساب",
+                placeholder = "مثال: 777000000",
+                leadingIcon = Icons.Default.Phone,
+                keyboardType = KeyboardType.Phone,
+                focusRequester = focusPhone,
+                nextFocusRequester = if (!isEditing) focusOpening else focusLimit
             )
         }
 
-        // تفاصيل متقدمة (سقف الائتمان والملاحظات)
-        ExpandableAdvancedSection(
-            title = "سقف الائتمان والعنوان والملاحظات",
-            subtitle = "تحديد حد أقصى للمديونية ومعلومات إضافية",
-            initiallyExpanded = (existingAccount?.CreditLimit ?: 0.0) > 0.0 || !existingAccount?.Note.isNullOrBlank()
-        ) {
+        if (!isEditing) {
+            FormSectionGroup(title = "2. الرصيد الافتتاحي واتجاه المديونية") {
+                SmartTextField(
+                    value = openingBalanceText,
+                    onValueChange = { openingBalanceText = it },
+                    label = "الرصيد الافتتاحي السابق (${AppDesignState.currencySymbol})",
+                    placeholder = "0",
+                    keyboardType = KeyboardType.Decimal,
+                    focusRequester = focusOpening,
+                    nextFocusRequester = focusLimit
+                )
+
+                SegmentedOptionRow(
+                    options = listOf(
+                        true to "عليه / مستحق لنا (مدين)",
+                        false to "له / مستحق علينا (دائن)"
+                    ),
+                    selectedOption = isDebitOpening,
+                    onOptionSelected = { isDebitOpening = it },
+                    activeColor = if (isDebitOpening) SmartLedgerColors.StateDanger else SmartLedgerColors.StateSuccess
+                )
+            }
+        }
+
+        FormSectionGroup(title = if (isEditing) "2. سقف الائتمان والملاحظات" else "3. سقف الائتمان والملاحظات") {
             SmartTextField(
                 value = creditLimitText,
                 onValueChange = { creditLimitText = it },
                 label = "سقف الدين المسموح به (${AppDesignState.currencySymbol})",
                 placeholder = "0 (بدون حد أقصى)",
-                helperText = "ينبّهك النظام عند تجاوز مديونية العميل لهذا الحد",
                 keyboardType = KeyboardType.Decimal,
-                imeAction = ImeAction.Next
+                focusRequester = focusLimit,
+                nextFocusRequester = focusNote
             )
 
             SmartTextField(
@@ -1085,8 +1034,7 @@ fun AddEditAccountDialog(
                 onValueChange = { note = it },
                 label = "العنوان أو ملاحظات خاصة بالحساب",
                 placeholder = "الفرع، المندوب، أو شروط التعامل...",
-                singleLine = false,
-                minLines = 2,
+                focusRequester = focusNote,
                 imeAction = ImeAction.Done
             )
         }

@@ -1,7 +1,6 @@
 package com.smartledger.pro.ui.screens.expenses
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -29,7 +28,6 @@ import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.ui.viewmodels.ExpensesViewModel
 import com.smartledger.pro.util.NumberFormatter
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExpensesScreen(
     onBack: (() -> Unit)? = null,
@@ -232,11 +230,9 @@ fun ExpensesScreen(
             item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
+        // نافذة تسجيل نفقة تشغيلية عائمة فوق لوحة المفاتيح
         if (showAddExpenseDialog) {
-            ModalBottomSheet(
-                onDismissRequest = { showAddExpenseDialog = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { showAddExpenseDialog = false }) {
                 AddExpenseDialog(
                     onDismiss = { showAddExpenseDialog = false },
                     onSave = { amount, statement, category, source ->
@@ -283,6 +279,7 @@ fun AddExpenseDialog(
     FormSheetContainer(
         title = "تسجيل نفقة تشغيلية",
         subtitle = "توثيق المصروفات التشغيلية لحساب صافي الربح بدقة",
+        headerIcon = Icons.Default.TrendingDown,
         onDismiss = onDismiss,
         primaryButtonText = "تأكيد وقيد المصروف",
         primaryButtonColor = SmartLedgerColors.StateDanger,
@@ -294,48 +291,50 @@ fun AddExpenseDialog(
             }
         }
     ) {
-        Text("تصنيف النفقة *", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
-        FilterChipRow(
-            items = listOf(
-                "إيجار ومرافق" to "إيجار ومرافق",
-                "رواتب وأجور" to "رواتب وأجور",
-                "نقل وشحن" to "نقل وشحن",
-                "ضيافة ونثريات" to "ضيافة ونثريات",
-                "صيانة" to "صيانة"
-            ),
-            selectedItem = category,
-            onItemSelected = { category = it }
-        )
+        FormSectionGroup(title = "1. تصنيف النفقة ومبلغها") {
+            FilterChipRow(
+                items = listOf(
+                    "إيجار ومرافق" to "إيجار ومرافق",
+                    "رواتب وأجور" to "رواتب وأجور",
+                    "نقل وشحن" to "نقل وشحن",
+                    "ضيافة ونثريات" to "ضيافة ونثريات",
+                    "صيانة" to "صيانة"
+                ),
+                selectedItem = category,
+                onItemSelected = { category = it }
+            )
 
-        SmartTextField(
-            value = amountText,
-            onValueChange = { amountText = it },
-            label = "مبلغ النفقة (${AppDesignState.currencySymbol})",
-            placeholder = "مثال: 15000",
-            isRequired = true,
-            keyboardType = KeyboardType.Decimal,
-            nextFocusRequester = focusStatement
-        )
+            SmartTextField(
+                value = amountText,
+                onValueChange = { amountText = it },
+                label = "مبلغ النفقة (${AppDesignState.currencySymbol})",
+                placeholder = "مثال: 15000",
+                isRequired = true,
+                keyboardType = KeyboardType.Decimal,
+                nextFocusRequester = focusStatement
+            )
+        }
 
-        SmartTextField(
-            value = statement,
-            onValueChange = { statement = it },
-            label = "بيان سبب الصرف ومبرره",
-            placeholder = "مثال: سداد فاتورة كهرباء شهر أكتوبر...",
-            isRequired = true,
-            focusRequester = focusStatement,
-            imeAction = ImeAction.Done
-        )
+        FormSectionGroup(title = "2. بيان الصرف ومصدر الدفع") {
+            SmartTextField(
+                value = statement,
+                onValueChange = { statement = it },
+                label = "بيان سبب الصرف ومبرره",
+                placeholder = "مثال: سداد فاتورة كهرباء شهر أكتوبر...",
+                isRequired = true,
+                focusRequester = focusStatement,
+                imeAction = ImeAction.Done
+            )
 
-        Text("مصدر الدفع", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
-        SegmentedOptionRow(
-            options = listOf(
-                "الخزينة الرئيسية" to "الخزينة الرئيسية",
-                "الحساب البنكي" to "الحساب البنكي",
-                "عهدة نقدية" to "عهدة نقدية"
-            ),
-            selectedOption = source,
-            onOptionSelected = { source = it }
-        )
+            SegmentedOptionRow(
+                options = listOf(
+                    "الخزينة الرئيسية" to "الخزينة الرئيسية",
+                    "الحساب البنكي" to "الحساب البنكي",
+                    "عهدة نقدية" to "عهدة نقدية"
+                ),
+                selectedOption = source,
+                onOptionSelected = { source = it }
+            )
+        }
     }
 }

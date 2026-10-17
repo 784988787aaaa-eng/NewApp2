@@ -1,7 +1,5 @@
 package com.smartledger.pro.ui.screens.pos
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,7 +16,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -27,7 +24,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smartledger.pro.data.local.dao.AccountBalanceSummary
-import com.smartledger.pro.data.local.dao.ProductStockItem
 import com.smartledger.pro.data.local.entity.InvoiceEntity
 import com.smartledger.pro.data.local.entity.InvoiceLineEntity
 import com.smartledger.pro.data.repository.AppPreferencesRepository
@@ -43,7 +39,6 @@ import com.smartledger.pro.util.ThermalPrinterHelper
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PosSalesScreen(
     viewModel: PosViewModel = viewModel()
@@ -147,7 +142,6 @@ fun PosSalesScreen(
                     }
                 }
 
-                // شريط اختيار العميل المدمج والواضح
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -203,7 +197,6 @@ fun PosSalesScreen(
                     }
                 }
 
-                // شريط بحث ومسح باركود مباشر لإضافة الأصناف للسلة بسرعة
                 CompactSearchBar(
                     query = quickSearchQuery,
                     onQueryChange = { quickSearchQuery = it },
@@ -213,7 +206,6 @@ fun PosSalesScreen(
                     } else null
                 )
 
-                // شريط اختيار سريع للأصناف (يسمح بإضافة الصنف بلمسة واحدة دون فتح نافذة منفصلة)
                 if (products.isNotEmpty()) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(filteredQuickProducts, key = { it.Id }) { prod ->
@@ -257,7 +249,6 @@ fun PosSalesScreen(
             }
         },
         bottomBar = {
-            // شريط الإجمالي والإجراءات السفلي المدمج (لا يحجب السلة ويتكيف مع الشاشات القصيرة)
             Surface(
                 color = SmartLedgerColors.SurfacePanel,
                 tonalElevation = 8.dp,
@@ -385,7 +376,7 @@ fun PosSalesScreen(
             item { Spacer(modifier = Modifier.height(16.dp)) }
         }
 
-        // نافذة مسح الباركود لإضافة الصنف مباشرة إلى السلة
+        // نافذة مسح الباركود العائمة
         if (showBarcodeScanner) {
             BarcodeScannerSheet(
                 title = "مسح باركود الصنف للبيع",
@@ -407,13 +398,10 @@ fun PosSalesScreen(
             )
         }
 
-        // نافذة تعديل كمية وسعر بند في السلة يدوياً
+        // نافذة تعديل كمية وسعر بند في السلة العائمة فوق لوحة المفاتيح
         if (lineToEditQuantityOrPrice != null) {
             val targetLine = lineToEditQuantityOrPrice!!
-            ModalBottomSheet(
-                onDismissRequest = { lineToEditQuantityOrPrice = null },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { lineToEditQuantityOrPrice = null }) {
                 var minorQtyText by remember(targetLine) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.minorQuantity)) }
                 var majorQtyText by remember(targetLine) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.majorQuantity)) }
                 var minorPriceText by remember(targetLine) { mutableStateOf(NumberFormatter.formatQuantity(targetLine.minorUnitPrice)) }
@@ -423,6 +411,7 @@ fun PosSalesScreen(
                 FormSheetContainer(
                     title = "تعديل الكمية والسعر للبند",
                     subtitle = targetLine.name,
+                    headerIcon = Icons.Default.EditNote,
                     onDismiss = { lineToEditQuantityOrPrice = null },
                     primaryButtonText = "تحديث البند",
                     onPrimaryClick = {
@@ -435,50 +424,53 @@ fun PosSalesScreen(
                         lineToEditQuantityOrPrice = null
                     }
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SmartTextField(
-                            value = minorQtyText,
-                            onValueChange = { minorQtyText = it },
-                            label = "الكمية (${targetLine.smallUnit})",
-                            keyboardType = KeyboardType.Decimal,
-                            modifier = Modifier.weight(1f)
-                        )
-                        SmartTextField(
-                            value = minorPriceText,
-                            onValueChange = { minorPriceText = it },
-                            label = "سعر الـ ${targetLine.smallUnit}",
-                            keyboardType = KeyboardType.Decimal,
-                            modifier = Modifier.weight(1f)
-                        )
+                    FormSectionGroup(title = "الوحدة الصغرى (${targetLine.smallUnit})") {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            SmartTextField(
+                                value = minorQtyText,
+                                onValueChange = { minorQtyText = it },
+                                label = "الكمية (${targetLine.smallUnit})",
+                                keyboardType = KeyboardType.Decimal,
+                                modifier = Modifier.weight(1f)
+                            )
+                            SmartTextField(
+                                value = minorPriceText,
+                                onValueChange = { minorPriceText = it },
+                                label = "سعر الـ ${targetLine.smallUnit}",
+                                keyboardType = KeyboardType.Decimal,
+                                imeAction = if (hasMajor) ImeAction.Next else ImeAction.Done,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
                     if (hasMajor) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            SmartTextField(
-                                value = majorQtyText,
-                                onValueChange = { majorQtyText = it },
-                                label = "الكمية (${targetLine.largeUnit})",
-                                keyboardType = KeyboardType.Decimal,
-                                modifier = Modifier.weight(1f)
-                            )
-                            SmartTextField(
-                                value = majorPriceText,
-                                onValueChange = { majorPriceText = it },
-                                label = "سعر الـ ${targetLine.largeUnit}",
-                                keyboardType = KeyboardType.Decimal,
-                                modifier = Modifier.weight(1f)
-                            )
+                        FormSectionGroup(title = "الوحدة الكبرى (${targetLine.largeUnit})") {
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                SmartTextField(
+                                    value = majorQtyText,
+                                    onValueChange = { majorQtyText = it },
+                                    label = "الكمية (${targetLine.largeUnit})",
+                                    keyboardType = KeyboardType.Decimal,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                SmartTextField(
+                                    value = majorPriceText,
+                                    onValueChange = { majorPriceText = it },
+                                    label = "سعر الـ ${targetLine.largeUnit}",
+                                    keyboardType = KeyboardType.Decimal,
+                                    imeAction = ImeAction.Done,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
                     }
                 }
             }
         }
 
-        // نافذة اختيار الأصناف التفصيلية مع البحث
+        // نافذة اختيار الأصناف العائمة فوق لوحة المفاتيح
         if (showProductPickerSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showProductPickerSheet = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { showProductPickerSheet = false }) {
                 var pickerSearch by remember { mutableStateOf("") }
                 val filtered = remember(products, pickerSearch) {
                     if (pickerSearch.isBlank()) products
@@ -488,33 +480,14 @@ fun PosSalesScreen(
                     }
                 }
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .imePadding()
-                        .navigationBarsPadding()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                FormSheetContainer(
+                    title = "اختيار الأصناف للفاتورة",
+                    subtitle = "اضغط لإضافة الصنف بالوحدة الصغرى أو الكبرى",
+                    headerIcon = Icons.Default.AddShoppingCart,
+                    onDismiss = { showProductPickerSheet = false },
+                    primaryButtonText = "تم (${cartLines.size} أصناف بالسلة)",
+                    onPrimaryClick = { showProductPickerSheet = false }
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "اختيار الأصناف للفاتورة",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = SmartLedgerColors.TextPrimary
-                        )
-                        IconButton(
-                            onClick = { showProductPickerSheet = false },
-                            modifier = Modifier.size(32.dp).clip(CircleShape).background(SmartLedgerColors.SurfaceCardElevated)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = SmartLedgerColors.TextMuted, modifier = Modifier.size(16.dp))
-                        }
-                    }
-
                     CompactSearchBar(
                         query = pickerSearch,
                         onQueryChange = { pickerSearch = it },
@@ -523,7 +496,7 @@ fun PosSalesScreen(
                     )
 
                     LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(filtered, key = { it.Id }) { product ->
@@ -538,7 +511,8 @@ fun PosSalesScreen(
                                 colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
                                 border = CardDefaults.outlinedCardBorder().copy(
                                     brush = SolidColor(SmartLedgerColors.BorderSubtle)
-                                )
+                                ),
+                                shape = RoundedCornerShape(12.dp)
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -571,7 +545,7 @@ fun PosSalesScreen(
                                                     viewModel.addItemToCart(product, asMajorUnit = true)
                                                 },
                                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                                shape = RoundedCornerShape(6.dp)
+                                                shape = RoundedCornerShape(8.dp)
                                             ) {
                                                 Text(
                                                     text = "+1 ${product.LargeUnit}",
@@ -587,7 +561,7 @@ fun PosSalesScreen(
                                             },
                                             colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                            shape = RoundedCornerShape(6.dp)
+                                            shape = RoundedCornerShape(8.dp)
                                         ) {
                                             Text(
                                                 text = "+1 ${product.SmallUnit}",
@@ -604,12 +578,9 @@ fun PosSalesScreen(
             }
         }
 
-        // نافذة اختيار العميل مع البحث الفوري
+        // نافذة اختيار العميل العائمة فوق لوحة المفاتيح
         if (showCustomerPickerSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showCustomerPickerSheet = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { showCustomerPickerSheet = false }) {
                 var custSearch by remember { mutableStateOf("") }
                 val filteredCustomers = remember(customers, custSearch) {
                     if (custSearch.isBlank()) customers
@@ -619,21 +590,17 @@ fun PosSalesScreen(
                     }
                 }
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .imePadding()
-                        .navigationBarsPadding()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                FormSheetContainer(
+                    title = "اختيار العميل للفاتورة",
+                    subtitle = "اختر عميلاً مسجلاً أو استمر بعميل نقدي عام",
+                    headerIcon = Icons.Default.PersonSearch,
+                    onDismiss = { showCustomerPickerSheet = false },
+                    primaryButtonText = "عميل نقدي عام (افتراضي)",
+                    onPrimaryClick = {
+                        viewModel.selectedCustomer = null
+                        showCustomerPickerSheet = false
+                    }
                 ) {
-                    Text(
-                        text = "اختيار العميل للفاتورة",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = SmartLedgerColors.TextPrimary
-                    )
-
                     CompactSearchBar(
                         query = custSearch,
                         onQueryChange = { custSearch = it },
@@ -641,36 +608,17 @@ fun PosSalesScreen(
                         resultCount = filteredCustomers.size
                     )
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(SmartLedgerColors.SurfaceCardElevated)
-                            .clickable {
-                                viewModel.selectedCustomer = null
-                                showCustomerPickerSheet = false
-                            }
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("عميل نقدي عام (افتراضي - بدون ذمم آجلة)", fontWeight = FontWeight.Bold, color = SmartLedgerColors.AccentLight)
-                        if (viewModel.selectedCustomer == null) {
-                            Icon(Icons.Default.Check, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(18.dp))
-                        }
-                    }
-
                     LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         items(filteredCustomers, key = { it.PersonId }) { c ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(10.dp))
                                     .background(SmartLedgerColors.SurfaceCard)
-                                    .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
+                                    .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(10.dp))
                                     .clickable {
                                         viewModel.selectedCustomer = c
                                         showCustomerPickerSheet = false
@@ -699,12 +647,9 @@ fun PosSalesScreen(
             }
         }
 
-        // نافذة إتمام السداد وترحيل الفاتورة
+        // نافذة سداد وترحيل الفاتورة العائمة فوق لوحة المفاتيح
         if (showCheckoutSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showCheckoutSheet = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { showCheckoutSheet = false }) {
                 var checkoutError by remember { mutableStateOf<String?>(null) }
                 var isCheckingOut by remember { mutableStateOf(false) }
 
@@ -730,7 +675,6 @@ fun PosSalesScreen(
                                 val savedInvoice = res.getOrThrow()
                                 showCheckoutSheet = false
                                 completedInvoiceResult = Pair(savedInvoice, itemsSnapshot)
-                                // طباعة تلقائية إن كانت مفعلة في الإعدادات
                                 if (settings.autoPrintAfterSale && settings.savedPrinterAddress.isNotBlank()) {
                                     ThermalPrinterHelper.printInvoiceByAddress(
                                         context = context,
@@ -763,104 +707,65 @@ fun PosSalesScreen(
             }
         }
 
-        // نافذة نتيجة الفاتورة بعد الحفظ (الطباعة الحرارية، مشاركة واتساب، أو فاتورة جديدة)
+        // نافذة نتيجة الفاتورة بعد الحفظ العائمة
         if (completedInvoiceResult != null) {
             val (inv, itemsSnap) = completedInvoiceResult!!
             var printStatusMsg by remember { mutableStateOf<String?>(null) }
             var isPrinting by remember { mutableStateOf(false) }
 
-            AlertDialog(
-                onDismissRequest = { completedInvoiceResult = null },
-                containerColor = SmartLedgerColors.SurfacePanel,
-                shape = RoundedCornerShape(18.dp),
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Verified, contentDescription = null, tint = SmartLedgerColors.StateSuccess)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text("تم إصدار وترحيل الفاتورة", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                            Text("رقم الفاتورة: ${inv.InvoiceNumber}", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
+            FloatingModalDialog(onDismissRequest = { completedInvoiceResult = null }, maxWidth = 460.dp) {
+                FormSheetContainer(
+                    title = "تم إصدار وترحيل الفاتورة",
+                    subtitle = "رقم الفاتورة: ${inv.InvoiceNumber}",
+                    headerIcon = Icons.Default.Verified,
+                    onDismiss = { completedInvoiceResult = null },
+                    primaryButtonText = "فاتورة جديدة",
+                    secondaryButtonText = "إغلاق",
+                    onPrimaryClick = { completedInvoiceResult = null }
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("العميل:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextMuted)
+                                Text(inv.PersonNameSnapshot, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("الصافي النهائي:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextMuted)
+                                Text(NumberFormatter.formatCurrency(inv.FinalTotal, settings.currencySymbol, settings.decimalPlaces), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.StateSuccess)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("المسدد نقداً:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextMuted)
+                                Text(NumberFormatter.formatCurrency(inv.PaidAmount, settings.currencySymbol, settings.decimalPlaces), style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.TextPrimary)
+                            }
+                            if (inv.RemainingAmount > 0.0) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("المتبقي آجل:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.StateDangerText)
+                                    Text(NumberFormatter.formatCurrency(inv.RemainingAmount, settings.currencySymbol, settings.decimalPlaces), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.StateDanger)
+                                }
+                            }
                         }
                     }
-                },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("العميل:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextMuted)
-                                    Text(inv.PersonNameSnapshot, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                                }
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("الصافي النهائي:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextMuted)
-                                    Text(NumberFormatter.formatCurrency(inv.FinalTotal, settings.currencySymbol, settings.decimalPlaces), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.StateSuccess)
-                                }
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("المسدد نقداً:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextMuted)
-                                    Text(NumberFormatter.formatCurrency(inv.PaidAmount, settings.currencySymbol, settings.decimalPlaces), style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.TextPrimary)
-                                }
-                                if (inv.RemainingAmount > 0.0) {
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text("المتبقي آجل:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.StateDangerText)
-                                        Text(NumberFormatter.formatCurrency(inv.RemainingAmount, settings.currencySymbol, settings.decimalPlaces), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.StateDanger)
-                                    }
-                                }
-                            }
-                        }
 
-                        if (!printStatusMsg.isNullOrBlank()) {
-                            Text(printStatusMsg.orEmpty(), style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
-                        }
+                    if (!printStatusMsg.isNullOrBlank()) {
+                        Text(printStatusMsg.orEmpty(), style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
+                    }
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            OutlinedButton(
-                                onClick = {
-                                    isPrinting = true
-                                    scope.launch {
-                                        val printRes = ThermalPrinterHelper.printInvoiceByAddress(
-                                            context = context,
-                                            printerAddress = settings.savedPrinterAddress,
-                                            paperWidthMm = settings.printerPaperWidthMm,
-                                            copies = settings.printerCopies,
-                                            tradeName = identity?.TradeName ?: "الدفتر الذكي Pro",
-                                            phone = identity?.Phone1 ?: "",
-                                            header = identity?.ReceiptHeader ?: "",
-                                            invoiceNumber = inv.InvoiceNumber,
-                                            issuedAt = inv.IssuedAt.take(16),
-                                            customerName = inv.PersonNameSnapshot,
-                                            items = itemsSnap,
-                                            subtotal = inv.Subtotal,
-                                            discount = inv.DiscountAmount,
-                                            finalTotal = inv.FinalTotal,
-                                            paid = inv.PaidAmount,
-                                            remaining = inv.RemainingAmount,
-                                            currencySymbol = settings.currencySymbol,
-                                            footer = identity?.ReceiptFooter ?: ""
-                                        )
-                                        isPrinting = false
-                                        printStatusMsg = if (printRes.isSuccess) {
-                                            "تم إرسال الفاتورة إلى الطابعة الحرارية (${settings.printerPaperWidthMm}mm)."
-                                        } else {
-                                            printRes.exceptionOrNull()?.message ?: "تعذر الاتصال بالطابعة"
-                                        }
-                                    }
-                                },
-                                enabled = !isPrinting,
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(16.dp), tint = SmartLedgerColors.AccentLight)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("طباعة", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
-                            }
-
-                            OutlinedButton(
-                                onClick = {
-                                    val text = ThermalPrinterHelper.buildFormattedReceiptText(
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(
+                            onClick = {
+                                isPrinting = true
+                                scope.launch {
+                                    val printRes = ThermalPrinterHelper.printInvoiceByAddress(
+                                        context = context,
+                                        printerAddress = settings.savedPrinterAddress,
+                                        paperWidthMm = settings.printerPaperWidthMm,
+                                        copies = settings.printerCopies,
                                         tradeName = identity?.TradeName ?: "الدفتر الذكي Pro",
+                                        phone = identity?.Phone1 ?: "",
+                                        header = identity?.ReceiptHeader ?: "",
                                         invoiceNumber = inv.InvoiceNumber,
                                         issuedAt = inv.IssuedAt.take(16),
                                         customerName = inv.PersonNameSnapshot,
@@ -873,73 +778,68 @@ fun PosSalesScreen(
                                         currencySymbol = settings.currencySymbol,
                                         footer = identity?.ReceiptFooter ?: ""
                                     )
-                                    ThermalPrinterHelper.shareTextSafely(context, "فاتورة ${inv.InvoiceNumber}", text)
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp), tint = SmartLedgerColors.StateSuccess)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("مشاركة", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.StateSuccess, fontWeight = FontWeight.Bold)
-                            }
+                                    isPrinting = false
+                                    printStatusMsg = if (printRes.isSuccess) {
+                                        "تم إرسال الفاتورة إلى الطابعة الحرارية (${settings.printerPaperWidthMm}mm)."
+                                    } else {
+                                        printRes.exceptionOrNull()?.message ?: "تعذر الاتصال بالطابعة"
+                                    }
+                                }
+                            },
+                            enabled = !isPrinting,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(16.dp), tint = SmartLedgerColors.AccentLight)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("طباعة حرارية", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                val text = ThermalPrinterHelper.buildFormattedReceiptText(
+                                    tradeName = identity?.TradeName ?: "الدفتر الذكي Pro",
+                                    invoiceNumber = inv.InvoiceNumber,
+                                    issuedAt = inv.IssuedAt.take(16),
+                                    customerName = inv.PersonNameSnapshot,
+                                    items = itemsSnap,
+                                    subtotal = inv.Subtotal,
+                                    discount = inv.DiscountAmount,
+                                    finalTotal = inv.FinalTotal,
+                                    paid = inv.PaidAmount,
+                                    remaining = inv.RemainingAmount,
+                                    currencySymbol = settings.currencySymbol,
+                                    footer = identity?.ReceiptFooter ?: ""
+                                )
+                                ThermalPrinterHelper.shareTextSafely(context, "فاتورة ${inv.InvoiceNumber}", text)
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp), tint = SmartLedgerColors.StateSuccess)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("مشاركة / واتساب", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.StateSuccess, fontWeight = FontWeight.Bold)
                         }
                     }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = { completedInvoiceResult = null },
-                        colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
-                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
-                    ) {
-                        Text("فاتورة جديدة", fontWeight = FontWeight.Bold)
-                    }
                 }
-            )
+            }
         }
 
-        // نافذة سجل الفواتير الصادرة وإدارة المرتجعات المحمية بتأكيد
+        // نافذة سجل الفواتير الصادرة وإدارة المرتجعات العائمة
         if (showInvoicesHistorySheet) {
             var invoiceToReverse by remember { mutableStateOf<InvoiceEntity?>(null) }
             var selectedInvoiceForLines by remember { mutableStateOf<InvoiceEntity?>(null) }
             var selectedInvoiceLines by remember { mutableStateOf<List<InvoiceLineEntity>>(emptyList()) }
 
-            ModalBottomSheet(
-                onDismissRequest = { showInvoicesHistorySheet = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+            FloatingModalDialog(onDismissRequest = { showInvoicesHistorySheet = false }) {
+                FormSheetContainer(
+                    title = "سجل الفواتير وإدارة المرتجعات",
+                    subtitle = "إرجاع الفاتورة يعيد الكميات للمخزن ويعكس الأثر المالي ذرياً",
+                    headerIcon = Icons.Default.History,
+                    onDismiss = { showInvoicesHistorySheet = false },
+                    primaryButtonText = "إغلاق السجل",
+                    onPrimaryClick = { showInvoicesHistorySheet = false }
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "سجل الفواتير وإدارة المرتجعات",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = SmartLedgerColors.TextPrimary
-                            )
-                            Text(
-                                text = "إرجاع الفاتورة يعيد الكميات للمخزن ويعكس الأثر المالي ذرياً",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SmartLedgerColors.TextMuted
-                            )
-                        }
-                        IconButton(
-                            onClick = { showInvoicesHistorySheet = false },
-                            modifier = Modifier.size(32.dp).clip(CircleShape).background(SmartLedgerColors.SurfaceCardElevated)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = SmartLedgerColors.TextMuted, modifier = Modifier.size(16.dp))
-                        }
-                    }
-
                     val sales = recentInvoices.filter { it.Type == "Sale" }
                     if (sales.isEmpty()) {
                         Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -947,7 +847,7 @@ fun PosSalesScreen(
                         }
                     } else {
                         LazyColumn(
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 340.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(sales, key = { it.Id }) { inv ->
@@ -1140,7 +1040,6 @@ fun CartLineCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // عداد الوحدة الكبرى (إن وجدت، مثل كرتون)
                 if (hasMajorUnit) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -1177,7 +1076,6 @@ fun CartLineCard(
                     )
                 }
 
-                // عداد الوحدة الصغرى (مثل قطعة / حبة)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = "${line.smallUnit}:",
@@ -1220,7 +1118,7 @@ fun CheckoutSheetContent(
     onCommit: (payType: String, discount: Double, paid: Double, notes: String?) -> Unit,
     onClose: () -> Unit
 ) {
-    var paymentType by remember { mutableStateOf("Cash") } // Cash, Credit, Partial
+    var paymentType by remember { mutableStateOf("Cash") }
     var discountText by remember { mutableStateOf("") }
     var paidAmountText by remember { mutableStateOf("") }
     var receivedCashText by remember { mutableStateOf("") }
@@ -1247,6 +1145,7 @@ fun CheckoutSheetContent(
     FormSheetContainer(
         title = "سداد وترحيل الفاتورة",
         subtitle = "العميل: ${selectedCustomer?.PersonName ?: "عميل نقدي عام"}",
+        headerIcon = Icons.Default.PointOfSale,
         onDismiss = onClose,
         primaryButtonText = "تأكيد وترحيل الفاتورة",
         isPrimaryEnabled = finalTotal > 0.0 && !requiresNamedCustomer,
@@ -1258,7 +1157,6 @@ fun CheckoutSheetContent(
             }
         }
     ) {
-        // 1. طريقة الدفع
         SegmentedOptionRow(
             options = listOf(
                 "Cash" to "نقدي كامل",
@@ -1269,7 +1167,6 @@ fun CheckoutSheetContent(
             onOptionSelected = { paymentType = it }
         )
 
-        // تحذير عند اختيار آجل أو جزئي بدون تحديد عميل مسجل
         if (requiresNamedCustomer) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -1291,7 +1188,7 @@ fun CheckoutSheetContent(
                         onClick = onSelectCustomerClick,
                         colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        shape = RoundedCornerShape(6.dp),
+                        shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.height(32.dp)
                     ) {
                         Text("اختيار عميل", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
@@ -1315,44 +1212,44 @@ fun CheckoutSheetContent(
             }
         }
 
-        // 2. حقل الخصم الممنوح والمبلغ المدفوع/المستلم
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SmartTextField(
-                value = discountText,
-                onValueChange = { discountText = it },
-                label = "الخصم (${AppDesignState.currencySymbol})",
-                placeholder = "0",
-                keyboardType = KeyboardType.Decimal,
-                modifier = Modifier.weight(1f)
-            )
-
-            if (paymentType == "Partial") {
+        FormSectionGroup(title = "الخصم والمبالغ المستلمة") {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 SmartTextField(
-                    value = paidAmountText,
-                    onValueChange = { paidAmountText = it },
-                    label = "المسدد نقداً الآن *",
+                    value = discountText,
+                    onValueChange = { discountText = it },
+                    label = "الخصم (${AppDesignState.currencySymbol})",
                     placeholder = "0",
-                    isRequired = true,
                     keyboardType = KeyboardType.Decimal,
                     modifier = Modifier.weight(1f)
                 )
-            } else if (paymentType == "Cash") {
-                SmartTextField(
-                    value = receivedCashText,
-                    onValueChange = { receivedCashText = it },
-                    label = "المبلغ المستلم (لحساب الباقي)",
-                    placeholder = NumberFormatter.formatQuantity(finalTotal),
-                    keyboardType = KeyboardType.Decimal,
-                    modifier = Modifier.weight(1f)
-                )
+
+                if (paymentType == "Partial") {
+                    SmartTextField(
+                        value = paidAmountText,
+                        onValueChange = { paidAmountText = it },
+                        label = "المسدد نقداً الآن",
+                        placeholder = "0",
+                        isRequired = true,
+                        keyboardType = KeyboardType.Decimal,
+                        modifier = Modifier.weight(1f)
+                    )
+                } else if (paymentType == "Cash") {
+                    SmartTextField(
+                        value = receivedCashText,
+                        onValueChange = { receivedCashText = it },
+                        label = "المستلم من العميل",
+                        placeholder = NumberFormatter.formatQuantity(finalTotal),
+                        keyboardType = KeyboardType.Decimal,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
 
-        // 3. ملخص الحساب الصافي للفاتورة
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
-            shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
+            shape = RoundedCornerShape(14.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -1389,14 +1286,12 @@ fun CheckoutSheetContent(
             }
         }
 
-        ExpandableAdvancedSection(title = "ملاحظات أو شروط الفاتورة (اختياري)") {
-            SmartTextField(
-                value = notes,
-                onValueChange = { notes = it },
-                label = "ملاحظة على الفاتورة",
-                placeholder = "رقم طلب، اسم المستلم، أو بيان إضافي...",
-                imeAction = ImeAction.Done
-            )
-        }
+        SmartTextField(
+            value = notes,
+            onValueChange = { notes = it },
+            label = "ملاحظة على الفاتورة (اختياري)",
+            placeholder = "رقم طلب، اسم المستلم، أو بيان إضافي...",
+            imeAction = ImeAction.Done
+        )
     }
 }

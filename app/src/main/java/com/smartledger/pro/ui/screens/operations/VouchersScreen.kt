@@ -34,7 +34,6 @@ import com.smartledger.pro.util.ThermalPrinterHelper
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VouchersScreen(
     onBack: (() -> Unit)? = null,
@@ -45,7 +44,7 @@ fun VouchersScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    var isReceiptMode by remember { mutableStateOf(true) } // true: قبض (له), false: صرف (عليه)
+    var isReceiptMode by remember { mutableStateOf(true) }
     var amountText by remember { mutableStateOf("") }
     var selectedAccount by remember { mutableStateOf<AccountBalanceSummary?>(null) }
     var statementText by remember { mutableStateOf("") }
@@ -59,7 +58,6 @@ fun VouchersScreen(
     val amountVal = NumberFormatter.parseDouble(amountText, 0.0)
     val isFormValid = amountVal > 0.0 && selectedAccount != null
 
-    // حساب الأثر المحاسبي المتوقع على رصيد الحساب المختار قبل الحفظ
     val currentNet = selectedAccount?.NetBalance ?: 0.0
     val projectedNet = if (isReceiptMode) (currentNet - amountVal) else (currentNet + amountVal)
 
@@ -117,7 +115,6 @@ fun VouchersScreen(
                     }
                 }
 
-                // تبديل نوع السند (قبض له vs صرف عليه)
                 SegmentedOptionRow(
                     options = listOf(
                         true to "سند قبض / استلام (له)",
@@ -145,7 +142,6 @@ fun VouchersScreen(
                 )
             }
 
-            // 1. بطاقة إدخال المبلغ المالي والاختيار السريع
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -175,7 +171,6 @@ fun VouchersScreen(
                             leadingIcon = Icons.Default.Payments
                         )
 
-                        // شرائح مبالغ سريعة للتسهيل
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -184,9 +179,9 @@ fun VouchersScreen(
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .clip(RoundedCornerShape(6.dp))
+                                        .clip(RoundedCornerShape(8.dp))
                                         .background(SmartLedgerColors.SurfaceCardElevated)
-                                        .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(6.dp))
+                                        .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
                                         .bounceClick { amountText = raw }
                                         .padding(vertical = 7.dp),
                                     contentAlignment = Alignment.Center
@@ -199,7 +194,6 @@ fun VouchersScreen(
                 }
             }
 
-            // 2. اختيار الطرف الحسابي وعرض أثر السند على الرصيد
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -213,9 +207,9 @@ fun VouchersScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(SmartLedgerTokens.inputCorner))
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(SmartLedgerColors.SurfaceInput)
-                                .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(SmartLedgerTokens.inputCorner))
+                                .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(12.dp))
                                 .clickable { showAccountPickerSheet = true }
                                 .padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -245,7 +239,7 @@ fun VouchersScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(10.dp))
                                     .background(SmartLedgerColors.SurfaceCardElevated)
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -267,18 +261,16 @@ fun VouchersScreen(
                             label = "البيان والشرح المحاسبي",
                             placeholder = if (isReceiptMode) "مثال: دفعة نقدية من الحساب..." else "مثال: سداد دفعة نقدية للمورد...",
                             focusRequester = focusStatement,
-                            imeAction = ImeAction.Done
+                            imeAction = ImeAction.Next
                         )
 
-                        ExpandableAdvancedSection(title = "رقم السند الورقي أو المرجع (اختياري)") {
-                            SmartTextField(
-                                value = refNumberText,
-                                onValueChange = { refNumberText = it },
-                                label = "رقم المرجع / السند الورقي",
-                                placeholder = "يُولّد تلقائياً إن تُرك فارغاً",
-                                imeAction = ImeAction.Done
-                            )
-                        }
+                        SmartTextField(
+                            value = refNumberText,
+                            onValueChange = { refNumberText = it },
+                            label = "رقم المرجع / السند الورقي (اختياري)",
+                            placeholder = "يُولّد تلقائياً إن تُرك فارغاً",
+                            imeAction = ImeAction.Done
+                        )
 
                         Button(
                             onClick = { if (isFormValid) showConfirmPostDialog = true },
@@ -290,7 +282,7 @@ fun VouchersScreen(
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = if (isReceiptMode) SmartLedgerColors.StateSuccess else SmartLedgerColors.AccentPrimary
                             ),
-                            shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
+                            shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.CheckCircle, contentDescription = null, tint = SmartLedgerColors.TextInverse, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
@@ -305,7 +297,6 @@ fun VouchersScreen(
                 }
             }
 
-            // 3. سجل أحدث السندات المرحلة
             item {
                 Text(
                     text = "أحدث السندات المرحلة (${recentVouchers.size})",
@@ -371,12 +362,9 @@ fun VouchersScreen(
             item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
-        // نافذة اختيار الحساب مع البحث
+        // نافذة اختيار الحساب العائمة فوق لوحة المفاتيح
         if (showAccountPickerSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showAccountPickerSheet = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { showAccountPickerSheet = false }) {
                 var accSearch by remember { mutableStateOf("") }
                 val filtered = remember(accounts, accSearch) {
                     if (accSearch.isBlank()) accounts
@@ -386,16 +374,14 @@ fun VouchersScreen(
                     }
                 }
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .imePadding()
-                        .navigationBarsPadding()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                FormSheetContainer(
+                    title = "اختر الطرف الحسابي للسند",
+                    subtitle = "ابحث واختر العميل أو المورد المرتبط بالسند",
+                    headerIcon = Icons.Default.PersonSearch,
+                    onDismiss = { showAccountPickerSheet = false },
+                    primaryButtonText = "إغلاق",
+                    onPrimaryClick = { showAccountPickerSheet = false }
                 ) {
-                    Text("اختر الطرف الحسابي للسند", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-
                     CompactSearchBar(
                         query = accSearch,
                         onQueryChange = { accSearch = it },
@@ -404,16 +390,16 @@ fun VouchersScreen(
                     )
 
                     LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         items(filtered, key = { it.PersonId }) { acc ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(10.dp))
                                     .background(SmartLedgerColors.SurfaceCard)
-                                    .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
+                                    .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(10.dp))
                                     .clickable {
                                         selectedAccount = acc
                                         showAccountPickerSheet = false
@@ -435,7 +421,6 @@ fun VouchersScreen(
             }
         }
 
-        // تأكيد ترحيل السند المالي
         if (showConfirmPostDialog && selectedAccount != null) {
             val acc = selectedAccount!!
             ConfirmActionDialog(

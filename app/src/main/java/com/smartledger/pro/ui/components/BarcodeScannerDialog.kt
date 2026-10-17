@@ -44,17 +44,14 @@ import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import java.util.concurrent.Executors
 
 /**
- * نافذة مسح الباركود الذكية (BarcodeScannerSheet)
- * - تطلب إذن الكاميرا عند الحاجة فقط مع شرح واضح للسبب.
- * - تدعم الكاميرا الفعلية عبر CameraX + ML Kit مع زر الإضاءة (Flash/Torch) ومنع المسح المكرر.
- * - توفر دائماً بديلاً كاملاً للإدخال اليدوي والاختيار السريع عند غياب الكاميرا أو رفض الصلاحية.
+ * نافذة مسح الباركود الذكية العائمة (BarcodeScannerSheet)
+ * تعمل كنافذة عائمة فوق لوحة المفاتيح مع دعم الكاميرا الحية والإدخال اليدوي البديل.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BarcodeScannerSheet(
     title: String = "مسح أو إدخال الباركود",
     subtitle: String = "وجّه الكاميرا نحو الباركود أو أدخل الرمز يدوياً",
-    knownBarcodes: List<Pair<String, String>> = emptyList(), // Pair(Barcode, ProductName)
+    knownBarcodes: List<Pair<String, String>> = emptyList(),
     onBarcodeResult: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -84,13 +81,11 @@ fun BarcodeScannerSheet(
         }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = SmartLedgerColors.SurfacePanel
-    ) {
+    FloatingModalDialog(onDismissRequest = onDismiss) {
         FormSheetContainer(
             title = title,
             subtitle = subtitle,
+            headerIcon = Icons.Default.QrCodeScanner,
             onDismiss = onDismiss,
             primaryButtonText = "تأكيد الرمز",
             isPrimaryEnabled = manualBarcode.trim().isNotEmpty(),
@@ -106,7 +101,6 @@ fun BarcodeScannerSheet(
                 }
             }
         ) {
-            // تبديل بين وضع الكاميرا والإدخال اليدوي
             SegmentedOptionRow(
                 options = listOf(
                     true to "المسح بالكاميرا",
@@ -199,7 +193,6 @@ fun BarcodeScannerSheet(
                 }
             }
 
-            // حقل الإدخال اليدوي البديل (متاح دائماً لضمان استمرارية العمل)
             SmartTextField(
                 value = manualBarcode,
                 onValueChange = {
@@ -219,7 +212,6 @@ fun BarcodeScannerSheet(
                 }
             )
 
-            // شرائح اختيار سريع للأصناف المسجلة لها باركود (تسهيل الاختبار والاختيار السريع)
             if (knownBarcodes.isNotEmpty()) {
                 Text(
                     text = "رموز مسجلة في المخزن (اضغط للاختيار السريع):",
@@ -258,7 +250,6 @@ fun BarcodeScannerSheet(
 private fun CameraBarcodePreviewBox(
     onDetected: (String) -> Unit
 ) {
-    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var torchEnabled by remember { mutableStateOf(false) }
     var cameraRef by remember { mutableStateOf<Camera?>(null) }
@@ -279,7 +270,7 @@ private fun CameraBarcodePreviewBox(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(210.dp)
+            .height(190.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(SmartLedgerColors.SurfaceInput)
             .border(1.5.dp, SmartLedgerColors.AccentPrimary, RoundedCornerShape(14.dp))
@@ -324,7 +315,6 @@ private fun CameraBarcodePreviewBox(
                                             val rawValue = barcodes.firstOrNull { !it.rawValue.isNullOrBlank() }?.rawValue
                                             if (!rawValue.isNullOrBlank()) {
                                                 val now = SystemClock.elapsedRealtime()
-                                                // منع المسح المتكرر غير المقصود لنفس الرمز خلال 1.5 ثانية
                                                 if (rawValue != lastDetectedCode || (now - lastDetectedTime) > 1500L) {
                                                     lastDetectedCode = rawValue
                                                     lastDetectedTime = now
@@ -355,15 +345,13 @@ private fun CameraBarcodePreviewBox(
                 }
             )
 
-            // إطار توجيه بصري وسط الكاميرا
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .size(width = 200.dp, height = 95.dp)
+                    .size(width = 190.dp, height = 88.dp)
                     .border(2.dp, SmartLedgerColors.AccentLight.copy(alpha = 0.85f), RoundedCornerShape(10.dp))
             )
 
-            // زر تشغيل/إيقاف الإضاءة (Flash/Torch)
             if (cameraRef?.cameraInfo?.hasFlashUnit() == true) {
                 IconButton(
                     onClick = {

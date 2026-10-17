@@ -10,7 +10,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -19,7 +18,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -109,7 +107,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel()
@@ -125,7 +122,6 @@ fun SettingsScreen(
     var statusBannerText by remember { mutableStateOf<String?>(null) }
     var isBannerError by remember { mutableStateOf(false) }
 
-    // حالات النوافذ المنبثقة المتخصصة
     var showEditIdentitySheet by remember { mutableStateOf(false) }
     var showGoogleDriveConfigSheet by remember { mutableStateOf(false) }
     var showPrinterPickerSheet by remember { mutableStateOf(false) }
@@ -133,7 +129,6 @@ fun SettingsScreen(
     var showBackupsArchiveSheet by remember { mutableStateOf(false) }
     var showResetConfirmDialog by remember { mutableStateOf(false) }
 
-    // حالات النسخ الاحتياطي والاستعادة الفعلية
     var isWorkingOnBackup by remember { mutableStateOf(false) }
     var driveState by remember(settings.googleDriveAccountEmail, settings.googleDriveAccessToken, settings.lastCloudBackupTime) {
         mutableStateOf(
@@ -147,12 +142,10 @@ fun SettingsScreen(
     }
     var uploadProgress by remember { mutableStateOf(0) }
 
-    // فحص النسخة قبل الاستعادة (Pre-Restore Verification Dialog)
     var pendingRestoreInspection by remember { mutableStateOf<BackupInspectionResult?>(null) }
     var pendingRestoreFile by remember { mutableStateOf<File?>(null) }
     var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
 
-    // مشغل Storage Access Framework لتصدير نسخة `.slprobackup`
     val exportSafLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { destUri ->
@@ -181,7 +174,6 @@ fun SettingsScreen(
         }
     }
 
-    // مشغل Storage Access Framework لاختيار ملف `.slprobackup` أو `.zip` وفحصه قبل الاستعادة
     val importSafLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { srcUri ->
@@ -228,7 +220,7 @@ fun SettingsScreen(
                             color = SmartLedgerColors.TextPrimary
                         )
                         Text(
-                            text = "الدفتر الذكي Pro — الإصدار 2.2.0 • حفظ دائم وفوري",
+                            text = "الدفتر الذكي Pro — الإصدار 2.3.0 • حفظ دائم وفوري",
                             style = MaterialTheme.typography.labelSmall,
                             color = SmartLedgerColors.TextMuted
                         )
@@ -271,7 +263,6 @@ fun SettingsScreen(
                 )
             }
 
-            // 1. المنشأة وترويسة الفواتير
             if (matchesSearch("بيانات المنشأة الفواتير الاسم التجاري الهاتف العنوان الضريبي الترويسة التذييل تسلسل الأرقام INV PUR")) {
                 item {
                     SettingsSectionCard(
@@ -309,7 +300,6 @@ fun SettingsScreen(
                 }
             }
 
-            // 2. النسخ الاحتياطي المحلي والأرشيف المنظم (.slprobackup)
             if (matchesSearch("النسخ الاحتياطي المحلي استعادة أرشيف slprobackup zip بصمة SHA-256 حفظ")) {
                 item {
                     val lastLocalStatus = if (settings.lastLocalBackupTime.isNotBlank()) {
@@ -422,7 +412,6 @@ fun SettingsScreen(
                 }
             }
 
-            // 3. التكامل السحابي مع Google Drive
             if (matchesSearch("Google Drive جوجل درايف سحابي مزامنة حساب ربط تلقائي")) {
                 item {
                     val cloudStatusText = when {
@@ -533,7 +522,6 @@ fun SettingsScreen(
                 }
             }
 
-            // 4. العملة والتنسيق والأرقام
             if (matchesSearch("العملة التنسيق المنازل العشرية التقريب الأرقام ريال دولار ر.ي ر.س")) {
                 item {
                     SettingsSectionCard(
@@ -575,7 +563,6 @@ fun SettingsScreen(
                 }
             }
 
-            // 5. المظهر وسهولة الاستخدام والكثافة البصرية
             if (matchesSearch("المظهر الوضع الداكن الفاتح الخط حجم النص الكثافة الحركة الاهتزاز")) {
                 item {
                     val themeLabel = when (settings.themeMode) {
@@ -651,7 +638,6 @@ fun SettingsScreen(
                 }
             }
 
-            // 6. المخزون، المبيعات، وتخصيص الحقول
             if (matchesSearch("المخزون الباركود موقع الرف البيع بالسالب الحد الأدنى تنبيه الائتمان الهاتف")) {
                 item {
                     SettingsSectionCard(
@@ -707,7 +693,6 @@ fun SettingsScreen(
                 }
             }
 
-            // 7. الطابعة الحرارية (ESC/POS)
             if (matchesSearch("الطباعة طابعة بلوتوث حرارية 80mm 58mm نسخ اختبار ESC POS")) {
                 item {
                     val printerSummary = if (settings.savedPrinterName.isNotBlank()) {
@@ -808,7 +793,6 @@ fun SettingsScreen(
                 }
             }
 
-            // 8. الأمان والخصوصية والقياسات الحيوية
             if (matchesSearch("الأمان الخصوصية القفل البيومتري بصمة الإصبع رمز الحماية PIN مهلة القفل")) {
                 item {
                     val securitySummary = if (settings.biometricLockEnabled) {
@@ -883,12 +867,9 @@ fun SettingsScreen(
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
 
-        // نافذة تعديل هوية المنشأة والفواتير
+        // نافذة تعديل هوية المنشأة والفواتير العائمة فوق لوحة المفاتيح
         if (showEditIdentitySheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showEditIdentitySheet = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { showEditIdentitySheet = false }) {
                 var tradeName by remember(identity) { mutableStateOf(identity?.TradeName ?: "الدفتر الذكي للتجارة العامة") }
                 var phone by remember(identity) { mutableStateOf(identity?.Phone1 ?: "777000000") }
                 var address by remember(identity) { mutableStateOf(identity?.Address ?: "صنعاء - شارع الزبيري") }
@@ -901,6 +882,7 @@ fun SettingsScreen(
                 FormSheetContainer(
                     title = "تحرير بيانات المنشأة والفواتير",
                     subtitle = "تظهر هذه البيانات في ترويسة وتذييل جميع الفواتير والتقارير",
+                    headerIcon = Icons.Default.Storefront,
                     onDismiss = { showEditIdentitySheet = false },
                     primaryButtonText = "حفظ بيانات المنشأة",
                     isPrimaryEnabled = tradeName.trim().isNotEmpty(),
@@ -920,75 +902,78 @@ fun SettingsScreen(
                         statusBannerText = "تم حفظ بيانات المنشأة وترويسة الفواتير بنجاح."
                     }
                 ) {
-                    SmartTextField(
-                        value = tradeName,
-                        onValueChange = { tradeName = it },
-                        label = "الاسم التجاري للمنشأة",
-                        isRequired = true
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FormSectionGroup(title = "1. الهوية التجارية وبيانات الاتصال") {
                         SmartTextField(
-                            value = phone,
-                            onValueChange = { phone = it },
-                            label = "رقم الهاتف الأساسي",
-                            keyboardType = KeyboardType.Phone,
-                            modifier = Modifier.weight(1f)
+                            value = tradeName,
+                            onValueChange = { tradeName = it },
+                            label = "الاسم التجاري للمنشأة",
+                            isRequired = true
                         )
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            SmartTextField(
+                                value = phone,
+                                onValueChange = { phone = it },
+                                label = "رقم الهاتف الأساسي",
+                                keyboardType = KeyboardType.Phone,
+                                modifier = Modifier.weight(1f)
+                            )
+                            SmartTextField(
+                                value = taxNo,
+                                onValueChange = { taxNo = it },
+                                label = "الرقم الضريبي (اختياري)",
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                         SmartTextField(
-                            value = taxNo,
-                            onValueChange = { taxNo = it },
-                            label = "الرقم الضريبي (اختياري)",
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    SmartTextField(
-                        value = address,
-                        onValueChange = { address = it },
-                        label = "العنوان التجاري"
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SmartTextField(
-                            value = invPrefix,
-                            onValueChange = { invPrefix = it },
-                            label = "بادئة فواتير البيع",
-                            placeholder = "INV",
-                            modifier = Modifier.weight(1f)
-                        )
-                        SmartTextField(
-                            value = purPrefix,
-                            onValueChange = { purPrefix = it },
-                            label = "بادئة فواتير الشراء",
-                            placeholder = "PUR",
-                            modifier = Modifier.weight(1f)
+                            value = address,
+                            onValueChange = { address = it },
+                            label = "العنوان التجاري"
                         )
                     }
-                    SmartTextField(
-                        value = header,
-                        onValueChange = { header = it },
-                        label = "عبارة الترحيب أعلى الفاتورة"
-                    )
-                    SmartTextField(
-                        value = footer,
-                        onValueChange = { footer = it },
-                        label = "شروط الاستبدال أسفل الفاتورة",
-                        imeAction = ImeAction.Done
-                    )
+
+                    FormSectionGroup(title = "2. تسلسل الفواتير وترويسة الإيصال") {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            SmartTextField(
+                                value = invPrefix,
+                                onValueChange = { invPrefix = it },
+                                label = "بادئة فواتير البيع",
+                                placeholder = "INV",
+                                modifier = Modifier.weight(1f)
+                            )
+                            SmartTextField(
+                                value = purPrefix,
+                                onValueChange = { purPrefix = it },
+                                label = "بادئة فواتير الشراء",
+                                placeholder = "PUR",
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        SmartTextField(
+                            value = header,
+                            onValueChange = { header = it },
+                            label = "عبارة الترحيب أعلى الفاتورة"
+                        )
+                        SmartTextField(
+                            value = footer,
+                            onValueChange = { footer = it },
+                            label = "شروط الاستبدال أسفل الفاتورة",
+                            imeAction = ImeAction.Done
+                        )
+                    }
                 }
             }
         }
 
-        // نافذة ربط وإدارة Google Drive
+        // نافذة ربط وإدارة Google Drive العائمة فوق لوحة المفاتيح
         if (showGoogleDriveConfigSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showGoogleDriveConfigSheet = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { showGoogleDriveConfigSheet = false }) {
                 var emailText by remember(settings) { mutableStateOf(settings.googleDriveAccountEmail) }
                 var tokenText by remember(settings) { mutableStateOf(settings.googleDriveAccessToken) }
 
                 FormSheetContainer(
                     title = "إعداد وربط Google Drive",
                     subtitle = "النطاق الآمن: ${GoogleDriveBackupHelper.REQUIRED_OAUTH_SCOPE}",
+                    headerIcon = Icons.Default.CloudSync,
                     onDismiss = { showGoogleDriveConfigSheet = false },
                     primaryButtonText = "حفظ إعدادات الربط",
                     onPrimaryClick = {
@@ -1011,7 +996,7 @@ fun SettingsScreen(
                 ) {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
@@ -1028,22 +1013,24 @@ fun SettingsScreen(
                         }
                     }
 
-                    SmartTextField(
-                        value = emailText,
-                        onValueChange = { emailText = it },
-                        label = "البريد الإلكتروني لحساب Google المرتبط",
-                        placeholder = "example@gmail.com",
-                        keyboardType = KeyboardType.Email
-                    )
+                    FormSectionGroup(title = "بيانات الربط والمصادقة") {
+                        SmartTextField(
+                            value = emailText,
+                            onValueChange = { emailText = it },
+                            label = "البريد الإلكتروني لحساب Google المرتبط",
+                            placeholder = "example@gmail.com",
+                            keyboardType = KeyboardType.Email
+                        )
 
-                    SmartTextField(
-                        value = tokenText,
-                        onValueChange = { tokenText = it },
-                        label = "رمز الوصول OAuth 2.0 (Access Token - اختياري)",
-                        placeholder = "ya29.a0...",
-                        helperText = "لا نطلب كلمة مرور Google مطلقاً. يُستخدم الرمز لمصادقة طلبات Drive API v3.",
-                        imeAction = ImeAction.Done
-                    )
+                        SmartTextField(
+                            value = tokenText,
+                            onValueChange = { tokenText = it },
+                            label = "رمز الوصول OAuth 2.0 (Access Token - اختياري)",
+                            placeholder = "ya29.a0...",
+                            helperText = "لا نطلب كلمة مرور Google مطلقاً. يُستخدم الرمز لمصادقة طلبات Drive API v3.",
+                            imeAction = ImeAction.Done
+                        )
+                    }
 
                     if (settings.googleDriveAccountEmail.isNotBlank() || settings.googleDriveAccessToken.isNotBlank()) {
                         OutlinedButton(
@@ -1071,22 +1058,20 @@ fun SettingsScreen(
             }
         }
 
-        // نافذة اختيار طابعة البلوتوث المقترنة
+        // نافذة اختيار طابعة البلوتوث العائمة فوق لوحة المفاتيح
         if (showPrinterPickerSheet) {
             val pairedResult = remember { ThermalPrinterHelper.getPairedPrinters(context) }
             val printers = pairedResult.getOrDefault(emptyList())
             val errorMsg = pairedResult.exceptionOrNull()?.message
 
-            ModalBottomSheet(
-                onDismissRequest = { showPrinterPickerSheet = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { showPrinterPickerSheet = false }) {
                 var manualAddress by remember(settings) { mutableStateOf(settings.savedPrinterAddress) }
                 var manualName by remember(settings) { mutableStateOf(settings.savedPrinterName) }
 
                 FormSheetContainer(
                     title = "اختيار طابعة الفواتير الحرارية",
                     subtitle = "اختر من أجهزة البلوتوث المقترنة أو أدخل عنوان MAC يدوياً",
+                    headerIcon = Icons.Default.Print,
                     onDismiss = { showPrinterPickerSheet = false },
                     primaryButtonText = "حفظ الطابعة المختارة",
                     onPrimaryClick = {
@@ -1111,9 +1096,9 @@ fun SettingsScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(10.dp))
                                     .background(if (isSelected) SmartLedgerColors.AccentSubtle else SmartLedgerColors.SurfaceCardElevated)
-                                    .border(1.dp, if (isSelected) SmartLedgerColors.AccentPrimary else SmartLedgerColors.BorderSubtle, RoundedCornerShape(8.dp))
+                                    .border(1.dp, if (isSelected) SmartLedgerColors.AccentPrimary else SmartLedgerColors.BorderSubtle, RoundedCornerShape(10.dp))
                                     .clickable {
                                         manualName = dev.name
                                         manualAddress = dev.address
@@ -1133,33 +1118,33 @@ fun SettingsScreen(
                         }
                     }
 
-                    SmartTextField(
-                        value = manualName,
-                        onValueChange = { manualName = it },
-                        label = "اسم الطابعة التعريفي",
-                        placeholder = "مثال: Xprinter XP-80"
-                    )
-                    SmartTextField(
-                        value = manualAddress,
-                        onValueChange = { manualAddress = it },
-                        label = "عنوان البلوتوث (MAC Address)",
-                        placeholder = "00:11:22:33:44:55",
-                        imeAction = ImeAction.Done
-                    )
+                    FormSectionGroup(title = "تحديد الطابعة") {
+                        SmartTextField(
+                            value = manualName,
+                            onValueChange = { manualName = it },
+                            label = "اسم الطابعة التعريفي",
+                            placeholder = "مثال: Xprinter XP-80"
+                        )
+                        SmartTextField(
+                            value = manualAddress,
+                            onValueChange = { manualAddress = it },
+                            label = "عنوان البلوتوث (MAC Address)",
+                            placeholder = "00:11:22:33:44:55",
+                            imeAction = ImeAction.Done
+                        )
+                    }
                 }
             }
         }
 
-        // نافذة إعداد رمز الحماية الشخصي (PIN)
+        // نافذة إعداد رمز الحماية الشخصي العائمة فوق لوحة المفاتيح
         if (showPinSetupSheet) {
-            ModalBottomSheet(
-                onDismissRequest = { showPinSetupSheet = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
+            FloatingModalDialog(onDismissRequest = { showPinSetupSheet = false }) {
                 var pinText by remember(settings) { mutableStateOf(settings.appPinCode) }
                 FormSheetContainer(
                     title = "إعداد رمز الحماية الشخصي (PIN)",
                     subtitle = "يُستخدم الرمز كوسيلة مصادقة سريعة أو احتياطية بجانب بصمة الإصبع",
+                    headerIcon = Icons.Default.Password,
                     onDismiss = { showPinSetupSheet = false },
                     primaryButtonText = "حفظ رمز الحماية",
                     onPrimaryClick = {
@@ -1181,45 +1166,26 @@ fun SettingsScreen(
             }
         }
 
-        // نافذة أرشيف النسخ الاحتياطية المفهرسة (Backups/YYYY/MM-Month/)
+        // نافذة أرشيف النسخ الاحتياطية المفهرسة العائمة
         if (showBackupsArchiveSheet) {
             var recordToDelete by remember { mutableStateOf<BackupRecord?>(null) }
 
-            ModalBottomSheet(
-                onDismissRequest = { showBackupsArchiveSheet = false },
-                containerColor = SmartLedgerColors.SurfacePanel
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+            FloatingModalDialog(onDismissRequest = { showBackupsArchiveSheet = false }) {
+                FormSheetContainer(
+                    title = "أرشيف النسخ الاحتياطية المفهرسة",
+                    subtitle = "منظمة تلقائياً حسب العام والشهر (Backups/YYYY/MM)",
+                    headerIcon = Icons.Default.FolderSpecial,
+                    onDismiss = { showBackupsArchiveSheet = false },
+                    primaryButtonText = "إغلاق الأرشيف",
+                    onPrimaryClick = { showBackupsArchiveSheet = false }
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("أرشيف النسخ الاحتياطية المفهرسة", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                            Text("منظمة تلقائياً حسب العام والشهر (Backups/YYYY/MM)", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
-                        }
-                        IconButton(
-                            onClick = { showBackupsArchiveSheet = false },
-                            modifier = Modifier.size(32.dp).clip(CircleShape).background(SmartLedgerColors.SurfaceCardElevated)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = SmartLedgerColors.TextMuted, modifier = Modifier.size(16.dp))
-                        }
-                    }
-
                     if (indexedBackups.isEmpty()) {
                         Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                             Text("لا توجد نسخ محفوظة في الأرشيف بعد.", color = SmartLedgerColors.TextMuted)
                         }
                     } else {
                         LazyColumn(
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 380.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 340.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(indexedBackups, key = { it.id }) { rec ->
@@ -1289,7 +1255,7 @@ fun SettingsScreen(
                                                 },
                                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                                shape = RoundedCornerShape(6.dp),
+                                                shape = RoundedCornerShape(8.dp),
                                                 modifier = Modifier.height(32.dp)
                                             ) {
                                                 Text("فحص واستعادة", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
@@ -1321,91 +1287,71 @@ fun SettingsScreen(
             }
         }
 
-        // نافذة تأكيد الاستعادة الآمنة بعد نجاح الفحص المسبق (Pre-Restore Verification Summary)
+        // نافذة تأكيد الاستعادة الآمنة العائمة
         if (pendingRestoreInspection != null) {
             val insp = pendingRestoreInspection!!
-            AlertDialog(
+            FloatingModalDialog(
                 onDismissRequest = {
                     pendingRestoreInspection = null
                     pendingRestoreFile = null
                     pendingRestoreUri = null
                 },
-                containerColor = SmartLedgerColors.SurfacePanel,
-                shape = RoundedCornerShape(18.dp),
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = SmartLedgerColors.StateSuccess)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("اجتازت النسخة فحص السلامة بنجاح", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                    }
-                },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("تاريخ النسخة: ${insp.createdAt}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                                Text("حجم قاعدة البيانات: ${NumberFormatter.formatFileSize(insp.dbSizeBytes)}", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary)
-                                Text("بصمة SHA-256: مطابقة 100% (${insp.actualSha256.take(16)}...)", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.StateSuccess, fontWeight = FontWeight.Bold)
-                                if (insp.accountsCount > 0 || insp.productsCount > 0 || insp.invoicesCount > 0) {
-                                    Text("السجلات: ${insp.accountsCount} حساب • ${insp.productsCount} صنف • ${insp.invoicesCount} فاتورة", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
-                                }
+                maxWidth = 460.dp
+            ) {
+                FormSheetContainer(
+                    title = "اجتازت النسخة فحص السلامة بنجاح",
+                    subtitle = "تاريخ النسخة: ${insp.createdAt}",
+                    headerIcon = Icons.Default.VerifiedUser,
+                    onDismiss = {
+                        pendingRestoreInspection = null
+                        pendingRestoreFile = null
+                        pendingRestoreUri = null
+                    },
+                    primaryButtonText = "تأكيد وبدء الاستعادة الآمنة",
+                    onPrimaryClick = {
+                        val fileToRestore = pendingRestoreFile
+                        val uriToRestore = pendingRestoreUri
+                        pendingRestoreInspection = null
+                        isWorkingOnBackup = true
+                        scope.launch {
+                            val res = when {
+                                fileToRestore != null -> BackupRestoreHelper.restoreFromBackupFile(context, fileToRestore, createPreRestoreSafety = true)
+                                uriToRestore != null -> BackupRestoreHelper.restoreFromUri(context, uriToRestore)
+                                else -> Result.failure(Exception("لم يتم تحديد مصدر الاستعادة"))
+                            }
+                            isWorkingOnBackup = false
+                            viewModel.refreshIndexedBackups()
+                            if (res.isSuccess) {
+                                isBannerError = false
+                                statusBannerText = "تمت استعادة قاعدة البيانات بنجاح بعد إنشاء نقطة أمان مسبقة."
+                            } else {
+                                isBannerError = true
+                                statusBannerText = res.exceptionOrNull()?.message ?: "فشلت عملية الاستعادة"
                             }
                         }
-                        Text(
-                            text = "تنبيه: ستقوم الاستعادة باستبدال البيانات الحالية ببيانات هذه النسخة. سيقوم النظام تلقائياً بحفظ نسخة أمان (Pre-Restore Safety) لبياناتك الحالية قبل الاستبدال.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = SmartLedgerColors.TextSecondary
-                        )
                     }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            val fileToRestore = pendingRestoreFile
-                            val uriToRestore = pendingRestoreUri
-                            pendingRestoreInspection = null
-                            isWorkingOnBackup = true
-                            scope.launch {
-                                val res = when {
-                                    fileToRestore != null -> BackupRestoreHelper.restoreFromBackupFile(context, fileToRestore, createPreRestoreSafety = true)
-                                    uriToRestore != null -> BackupRestoreHelper.restoreFromUri(context, uriToRestore)
-                                    else -> Result.failure(Exception("لم يتم تحديد مصدر الاستعادة"))
-                                }
-                                isWorkingOnBackup = false
-                                viewModel.refreshIndexedBackups()
-                                if (res.isSuccess) {
-                                    isBannerError = false
-                                    statusBannerText = "تمت استعادة قاعدة البيانات بنجاح بعد إنشاء نقطة أمان مسبقة."
-                                } else {
-                                    isBannerError = true
-                                    statusBannerText = res.exceptionOrNull()?.message ?: "فشلت عملية الاستعادة"
-                                }
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("حجم قاعدة البيانات: ${NumberFormatter.formatFileSize(insp.dbSizeBytes)}", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary)
+                            Text("بصمة SHA-256: مطابقة 100% (${insp.actualSha256.take(16)}...)", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.StateSuccess, fontWeight = FontWeight.Bold)
+                            if (insp.accountsCount > 0 || insp.productsCount > 0 || insp.invoicesCount > 0) {
+                                Text("السجلات: ${insp.accountsCount} حساب • ${insp.productsCount} صنف • ${insp.invoicesCount} فاتورة", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
                             }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
-                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
-                    ) {
-                        Text("تأكيد وبدء الاستعادة الآمنة", fontWeight = FontWeight.Bold)
-                    }
-                },
-                dismissButton = {
-                    TextButton(
-                        onClick = {
-                            pendingRestoreInspection = null
-                            pendingRestoreFile = null
-                            pendingRestoreUri = null
                         }
-                    ) {
-                        Text("إلغاء", color = SmartLedgerColors.TextSecondary)
                     }
+                    Text(
+                        text = "تنبيه: ستقوم الاستعادة باستبدال البيانات الحالية ببيانات هذه النسخة. سيقوم النظام تلقائياً بحفظ نسخة أمان (Pre-Restore Safety) لبياناتك الحالية قبل الاستبدال.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = SmartLedgerColors.TextSecondary
+                    )
                 }
-            )
+            }
         }
 
-        // تأكيد استعادة الإعدادات الافتراضية
         if (showResetConfirmDialog) {
             ConfirmActionDialog(
                 title = "استعادة الإعدادات الافتراضية؟",
