@@ -1,6 +1,5 @@
 package com.smartledger.pro.ui.screens.settings
 
-import android.app.Application
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,86 +25,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.smartledger.pro.data.local.entity.BusinessIdentityEntity
-import com.smartledger.pro.data.repository.AppSettingsSnapshot
-import com.smartledger.pro.di.AppContainer
 import com.smartledger.pro.ui.components.*
 import com.smartledger.pro.ui.theme.AppThemeMode
 import com.smartledger.pro.ui.theme.AppUiDensity
 import com.smartledger.pro.ui.theme.SmartLedgerColors
 import com.smartledger.pro.ui.theme.SmartLedgerTokens
+import com.smartledger.pro.ui.viewmodels.SettingsViewModel
 import com.smartledger.pro.util.*
-import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.io.File
-
-class SettingsViewModel(application: Application) : AndroidViewModel(application) {
-    private val appContext = application.applicationContext
-    private val container = AppContainer.getInstance(appContext)
-    private val identityDao = container.database.businessIdentityDao()
-    val prefsRepo = container.preferencesRepository
-
-    val settings: StateFlow<AppSettingsSnapshot> = prefsRepo.settings
-
-    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityDao.getIdentity()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
-
-    private val _indexedBackups = MutableStateFlow<List<BackupRecord>>(emptyList())
-    val indexedBackups: StateFlow<List<BackupRecord>> = _indexedBackups.asStateFlow()
-
-    init {
-        refreshIndexedBackups()
-    }
-
-    fun refreshIndexedBackups() {
-        viewModelScope.launch {
-            _indexedBackups.value = BackupRestoreHelper.getIndexedBackups(appContext)
-        }
-    }
-
-    fun saveBusinessIdentity(
-        tradeName: String,
-        phone: String,
-        address: String,
-        taxNumber: String?,
-        receiptHeader: String,
-        receiptFooter: String,
-        invoicePrefix: String,
-        purchasePrefix: String
-    ) {
-        viewModelScope.launch {
-            identityDao.saveIdentity(
-                BusinessIdentityEntity(
-                    Id = 1,
-                    TradeName = tradeName.trim().ifBlank { "الدفتر الذكي للتجارة العامة" },
-                    LegalName = tradeName.trim().ifBlank { "الدفتر الذكي" },
-                    TaxNumber = taxNumber?.trim()?.ifBlank { null },
-                    Phone1 = phone.trim(),
-                    Address = address.trim(),
-                    ReceiptHeader = receiptHeader.trim(),
-                    ReceiptFooter = receiptFooter.trim()
-                )
-            )
-            prefsRepo.updateSettings {
-                it.copy(
-                    invoicePrefix = invoicePrefix.trim().ifBlank { "INV" },
-                    purchasePrefix = purchasePrefix.trim().ifBlank { "PUR" }
-                )
-            }
-        }
-    }
-
-    fun updateSettings(transform: (AppSettingsSnapshot) -> AppSettingsSnapshot) {
-        prefsRepo.updateSettings(transform)
-    }
-
-    fun resetPreferencesToDefault() {
-        prefsRepo.resetToDefaultsPreservingBackupHistory()
-    }
-}
 
 @Composable
 fun SettingsScreen(
@@ -151,19 +80,10 @@ fun SettingsScreen(
     ) { destUri ->
         if (destUri != null) {
             isWorkingOnBackup = true
-            scope.launch {
-                val res = BackupRestoreHelper.exportBackupToUri(context, destUri)
+            viewModel.exportBackupToSafUri(destUri) { res ->
                 isWorkingOnBackup = false
                 if (res.isSuccess) {
                     val rec = res.getOrThrow()
-                    viewModel.updateSettings {
-                        it.copy(
-                            lastLocalBackupTime = rec.createdAt,
-                            lastLocalBackupSize = rec.sizeBytes,
-                            lastLocalBackupSha256 = rec.sha256
-                        )
-                    }
-                    viewModel.refreshIndexedBackups()
                     isBannerError = false
                     statusBannerText = "تم تصدير النسخة (${rec.fileName}) بحجم ${NumberFormatter.formatFileSize(rec.sizeBytes)} والتحقق من بصمة SHA-256."
                 } else {
@@ -179,8 +99,7 @@ fun SettingsScreen(
     ) { srcUri ->
         if (srcUri != null) {
             isWorkingOnBackup = true
-            scope.launch {
-                val inspection = BackupRestoreHelper.inspectBackupUri(context, srcUri)
+            viewModel.inspectBackupFromSafUri(srcUri) { inspection ->
                 isWorkingOnBackup = false
                 if (inspection.isValid) {
                     pendingRestoreFile = null
@@ -332,23 +251,10 @@ fun SettingsScreen(
                             Button(
                                 onClick = {
                                     isWorkingOnBackup = true
-                                    scope.launch {
-                                        val res = BackupRestoreHelper.createStructuredArchiveBackup(
-                                            context = context,
-                                            sourceTag = "LocalArchive",
-                                            keepMaxCount = settings.keepBackupCount
-                                        )
+                                    viewModel.createLocalArchiveBackup { res ->
                                         isWorkingOnBackup = false
                                         if (res.isSuccess) {
                                             val rec = res.getOrThrow()
-                                            viewModel.updateSettings {
-                                                it.copy(
-                                                    lastLocalBackupTime = rec.createdAt,
-                                                    lastLocalBackupSize = rec.sizeBytes,
-                                                    lastLocalBackupSha256 = rec.sha256
-                                                )
-                                            }
-                                            viewModel.refreshIndexedBackups()
                                             isBannerError = false
                                             statusBannerText = "تم حفظ النسخة في أرشيف (${rec.yearFolder}/${rec.monthFolder}) بحجم ${NumberFormatter.formatFileSize(rec.sizeBytes)}."
                                         } else {
@@ -474,29 +380,12 @@ fun SettingsScreen(
                                     } else {
                                         driveState = DriveConnectionState.UPLOADING
                                         uploadProgress = 0
-                                        scope.launch {
-                                            val archiveFile = GoogleDriveBackupHelper.createLocalArchive(context)
-                                            if (archiveFile == null) {
-                                                driveState = DriveConnectionState.ERROR
-                                                isBannerError = true
-                                                statusBannerText = "تعذر تجهيز ملف الأرشيف المحلي للرفع."
-                                            } else {
-                                                val uploadRes = GoogleDriveBackupHelper.uploadBackupToDrive(
-                                                    backupFile = archiveFile,
-                                                    accessToken = settings.googleDriveAccessToken,
-                                                    onProgress = { p -> uploadProgress = p }
-                                                )
+                                        viewModel.uploadBackupToGoogleDrive(
+                                            onProgress = { p -> uploadProgress = p },
+                                            onResult = { uploadRes ->
                                                 if (uploadRes.isSuccess) {
                                                     val info = uploadRes.getOrThrow()
                                                     driveState = DriveConnectionState.SUCCESS
-                                                    viewModel.updateSettings {
-                                                        it.copy(
-                                                            lastCloudBackupTime = info.modifiedTime,
-                                                            lastCloudBackupSize = info.sizeBytes,
-                                                            lastCloudStatusMessage = "تم الرفع بنجاح (${info.fileName})"
-                                                        )
-                                                    }
-                                                    viewModel.refreshIndexedBackups()
                                                     isBannerError = false
                                                     statusBannerText = "تم رفع النسخة إلى Google Drive (${NumberFormatter.formatFileSize(info.sizeBytes)}) بنجاح."
                                                 } else {
@@ -505,7 +394,7 @@ fun SettingsScreen(
                                                     statusBannerText = uploadRes.exceptionOrNull()?.message ?: "فشل الرفع السحابي"
                                                 }
                                             }
-                                        }
+                                        )
                                     }
                                 },
                                 enabled = driveState != DriveConnectionState.UPLOADING,
@@ -1154,11 +1043,11 @@ fun SettingsScreen(
                     isPrimaryEnabled = isPinValid,
                     onPrimaryClick = {
                         if (isPinValid) {
-                            val hashed = if (pinText.isBlank()) "" else SecurityCryptoHelper.hashPin(pinText.trim())
-                            viewModel.updateSettings { it.copy(appPinCode = hashed) }
+                            val cleanPin = pinText.trim()
+                            viewModel.updateAppPin(cleanPin)
                             showPinSetupSheet = false
                             isBannerError = false
-                            statusBannerText = if (hashed.isNotBlank()) {
+                            statusBannerText = if (cleanPin.isNotBlank()) {
                                 "تم تشفير وحفظ بصمة رمز الحماية الشخصي (PBKDF2) بنجاح."
                             } else {
                                 "تم إزالة رمز الحماية الشخصي."
@@ -1254,8 +1143,7 @@ fun SettingsScreen(
                                             Button(
                                                 onClick = {
                                                     val f = File(rec.filePath)
-                                                    scope.launch {
-                                                        val insp = BackupRestoreHelper.inspectBackupFile(context, f)
+                                                    viewModel.inspectBackupArchiveFile(f) { insp ->
                                                         if (insp.isValid) {
                                                             showBackupsArchiveSheet = false
                                                             pendingRestoreFile = f
@@ -1290,9 +1178,7 @@ fun SettingsScreen(
                     message = "سيتم حذف ملف النسخة (${targetRec.fileName}) نهائياً من أرشيف الجهاز.",
                     confirmText = "حذف النسخة",
                     onConfirm = {
-                        scope.launch {
-                            BackupRestoreHelper.deleteBackupRecord(context, targetRec.id)
-                            viewModel.refreshIndexedBackups()
+                        viewModel.deleteIndexedBackup(targetRec.id) {
                             recordToDelete = null
                         }
                     },
@@ -1327,14 +1213,8 @@ fun SettingsScreen(
                         val uriToRestore = pendingRestoreUri
                         pendingRestoreInspection = null
                         isWorkingOnBackup = true
-                        scope.launch {
-                            val res = when {
-                                fileToRestore != null -> BackupRestoreHelper.restoreFromBackupFile(context, fileToRestore, createPreRestoreSafety = true)
-                                uriToRestore != null -> BackupRestoreHelper.restoreFromUri(context, uriToRestore)
-                                else -> Result.failure(Exception("لم يتم تحديد مصدر الاستعادة"))
-                            }
+                        viewModel.restoreDatabase(fileToRestore, uriToRestore) { res ->
                             isWorkingOnBackup = false
-                            viewModel.refreshIndexedBackups()
                             if (res.isSuccess) {
                                 isBannerError = false
                                 statusBannerText = "تمت استعادة قاعدة البيانات بنجاح بعد إنشاء نقطة أمان مسبقة."

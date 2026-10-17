@@ -29,6 +29,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smartledger.pro.data.local.dao.AccountBalanceSummary
 import com.smartledger.pro.data.local.entity.BookEntity
 import com.smartledger.pro.data.local.entity.OperationEntity
+import com.smartledger.pro.domain.usecase.LedgerDirectionPolicy
 import com.smartledger.pro.ui.components.*
 import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
@@ -635,7 +636,8 @@ fun AccountStatementSheetContent(
     onCall: () -> Unit,
     onClose: () -> Unit
 ) {
-    val allOperations by viewModel.getOperationsForAccount(account.PersonId).collectAsState(initial = emptyList())
+    val operationsFlow = remember(account.PersonId) { viewModel.getOperationsForAccount(account.PersonId) }
+    val allOperations by operationsFlow.collectAsState(initial = emptyList())
     var periodFilter by rememberSaveable { mutableStateOf("ALL") }
     var typeFilter by rememberSaveable { mutableStateOf("ALL") }
     var operationToDelete by remember { mutableStateOf<OperationEntity?>(null) }
@@ -644,8 +646,7 @@ fun AccountStatementSheetContent(
         val chronological = allOperations.sortedWith(compareBy<OperationEntity> { it.OccurredAt }.thenBy { it.Id })
         var running = 0.0
         chronological.map { op ->
-            val isCredit = op.Type in listOf("Receive", "DebtToUs", "Purchase", "SaleReturn")
-            running += if (isCredit) -op.Amount else op.Amount
+            running += LedgerDirectionPolicy.signedOperationDelta(op.Type, op.Amount)
             Pair(op, running)
         }.reversed()
     }
@@ -659,7 +660,7 @@ fun AccountStatementSheetContent(
                 "MONTH" -> op.OccurredAt.startsWith(monthPrefix)
                 else -> true
             }
-            val isCredit = op.Type in listOf("Receive", "DebtToUs", "Purchase", "SaleReturn")
+            val isCredit = LedgerDirectionPolicy.isCreditOperation(op.Type)
             val matchesType = when (typeFilter) {
                 "DEBIT" -> !isCredit
                 "CREDIT" -> isCredit
@@ -790,7 +791,7 @@ fun AccountStatementSheetContent(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(filteredOperations, key = { it.first.Id }) { (op, runningBalance) ->
-                    val isCredit = op.Type in listOf("Receive", "DebtToUs", "Purchase", "SaleReturn")
+                    val isCredit = LedgerDirectionPolicy.isCreditOperation(op.Type)
                     val isAlreadyReversed = op.ReferenceNumber?.startsWith("REV-OP-") == true ||
                         allOperations.any { it.ReferenceNumber == "REV-OP-${op.Id}" }
                     val typeTitle = when (op.Type) {

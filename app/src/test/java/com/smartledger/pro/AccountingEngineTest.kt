@@ -317,4 +317,29 @@ class AccountingEngineTest {
         state = FormWindowLifecycleState.SAVE_ERROR
         assertNotEquals(FormWindowLifecycleState.CLOSED, state)
     }
+
+    // 10. اختبار تنسيق الكميات المركبة ومؤشر جيل قاعدة البيانات بعد الاستعادة (ARCH-001 / ARCH-002)
+    @Test
+    fun testFlow10_CompositeQuantityFormatting_AndDatabaseRestoreEpoch() {
+        val compositeText = UnitConversionEngine.formatCompositeQuantity(
+            majorQty = 2.0,
+            minorQty = 5.0,
+            smallUnit = "قطعة",
+            largeUnit = "كرتون"
+        )
+        assertEquals("2 كرتون + 5 قطعة", compositeText)
+
+        val majorOnlyText = UnitConversionEngine.formatCompositeQuantity(
+            majorQty = 3.0,
+            minorQty = 0.0,
+            smallUnit = "قطعة",
+            largeUnit = "كرتون"
+        )
+        assertEquals("3 كرتون", majorOnlyText)
+
+        val epochBefore = com.smartledger.pro.data.local.SmartLedgerDatabase.databaseEpoch.value
+        com.smartledger.pro.data.local.SmartLedgerDatabase.notifyDatabaseRestored()
+        val epochAfter = com.smartledger.pro.data.local.SmartLedgerDatabase.databaseEpoch.value
+        assertEquals(epochBefore + 1L, epochAfter)
+    }
 }

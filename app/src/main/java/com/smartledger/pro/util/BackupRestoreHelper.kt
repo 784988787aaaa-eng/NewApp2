@@ -17,17 +17,15 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 /**
- * حالة التحقق من البصمة الرقمية للنسخة الاحتياطية (تمنع الخلط بين النسخ الموثقة بـ SHA-256 والنسخ القديمة غير الموثقة).
+ * حالة التحقق الصريح من البصمة الرقمية للنسخة الاحتياطية (ChecksumVerificationStatus).
+ * تميز بوضوح بين النسخ الموثقة ببصمة SHA-256 مطابقة، والنسخ القديمة التي لا تحتوي على بصمة، والنسخ التالفة.
  */
 enum class ChecksumVerificationStatus(val arabicDescription: String) {
     VERIFIED_MATCH("بصمة SHA-256 مطابقة وموثقة 100%"),
-    LEGACY_UNVERIFIED("نسخة قديمة بدون بصمة SHA-256 مرفقة (تم التحقق من سلامة SQLite فقط)"),
-    MISMATCH_CORRUPT("بصمة SHA-256 غير مطابقة — الملف تالف أو معدل")
+    LEGACY_UNVERIFIED("نسخة قديمة بدون بصمة رقمية (تم فحص سلامة SQLite فقط)"),
+    MISMATCH_CORRUPT("فشل التحقق الرقمي: البصمة غير مطابقة أو الملف تالف")
 }
 
-/**
- * سجل نسخة احتياطية مفهرسة (BackupRecord)
- */
 data class BackupRecord(
     val id: String,
     val fileName: String,
@@ -41,12 +39,9 @@ data class BackupRecord(
     val accountsCount: Int,
     val productsCount: Int,
     val invoicesCount: Long,
-    val source: String
+    val source: String // "LocalArchive", "ExternalSAF", "GoogleDrive", "PreRestoreSafety"
 )
 
-/**
- * نتيجة فحص وتحقق النسخة قبل الاستعادة (BackupInspectionResult)
- */
 data class BackupInspectionResult(
     val isValid: Boolean,
     val errorMessage: String? = null,
@@ -64,118 +59,104 @@ data class BackupInspectionResult(
 )
 
 /**
- * محرك النسخ الاحتياطي والاستعادة الذري الموثوق (.slprobackup)
+ * محرك النسخ الاحتياطي والاستعادة الذري الموثوق (BackupRestoreHelper).
  *
- * الضمانات الصارمة:
- * 1. يتحقق من نجاح `db.checkpointWal()` قبل أخذ اللقطة؛ فإذا كانت القاعدة مشغولة أو فشل التفريغ، يتوقف النسخ فوراً ويعيد خطأً صريحاً.
- * 2. يتحقق من سلامة اللقطة المنسوخة (`hasValidSqliteHeader` + `verifySqliteIntegrity`) قبل ضغطها واعتمادها.
- * 3. عند الاستعادة مع طلب نسخة أمان (`createPreRestoreSafety = true`)، إذا فشل إنشاء نسخة الأمان للبيانات الحالية، تتوقف الاستعادة فوراً لحماية بيانات المستخدم.
- * 4. يميز صراحةً بين النسخة الحديثة الموثقة ببصمة `SHA-256` (`VERIFIED_MATCH`) والنسخة القديمة التي لا تحتوي على بصمة (`LEGACY_UNVERIFIED`).
+ * الضمانات الهندسية المطبقة:
+ * 1. لا ينشئ أي نسخة احتياطية إذا فشل تفريغ `WAL` (`checkpointWal().isFailure`)، أو إذا لم تتجاوز النسخة المؤقتة
+ *    فحص `PRAGMA integrity_check` قبل ضغطها في الأرشيف.
+ * 2. يرفض عملية الاستعادة فوراً إذا فشل إنشاء نسخة الأمان الاستباقية (`PreRestoreSafety`) عندما يكون الخيار مفعلاً.
+ * 3. يميز صراحةً بين النسخ الموثقة ببصمة `SHA-256` (`VERIFIED_MATCH`) والنسخ القديمة (`LEGACY_UNVERIFIED`).
+ * 4. بعد إتمام الاستعادة بنجاح، يستدعي `SmartLedgerDatabase.notifyDatabaseRestored()` و`AppPreferencesRepository.onDatabaseRestored()`
+ *    لإعادة ربط كافة المستودعات والـ ViewModels باتصال قاعدة البيانات المستعادة فوراً.
  */
 object BackupRestoreHelper {
 
     const val BACKUP_EXTENSION = ".slprobackup"
-    const val CURRENT_SCHEMA_VERSION = 1
-    private const val INDEX_FILE_NAME = "backup_index.json"
-
-    private val monthNames = arrayOf(
-        "01-January", "02-February", "03-March", "04-April",
-        "05-May", "06-June", "07-July", "08-August",
-        "09-September", "10-October", "11-November", "12-December"
-    )
+    private const val INDEX_FILE_NAME = "backup_index_v2.json"
 
     fun generateBackupFileName(prefix: String = "SmartLedger_Backup"): String {
-        val ts = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-        return "${prefix}_${ts}$BACKUP_EXTENSION"
+        val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
+        return "${prefix}_${stamp}$BACKUP_EXTENSION"
     }
 
     /**
-     * إنشاء نسخة احتياطية منظمة داخل أرشيف التطبيق (`Backups/YYYY/MM-Month/`) بعد التحقق الصارم من اتساق اللقطة
+     * إنشاء نسخة احتياطية منظمة تلقائياً داخل هيكلة العام والشهر (`filesDir/Backups/YYYY/MM/`)
+     * مع اشتراط نجاح تفريغ WAL ونجاح فحص سلامة اللقطة المؤقتة قبل اعتمادها.
      */
     suspend fun createStructuredArchiveBackup(
         context: Context,
         sourceTag: String = "LocalArchive",
-        keepMaxCount: Int = 15
+        keepMaxCount: Int = 20
     ): Result<BackupRecord> = withContext(Dispatchers.IO) {
-        val stagingDbFile = File(context.cacheDir, "staging_snapshot_${System.currentTimeMillis()}.db")
+        val stagingDb = File(context.cacheDir, "backup_staging_${System.currentTimeMillis()}.db")
         try {
             val db = SmartLedgerDatabase.getInstance(context)
-            // 1. تفريغ WAL الإلزامي والتحقق من عدم فشل التفريغ
-            val walResult = db.checkpointWal()
-            if (walResult.isFailure) {
+
+            // 1. تفريغ سجل WAL والتحقق الصارم من عدم انشغال القاعدة
+            val checkpointResult = db.checkpointWal()
+            if (checkpointResult.isFailure) {
                 return@withContext Result.failure(
-                    walResult.exceptionOrNull() ?: Exception("تعذر تفريغ معاملات قاعدة البيانات قبل النسخ الاحتياطي")
+                    checkpointResult.exceptionOrNull()
+                        ?: IllegalStateException("تعذر تفريغ معاملات قاعدة البيانات (WAL) قبل النسخ الاحتياطي.")
                 )
             }
 
             val dbFile = context.getDatabasePath(SmartLedgerDatabase.DATABASE_NAME)
             if (!dbFile.exists() || dbFile.length() == 0L) {
-                return@withContext Result.failure(Exception("ملف قاعدة البيانات غير موجود أو فارغ حالياً"))
-            }
-
-            // 2. نسخ القاعدة إلى ملف لقطة معزول والتحقق من سلامتها البنيوية قبل إنشاء الأرشيف
-            dbFile.copyTo(stagingDbFile, overwrite = true)
-            if (!hasValidSqliteHeader(stagingDbFile) || !verifySqliteIntegrity(stagingDbFile)) {
                 return@withContext Result.failure(
-                    Exception("فشل فحص اتساق وسلامة لقطة قاعدة البيانات (SQLite Integrity Check)؛ تم إلغاء النسخ لمنع حفظ نسخة تالفة.")
+                    IllegalStateException("ملف قاعدة البيانات الأساسي غير موجود بعد؛ أضف سجلاً أو افتح التطبيق أولاً.")
                 )
             }
 
-            val accountsCount = runCatching { db.accountDao().getActiveAccountsCount() }.getOrDefault(0)
-            val productsCount = runCatching { db.productDao().getActiveProductsCount() }.getOrDefault(0)
-            val invoicesCount = runCatching { db.invoiceDao().getInvoiceCount() }.getOrDefault(0L)
-
-            val now = Date()
-            val cal = Calendar.getInstance().apply { time = now }
-            val yearStr = String.format(Locale.US, "%04d", cal.get(Calendar.YEAR))
-            val monthStr = monthNames[cal.get(Calendar.MONTH).coerceIn(0, 11)]
-            val createdAtIso = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(now)
-
-            val archiveRoot = File(context.filesDir, "Backups/$yearStr/$monthStr")
-            if (!archiveRoot.exists()) {
-                archiveRoot.mkdirs()
+            // 2. أخذ لقطة مستقرة وفحص سلامتها قبل كتابة الأرشيف
+            dbFile.copyTo(stagingDb, overwrite = true)
+            if (!hasValidSqliteHeader(stagingDb) || !verifySqliteIntegrity(stagingDb)) {
+                return@withContext Result.failure(
+                    IllegalStateException("فشل فحص سلامة لقطة قاعدة البيانات المؤقتة (PRAGMA integrity_check)؛ تم إيقاف النسخ لمنع حفظ نسخة تالفة.")
+                )
             }
 
+            val accountsCount = db.accountDao().getActiveAccountsCount()
+            val productsCount = db.productDao().getActiveProductsCount()
+            val invoicesCount = db.invoiceDao().getInvoicesCount()
+
+            val now = Date()
+            val yearFolder = SimpleDateFormat("yyyy", Locale.US).format(now)
+            val monthFolder = SimpleDateFormat("MM", Locale.US).format(now)
+            val createdAt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(now)
+
+            val targetDir = File(context.filesDir, "Backups/$yearFolder/$monthFolder")
+            if (!targetDir.exists()) targetDir.mkdirs()
+
             val fileName = generateBackupFileName(
-                if (sourceTag == "PreRestoreSafety") "SmartLedger_PreRestore_Safety" else "SmartLedger_Backup"
+                if (sourceTag == "PreRestoreSafety") "SmartLedger_SafetyBeforeRestore" else "SmartLedger_Backup"
             )
-            val tempFile = File(context.cacheDir, "$fileName.tmp")
-            val finalFile = File(archiveRoot, fileName)
+            val targetZipFile = File(targetDir, fileName)
 
-            val sha256 = calculateSha256(stagingDbFile)
+            val dbSha256 = calculateSha256(stagingDb)
 
-            // 3. كتابة الحاوية من ملف اللقطة المتحقق منه إلى ملف مؤقت
-            FileOutputStream(tempFile).use { fos ->
+            FileOutputStream(targetZipFile).use { fos ->
                 writeBackupZipStream(
-                    context = context,
-                    outStream = fos,
-                    dbFile = stagingDbFile,
-                    sha256 = sha256,
-                    createdAt = createdAtIso,
+                    outputStream = fos,
+                    dbFile = stagingDb,
+                    dbSha256 = dbSha256,
+                    createdAt = createdAt,
                     accountsCount = accountsCount,
                     productsCount = productsCount,
                     invoicesCount = invoicesCount
                 )
             }
 
-            if (!tempFile.exists() || tempFile.length() == 0L) {
-                return@withContext Result.failure(Exception("تعذر كتابة ملف النسخة الاحتياطية"))
-            }
-
-            // 4. النقل الذري إلى المجلد النهائي بعد اكتمال الكتابة
-            tempFile.copyTo(finalFile, overwrite = true)
-            tempFile.delete()
-
             val record = BackupRecord(
-                id = "BKP-" + System.currentTimeMillis(),
+                id = UUID.randomUUID().toString(),
                 fileName = fileName,
-                filePath = finalFile.absolutePath,
-                yearFolder = yearStr,
-                monthFolder = monthStr,
-                createdAt = createdAtIso,
-                sizeBytes = finalFile.length(),
-                sha256 = sha256,
-                schemaVersion = CURRENT_SCHEMA_VERSION,
+                filePath = targetZipFile.absolutePath,
+                yearFolder = yearFolder,
+                monthFolder = monthFolder,
+                createdAt = createdAt,
+                sizeBytes = targetZipFile.length(),
+                sha256 = dbSha256,
+                schemaVersion = SmartLedgerDatabase.CURRENT_SCHEMA_VERSION,
                 accountsCount = accountsCount,
                 productsCount = productsCount,
                 invoicesCount = invoicesCount,
@@ -185,28 +166,28 @@ object BackupRestoreHelper {
             appendRecordToIndex(context, record, keepMaxCount)
             Result.success(record)
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(Exception("تعذر إنشاء النسخة الاحتياطية: ${e.localizedMessage ?: "خطأ في وحدة التخزين"}"))
         } finally {
-            stagingDbFile.delete()
+            stagingDb.delete()
         }
     }
 
     /**
-     * تصدير نسخة احتياطية إلى موقع يختاره المستخدم عبر Storage Access Framework (SAF Uri)
+     * تصدير نسخة احتياطية إلى مسار خارجي يختاره المستخدم عبر SAF (`Uri`)
      */
     suspend fun exportBackupToUri(
         context: Context,
-        destUri: Uri
+        destinationUri: Uri
     ): Result<BackupRecord> = withContext(Dispatchers.IO) {
         try {
             val archiveResult = createStructuredArchiveBackup(context, sourceTag = "ExternalSAF")
             if (archiveResult.isFailure) {
-                return@withContext archiveResult
+                return@withContext Result.failure(archiveResult.exceptionOrNull() ?: Exception("فشل تجهيز النسخة"))
             }
             val record = archiveResult.getOrThrow()
             val archiveFile = File(record.filePath)
 
-            val outStream = context.contentResolver.openOutputStream(destUri)
+            val outStream = context.contentResolver.openOutputStream(destinationUri)
                 ?: return@withContext Result.failure(Exception("تعذر فتح مسار الحفظ المختار"))
 
             outStream.use { os ->
@@ -216,93 +197,95 @@ object BackupRestoreHelper {
             }
             Result.success(record)
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(Exception("تعذر تصدير النسخة للمسار الخارجي: ${e.localizedMessage}"))
         }
     }
 
     private fun writeBackupZipStream(
-        context: Context,
-        outStream: OutputStream,
+        outputStream: OutputStream,
         dbFile: File,
-        sha256: String,
+        dbSha256: String,
         createdAt: String,
         accountsCount: Int,
         productsCount: Int,
         invoicesCount: Long
     ) {
-        ZipOutputStream(BufferedOutputStream(outStream)).use { zipOut ->
-            val dbEntry = ZipEntry("smartledger.db")
-            zipOut.putNextEntry(dbEntry)
-            FileInputStream(dbFile).use { it.copyTo(zipOut) }
-            zipOut.closeEntry()
-
-            val manifestJson = JSONObject().apply {
-                put("format", "SmartLedgerProBackup")
-                put("formatVersion", 2)
-                put("app", "SmartLedger Pro Android")
-                put("version", "2.4.0")
-                put("schemaVersion", CURRENT_SCHEMA_VERSION)
+        ZipOutputStream(BufferedOutputStream(outputStream)).use { zos ->
+            // 1. Metadata JSON Entry
+            val metadataJson = JSONObject().apply {
+                put("appName", "SmartLedger Pro")
+                put("appVersion", "2.4.0")
+                put("schemaVersion", SmartLedgerDatabase.CURRENT_SCHEMA_VERSION)
                 put("createdAt", createdAt)
+                put("dbFileName", "smartledger.db")
                 put("dbSizeBytes", dbFile.length())
-                put("sha256", sha256)
+                put("sha256", dbSha256)
                 put("accountsCount", accountsCount)
                 put("productsCount", productsCount)
                 put("invoicesCount", invoicesCount)
             }.toString(2)
 
-            zipOut.putNextEntry(ZipEntry("manifest.json"))
-            zipOut.write(manifestJson.toByteArray(Charsets.UTF_8))
-            zipOut.closeEntry()
+            val metaEntry = ZipEntry("backup_metadata.json")
+            zos.putNextEntry(metaEntry)
+            zos.write(metadataJson.toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
 
-            zipOut.putNextEntry(ZipEntry("metadata.json"))
-            zipOut.write(manifestJson.toByteArray(Charsets.UTF_8))
-            zipOut.closeEntry()
-
-            val prefsFile = File(context.applicationInfo.dataDir, "shared_prefs/smartledger_pro_settings.xml")
-            if (prefsFile.exists()) {
-                zipOut.putNextEntry(ZipEntry("preferences.xml"))
-                FileInputStream(prefsFile).use { it.copyTo(zipOut) }
-                zipOut.closeEntry()
+            // 2. Database Entry
+            val dbEntry = ZipEntry("smartledger.db")
+            zos.putNextEntry(dbEntry)
+            FileInputStream(dbFile).use { fis ->
+                fis.copyTo(zos, bufferSize = 16 * 1024)
             }
+            zos.closeEntry()
         }
     }
 
     /**
-     * فحص ملف النسخة الاحتياطية والتحقق من بصمة SHA-256 وسلامة SQLite قبل الاستعادة،
-     * مع التمييز الصريح بين النسخ الموثقة ببصمة SHA-256 (`VERIFIED_MATCH`) والنسخ القديمة غير الموثقة (`LEGACY_UNVERIFIED`).
+     * فحص شامل لملف النسخة الاحتياطية قبل الاستعادة دون المساس بقاعدة البيانات الحالية.
      */
     suspend fun inspectBackupFile(
         context: Context,
-        zipFile: File,
+        backupFile: File,
         allowLegacyUnverified: Boolean = true
     ): BackupInspectionResult = withContext(Dispatchers.IO) {
-        if (!zipFile.exists() || zipFile.length() == 0L) {
-            return@withContext BackupInspectionResult(isValid = false, errorMessage = "ملف النسخة الاحتياطية غير موجود أو فارغ")
+        if (!backupFile.exists() || backupFile.length() < 64L) {
+            return@withContext BackupInspectionResult(
+                isValid = false,
+                errorMessage = "ملف النسخة الاحتياطية غير موجود أو فارغ"
+            )
         }
-        val tempDb = File(context.cacheDir, "inspect_${System.currentTimeMillis()}.db")
-        try {
-            var metaJsonText: String? = null
-            var foundDb = false
 
-            ZipInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
-                var entry: ZipEntry?
-                while (zis.nextEntry.also { entry = it } != null) {
-                    when (entry!!.name) {
-                        "smartledger.db" -> {
-                            FileOutputStream(tempDb).use { fos -> zis.copyTo(fos) }
-                            foundDb = true
-                        }
-                        "manifest.json", "metadata.json" -> {
-                            if (metaJsonText == null) {
-                                metaJsonText = zis.bufferedReader(Charsets.UTF_8).readText()
+        val tempDb = File(context.cacheDir, "inspect_temp_${System.currentTimeMillis()}.db")
+        try {
+            var metaObj: JSONObject? = null
+            var dbExtracted = false
+
+            if (hasValidSqliteHeader(backupFile)) {
+                backupFile.copyTo(tempDb, overwrite = true)
+                dbExtracted = true
+            } else {
+                ZipInputStream(BufferedInputStream(FileInputStream(backupFile))).use { zis ->
+                    var entry: ZipEntry?
+                    while (zis.nextEntry.also { entry = it } != null) {
+                        val name = entry!!.name
+                        when {
+                            name == "backup_metadata.json" -> {
+                                val bytes = zis.readBytes()
+                                metaObj = JSONObject(String(bytes, Charsets.UTF_8))
+                            }
+                            name == "smartledger.db" || name.endsWith(".db") -> {
+                                FileOutputStream(tempDb).use { fos ->
+                                    zis.copyTo(fos)
+                                }
+                                dbExtracted = true
                             }
                         }
+                        zis.closeEntry()
                     }
-                    zis.closeEntry()
                 }
             }
 
-            if (!foundDb || !tempDb.exists() || tempDb.length() < 100L) {
+            if (!dbExtracted || !tempDb.exists() || tempDb.length() < 100L) {
                 return@withContext BackupInspectionResult(
                     isValid = false,
                     errorMessage = "الأرشيف لا يحتوي على ملف قاعدة بيانات صالح (smartledger.db)"
@@ -312,34 +295,23 @@ object BackupRestoreHelper {
             if (!hasValidSqliteHeader(tempDb)) {
                 return@withContext BackupInspectionResult(
                     isValid = false,
-                    errorMessage = "ملف قاعدة البيانات داخل النسخة تالف أو ليس بتنسيق SQLite قياسي"
+                    errorMessage = "ترويسة الملف ليست قاعدة بيانات SQLite قياسية صالحة"
                 )
             }
 
             val actualSha256 = calculateSha256(tempDb)
-            var expectedSha256 = ""
-            var schemaVersion = 1
-            var appVersion = "2.1.0"
-            var createdAt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(zipFile.lastModified()))
-            var accountsCount = 0
-            var productsCount = 0
-            var invoicesCount = 0L
+            val expectedSha256 = metaObj?.optString("sha256", "") ?: ""
+            val schemaVersion = metaObj?.optInt("schemaVersion", 1) ?: 1
+            val createdAt = metaObj?.optString("createdAt", "نسخة أرشيف خارجية") ?: "نسخة أرشيف خارجية"
+            val appVersion = metaObj?.optString("appVersion", "2.4.0") ?: "2.4.0"
+            val accountsCount = metaObj?.optInt("accountsCount", 0) ?: 0
+            val productsCount = metaObj?.optInt("productsCount", 0) ?: 0
+            val invoicesCount = metaObj?.optLong("invoicesCount", 0L) ?: 0L
 
-            if (!metaJsonText.isNullOrBlank()) {
-                val obj = JSONObject(metaJsonText!!)
-                expectedSha256 = obj.optString("sha256", "").trim()
-                schemaVersion = obj.optInt("schemaVersion", 1)
-                appVersion = obj.optString("version", "2.1.0")
-                createdAt = obj.optString("createdAt", createdAt)
-                accountsCount = obj.optInt("accountsCount", 0)
-                productsCount = obj.optInt("productsCount", 0)
-                invoicesCount = obj.optLong("invoicesCount", 0L)
-            }
-
-            if (schemaVersion > CURRENT_SCHEMA_VERSION) {
+            if (schemaVersion > SmartLedgerDatabase.CURRENT_SCHEMA_VERSION) {
                 return@withContext BackupInspectionResult(
                     isValid = false,
-                    errorMessage = "إصدار مخطط النسخة ($schemaVersion) أحدث من إصدار التطبيق الحالي ($CURRENT_SCHEMA_VERSION)"
+                    errorMessage = "إصدار مخطط النسخة ($schemaVersion) أحدث من إصدار التطبيق الحالي (${SmartLedgerDatabase.CURRENT_SCHEMA_VERSION})"
                 )
             }
 
@@ -424,7 +396,8 @@ object BackupRestoreHelper {
 
     /**
      * استعادة آمنة ومحمية من ملف أرشيف محلي (.slprobackup / .zip).
-     * تشترط نجاح إنشاء نسخة الأمان (`PreRestoreSafety`) للقاعدة الحالية قبل السماح بالاستبدال.
+     * تشترط نجاح إنشاء نسخة الأمان (`PreRestoreSafety`) للقاعدة الحالية قبل السماح بالاستبدال،
+     * وتخطر جميع المستودعات والتدفقات التفاعلية (`notifyDatabaseRestored`) فور إعادة فتح القاعدة المستعادة.
      */
     suspend fun restoreFromBackupFile(
         context: Context,
@@ -450,13 +423,17 @@ object BackupRestoreHelper {
             }
 
             // 2. استخراج قاعدة البيانات إلى المسار المؤقت والتحقق من سلامتها
-            ZipInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
-                var entry: ZipEntry?
-                while (zis.nextEntry.also { entry = it } != null) {
-                    if (entry!!.name == "smartledger.db") {
-                        FileOutputStream(tempExtractedDb).use { fos -> zis.copyTo(fos) }
+            if (hasValidSqliteHeader(zipFile)) {
+                zipFile.copyTo(tempExtractedDb, overwrite = true)
+            } else {
+                ZipInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
+                    var entry: ZipEntry?
+                    while (zis.nextEntry.also { entry = it } != null) {
+                        if (entry!!.name == "smartledger.db" || entry!!.name.endsWith(".db")) {
+                            FileOutputStream(tempExtractedDb).use { fos -> zis.copyTo(fos) }
+                        }
+                        zis.closeEntry()
                     }
-                    zis.closeEntry()
                 }
             }
 
@@ -480,14 +457,16 @@ object BackupRestoreHelper {
                 if (shmFile.exists()) shmFile.delete()
                 tempExtractedDb.copyTo(dbFile, overwrite = true)
 
-                // 4. إعادة فتح القاعدة والتأكد من عملها
+                // 4. إعادة فتح القاعدة والتأكد من عملها وإشعار جميع المستودعات والتدفقات بالاتصال الجديد
                 val reopenedDb = SmartLedgerDatabase.getInstance(context)
                 reopenedDb.accountDao().getActiveAccountsCount()
+                SmartLedgerDatabase.notifyDatabaseRestored()
             } catch (restoreErr: Exception) {
                 if (emergencyRollbackFile.exists()) {
                     emergencyRollbackFile.copyTo(dbFile, overwrite = true)
                 }
                 SmartLedgerDatabase.getInstance(context)
+                SmartLedgerDatabase.notifyDatabaseRestored()
                 return@withContext Result.failure(Exception("تعذر تفعيل القاعدة المستعادة، تم الحفاظ على بياناتك السابقة بأمان."))
             } finally {
                 emergencyRollbackFile.delete()
@@ -563,108 +542,110 @@ object BackupRestoreHelper {
     }
 
     private fun appendRecordToIndex(context: Context, record: BackupRecord, keepMaxCount: Int) {
-        val indexFile = File(context.filesDir, "Backups/$INDEX_FILE_NAME")
-        indexFile.parentFile?.mkdirs()
-        val existing = try {
+        try {
+            val backupsRoot = File(context.filesDir, "Backups")
+            if (!backupsRoot.exists()) backupsRoot.mkdirs()
+
+            val current = mutableListOf<BackupRecord>()
+            val indexFile = File(backupsRoot, INDEX_FILE_NAME)
             if (indexFile.exists()) {
                 val arr = JSONArray(indexFile.readText(Charsets.UTF_8))
-                (0 until arr.length()).mapNotNull { idx ->
-                    val obj = arr.getJSONObject(idx)
-                    val path = obj.optString("filePath")
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    val path = obj.optString("filePath", "")
                     if (File(path).exists()) {
-                        BackupRecord(
-                            id = obj.optString("id"),
-                            fileName = obj.optString("fileName"),
-                            filePath = path,
-                            yearFolder = obj.optString("yearFolder"),
-                            monthFolder = obj.optString("monthFolder"),
-                            createdAt = obj.optString("createdAt"),
-                            sizeBytes = obj.optLong("sizeBytes"),
-                            sha256 = obj.optString("sha256"),
-                            schemaVersion = obj.optInt("schemaVersion", 1),
-                            accountsCount = obj.optInt("accountsCount", 0),
-                            productsCount = obj.optInt("productsCount", 0),
-                            invoicesCount = obj.optLong("invoicesCount", 0L),
-                            source = obj.optString("source", "LocalArchive")
+                        current.add(
+                            BackupRecord(
+                                id = obj.optString("id"),
+                                fileName = obj.optString("fileName"),
+                                filePath = path,
+                                yearFolder = obj.optString("yearFolder"),
+                                monthFolder = obj.optString("monthFolder"),
+                                createdAt = obj.optString("createdAt"),
+                                sizeBytes = obj.optLong("sizeBytes"),
+                                sha256 = obj.optString("sha256"),
+                                schemaVersion = obj.optInt("schemaVersion", 1),
+                                accountsCount = obj.optInt("accountsCount", 0),
+                                productsCount = obj.optInt("productsCount", 0),
+                                invoicesCount = obj.optLong("invoicesCount", 0L),
+                                source = obj.optString("source", "LocalArchive")
+                            )
                         )
-                    } else null
-                }.toMutableList()
-            } else mutableListOf()
+                    }
+                }
+            }
+
+            current.add(0, record)
+            val safeLimit = keepMaxCount.coerceIn(5, 100)
+            if (current.size > safeLimit) {
+                val overflow = current.subList(safeLimit, current.size)
+                overflow.forEach { rec -> runCatching { File(rec.filePath).delete() } }
+            }
+            val retained = current.take(safeLimit)
+            saveIndexList(context, retained)
         } catch (_: Exception) {
-            mutableListOf()
         }
-
-        existing.add(0, record)
-
-        val safeMax = keepMaxCount.coerceAtLeast(3)
-        if (existing.size > safeMax) {
-            val toRemove = existing.subList(safeMax, existing.size)
-            toRemove.forEach { old -> runCatching { File(old.filePath).delete() } }
-        }
-        val trimmed = existing.take(safeMax)
-        saveIndexList(context, trimmed)
     }
 
-    private fun saveIndexList(context: Context, records: List<BackupRecord>) {
-        val indexFile = File(context.filesDir, "Backups/$INDEX_FILE_NAME")
-        indexFile.parentFile?.mkdirs()
+    private fun saveIndexList(context: Context, list: List<BackupRecord>) {
+        val backupsRoot = File(context.filesDir, "Backups")
+        if (!backupsRoot.exists()) backupsRoot.mkdirs()
         val arr = JSONArray()
-        records.forEach { r ->
+        list.forEach { rec ->
             arr.put(
                 JSONObject().apply {
-                    put("id", r.id)
-                    put("fileName", r.fileName)
-                    put("filePath", r.filePath)
-                    put("yearFolder", r.yearFolder)
-                    put("monthFolder", r.monthFolder)
-                    put("createdAt", r.createdAt)
-                    put("sizeBytes", r.sizeBytes)
-                    put("sha256", r.sha256)
-                    put("schemaVersion", r.schemaVersion)
-                    put("accountsCount", r.accountsCount)
-                    put("productsCount", r.productsCount)
-                    put("invoicesCount", r.invoicesCount)
-                    put("source", r.source)
+                    put("id", rec.id)
+                    put("fileName", rec.fileName)
+                    put("filePath", rec.filePath)
+                    put("yearFolder", rec.yearFolder)
+                    put("monthFolder", rec.monthFolder)
+                    put("createdAt", rec.createdAt)
+                    put("sizeBytes", rec.sizeBytes)
+                    put("sha256", rec.sha256)
+                    put("schemaVersion", rec.schemaVersion)
+                    put("accountsCount", rec.accountsCount)
+                    put("productsCount", rec.productsCount)
+                    put("invoicesCount", rec.invoicesCount)
+                    put("source", rec.source)
                 }
             )
         }
-        indexFile.writeText(arr.toString(2), Charsets.UTF_8)
+        File(backupsRoot, INDEX_FILE_NAME).writeText(arr.toString(2), Charsets.UTF_8)
     }
 
-    fun hasValidSqliteHeader(dbFile: File): Boolean {
-        if (!dbFile.exists() || dbFile.length() < 16L) return false
+    fun hasValidSqliteHeader(file: File): Boolean {
+        if (!file.exists() || file.length() < 16L) return false
         return try {
-            val header = ByteArray(16)
-            FileInputStream(dbFile).use { it.read(header) }
-            val headerStr = String(header, 0, 15, Charsets.US_ASCII)
-            headerStr == "SQLite format 3"
+            val headerBytes = ByteArray(16)
+            FileInputStream(file).use { it.read(headerBytes) }
+            val headerStr = String(headerBytes, Charsets.US_ASCII)
+            headerStr.startsWith("SQLite format 3")
         } catch (_: Exception) {
             false
         }
     }
 
-    private fun verifySqliteIntegrity(dbFile: File): Boolean {
+    fun verifySqliteIntegrity(dbFile: File): Boolean {
+        if (!hasValidSqliteHeader(dbFile)) return false
         var sqliteDb: SQLiteDatabase? = null
         return try {
             sqliteDb = SQLiteDatabase.openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
-            sqliteDb.isDatabaseIntegrityOk
+            val isOk = sqliteDb.isDatabaseIntegrityOk
+            sqliteDb.close()
+            isOk
         } catch (_: Exception) {
+            runCatching { sqliteDb?.close() }
             false
-        } finally {
-            try {
-                sqliteDb?.close()
-            } catch (_: Exception) {
-            }
         }
     }
 
     fun calculateSha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         FileInputStream(file).use { fis ->
-            val buffer = ByteArray(8192)
-            var bytesRead: Int
-            while (fis.read(buffer).also { bytesRead = it } != -1) {
-                digest.update(buffer, 0, bytesRead)
+            val buffer = ByteArray(16 * 1024)
+            var read: Int
+            while (fis.read(buffer).also { read = it } != -1) {
+                digest.update(buffer, 0, read)
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }

@@ -16,6 +16,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
+import com.smartledger.pro.data.repository.AppSettingsSnapshot
 
 /**
  * تفضيلات الحركات والاهتزازات الحسية المركزية القابلة للتعديل من شاشة الإعدادات
@@ -23,6 +24,11 @@ import androidx.compose.ui.platform.LocalView
 object AppSensoryConfig {
     var enableHaptics by mutableStateOf(true)
     var reduceMotion by mutableStateOf(false)
+
+    fun syncFromSettings(s: AppSettingsSnapshot) {
+        enableHaptics = s.enableHaptics
+        reduceMotion = s.reduceMotion
+    }
 }
 
 /**

@@ -3,18 +3,20 @@ package com.smartledger.pro.data.repository
 import android.content.Context
 import android.content.SharedPreferences
 import com.smartledger.pro.data.local.SmartLedgerDatabase
+import com.smartledger.pro.data.local.dao.AppPreferenceDao
 import com.smartledger.pro.data.local.entity.AppPreferenceEntity
-import com.smartledger.pro.ui.components.AppSensoryConfig
-import com.smartledger.pro.ui.theme.AppDesignState
-import com.smartledger.pro.ui.theme.AppThemeMode
-import com.smartledger.pro.ui.theme.AppUiDensity
+import com.smartledger.pro.domain.model.AppThemeMode
+import com.smartledger.pro.domain.model.AppUiDensity
 import com.smartledger.pro.util.SecurityCryptoHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import java.util.concurrent.CopyOnWriteArrayList
 
 data class AppSettingsSnapshot(
     // 1. العملة والتنسيق
@@ -73,21 +75,24 @@ data class AppSettingsSnapshot(
 /**
  * مستودع الإعدادات والأسرار الموحد (AppPreferencesRepository).
  *
- * سياسة مصدر الحقيقة وحماية الأسرار:
- * 1. الأسرار الحساسة (`appPinHash` المملح عبر PBKDF2 و`googleDriveAccessToken` المشفر عبر AES-GCM)
- *    تُحفظ حصراً في مخزن الأسرار المعزول `smartledger_secure_secrets` المستبعد من النسخ التلقائي ونقل الجهاز.
- * 2. عند ترحيل أي قيم قديمة، يتحقق المستودع من نجاح التشفير الفعلي (`encryptSecretResult` + `decryptSecretResult`)
- *    ونجاح اشتقاق بصمة الـ PIN (`verifyPin`) قبل حذف الأصل لضمان عدم ضياع البيانات أو حفظها بدون تشفير.
+ * الضمانات المعمارية والأمنية:
+ * 1. مستقل تماماً عن طبقة واجهة المستخدم (`com.smartledger.pro.ui.*`)؛ لا يستورد أي كائنات Compose أو Theme،
+ *    بل يبث التغييرات عبر `settings: StateFlow<AppSettingsSnapshot>` ومراقبي الحالة المسجلين (`registerRuntimeStateObserver`).
+ * 2. يحصل على `AppPreferenceDao` ديناميكياً من `SmartLedgerDatabase.getInstance(appContext)` ويراقب
+ *    `SmartLedgerDatabase.databaseEpoch` لإعادة قراءة التفضيلات المحمولة تلقائياً فور استعادة أي نسخة احتياطية.
+ * 3. يستخدم `CoroutineScope(SupervisorJob() + Dispatchers.IO)` لضمان عدم تعطل المزامنة الخلفية عند حدوث أي استثناء عابر.
  */
 class AppPreferencesRepository private constructor(context: Context) {
 
+    private val appContext = context.applicationContext
     private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences("smartledger_pro_settings", Context.MODE_PRIVATE)
+        appContext.getSharedPreferences("smartledger_pro_settings", Context.MODE_PRIVATE)
     private val securePrefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences("smartledger_secure_secrets", Context.MODE_PRIVATE)
-    private val db = SmartLedgerDatabase.getInstance(context.applicationContext)
-    private val prefDao = db.appPreferenceDao()
-    private val ioScope = CoroutineScope(Dispatchers.IO)
+        appContext.getSharedPreferences("smartledger_secure_secrets", Context.MODE_PRIVATE)
+    private val prefDao: AppPreferenceDao
+        get() = SmartLedgerDatabase.getInstance(appContext).appPreferenceDao()
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val runtimeObservers = CopyOnWriteArrayList<(AppSettingsSnapshot) -> Unit>()
 
     init {
         migrateLegacyPlaintextSecretsIfNeeded()
@@ -97,8 +102,41 @@ class AppPreferencesRepository private constructor(context: Context) {
     val settings: StateFlow<AppSettingsSnapshot> = _settings.asStateFlow()
 
     init {
-        applyGlobalRuntimeStates(_settings.value)
-        syncPortablePreferencesFromRoomIfNeeded()
+        notifyRuntimeObservers(_settings.value)
+        syncPortablePreferencesFromRoomIfNeeded(forceReloadFromRoom = false)
+        observeDatabaseRestoreEpochs()
+    }
+
+    private fun observeDatabaseRestoreEpochs() {
+        ioScope.launch {
+            SmartLedgerDatabase.databaseEpoch.collect { epoch ->
+                if (epoch > 0L) {
+                    syncPortablePreferencesFromRoomIfNeeded(forceReloadFromRoom = true)
+                }
+            }
+        }
+    }
+
+    /**
+     * تسجيل مراقب لتغييرات الإعدادات (تستخدمه طبقة العرض/الحاوية لمزامنة `AppDesignState` و`AppSensoryConfig`
+     * دون كسر حدود الطبقات بين `data` و`ui`).
+     */
+    fun registerRuntimeStateObserver(observer: (AppSettingsSnapshot) -> Unit) {
+        runtimeObservers.add(observer)
+        observer(_settings.value)
+    }
+
+    private fun notifyRuntimeObservers(snapshot: AppSettingsSnapshot) {
+        for (observer in runtimeObservers) {
+            runCatching { observer(snapshot) }
+        }
+    }
+
+    /**
+     * يُستدعى فور نجاح استعادة قاعدة البيانات لإعادة قراءة التفضيلات المحمولة من القاعدة المستعادة الجديدة
+     */
+    fun onDatabaseRestored() {
+        syncPortablePreferencesFromRoomIfNeeded(forceReloadFromRoom = true)
     }
 
     /**
@@ -142,23 +180,26 @@ class AppPreferencesRepository private constructor(context: Context) {
         }
     }
 
-    private fun syncPortablePreferencesFromRoomIfNeeded() {
+    private fun syncPortablePreferencesFromRoomIfNeeded(forceReloadFromRoom: Boolean) {
         ioScope.launch {
             try {
                 val roomPrefs = prefDao.getAllPreferencesOnce().associate { it.Key to (it.Value ?: "") }
-                if (roomPrefs.isNotEmpty() && !prefs.getBoolean("_initialized", false)) {
+                if (roomPrefs.isNotEmpty() && (forceReloadFromRoom || !prefs.getBoolean("_initialized", false))) {
                     val editor = prefs.edit().putBoolean("_initialized", true)
                     roomPrefs["currency_symbol"]?.takeIf { it.isNotBlank() }?.let { editor.putString("currencySymbol", it) }
                     roomPrefs["decimal_places"]?.toIntOrNull()?.let { editor.putInt("decimalPlaces", it) }
                     roomPrefs["invoice_prefix"]?.takeIf { it.isNotBlank() }?.let { editor.putString("invoicePrefix", it) }
                     roomPrefs["purchase_prefix"]?.takeIf { it.isNotBlank() }?.let { editor.putString("purchasePrefix", it) }
                     roomPrefs["allow_negative_stock"]?.toBooleanStrictOrNull()?.let { editor.putBoolean("allowNegativeStock", it) }
+                    roomPrefs["theme_mode"]?.takeIf { it.isNotBlank() }?.let { editor.putString("themeMode", it) }
+                    roomPrefs["ui_density"]?.takeIf { it.isNotBlank() }?.let { editor.putString("uiDensity", it) }
+                    roomPrefs["font_scale"]?.toFloatOrNull()?.let { editor.putFloat("fontScale", it) }
                     roomPrefs["enable_haptics"]?.toBooleanStrictOrNull()?.let { editor.putBoolean("enableHaptics", it) }
                     roomPrefs["reduce_motion"]?.toBooleanStrictOrNull()?.let { editor.putBoolean("reduceMotion", it) }
                     editor.apply()
                     val updated = loadFromPreferences()
                     _settings.value = updated
-                    applyGlobalRuntimeStates(updated)
+                    notifyRuntimeObservers(updated)
                 } else {
                     prefs.edit().putBoolean("_initialized", true).apply()
                 }
@@ -220,23 +261,6 @@ class AppPreferencesRepository private constructor(context: Context) {
         )
     }
 
-    private fun applyGlobalRuntimeStates(s: AppSettingsSnapshot) {
-        AppDesignState.themeMode = s.themeMode
-        AppDesignState.uiDensity = s.uiDensity
-        AppDesignState.fontScale = s.fontScale
-        AppDesignState.currencySymbol = s.currencySymbol
-        AppDesignState.decimalPlaces = s.decimalPlaces
-        AppDesignState.showBarcodeField = s.showBarcodeField
-        AppDesignState.showShelfLocation = s.showShelfLocation
-        AppDesignState.showPhoneInAccounts = s.showPhoneInAccounts
-        AppDesignState.allowNegativeStock = s.allowNegativeStock
-        AppDesignState.warnOnLowStockInPos = s.warnOnLowStockInPos
-        AppDesignState.warnOnCreditLimit = s.warnOnCreditLimit
-
-        AppSensoryConfig.enableHaptics = s.enableHaptics
-        AppSensoryConfig.reduceMotion = s.reduceMotion
-    }
-
     fun updateSettings(transform: (AppSettingsSnapshot) -> AppSettingsSnapshot) {
         val rawNext = transform(_settings.value)
         val normalizedPinVerifier = when {
@@ -247,7 +271,7 @@ class AppPreferencesRepository private constructor(context: Context) {
         val next = rawNext.copy(appPinCode = normalizedPinVerifier)
         saveSnapshotToDisk(next)
         _settings.value = next
-        applyGlobalRuntimeStates(next)
+        notifyRuntimeObservers(next)
     }
 
     private fun saveSnapshotToDisk(s: AppSettingsSnapshot) {
@@ -311,16 +335,17 @@ class AppPreferencesRepository private constructor(context: Context) {
 
         ioScope.launch {
             try {
-                prefDao.setPreference(AppPreferenceEntity("currency_symbol", s.currencySymbol))
-                prefDao.setPreference(AppPreferenceEntity("decimal_places", s.decimalPlaces.toString()))
-                prefDao.setPreference(AppPreferenceEntity("invoice_prefix", s.invoicePrefix))
-                prefDao.setPreference(AppPreferenceEntity("purchase_prefix", s.purchasePrefix))
-                prefDao.setPreference(AppPreferenceEntity("allow_negative_stock", s.allowNegativeStock.toString()))
-                prefDao.setPreference(AppPreferenceEntity("theme_mode", s.themeMode.name))
-                prefDao.setPreference(AppPreferenceEntity("ui_density", s.uiDensity.name))
-                prefDao.setPreference(AppPreferenceEntity("font_scale", s.fontScale.toString()))
-                prefDao.setPreference(AppPreferenceEntity("enable_haptics", s.enableHaptics.toString()))
-                prefDao.setPreference(AppPreferenceEntity("reduce_motion", s.reduceMotion.toString()))
+                val activePrefDao = prefDao
+                activePrefDao.setPreference(AppPreferenceEntity("currency_symbol", s.currencySymbol))
+                activePrefDao.setPreference(AppPreferenceEntity("decimal_places", s.decimalPlaces.toString()))
+                activePrefDao.setPreference(AppPreferenceEntity("invoice_prefix", s.invoicePrefix))
+                activePrefDao.setPreference(AppPreferenceEntity("purchase_prefix", s.purchasePrefix))
+                activePrefDao.setPreference(AppPreferenceEntity("allow_negative_stock", s.allowNegativeStock.toString()))
+                activePrefDao.setPreference(AppPreferenceEntity("theme_mode", s.themeMode.name))
+                activePrefDao.setPreference(AppPreferenceEntity("ui_density", s.uiDensity.name))
+                activePrefDao.setPreference(AppPreferenceEntity("font_scale", s.fontScale.toString()))
+                activePrefDao.setPreference(AppPreferenceEntity("enable_haptics", s.enableHaptics.toString()))
+                activePrefDao.setPreference(AppPreferenceEntity("reduce_motion", s.reduceMotion.toString()))
             } catch (_: Exception) {
             }
         }
@@ -342,7 +367,7 @@ class AppPreferencesRepository private constructor(context: Context) {
         )
         saveSnapshotToDisk(resetSnapshot)
         _settings.value = resetSnapshot
-        applyGlobalRuntimeStates(resetSnapshot)
+        notifyRuntimeObservers(resetSnapshot)
     }
 
     companion object {

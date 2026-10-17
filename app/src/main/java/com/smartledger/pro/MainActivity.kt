@@ -6,10 +6,12 @@ import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
 import androidx.fragment.app.FragmentActivity
-import com.smartledger.pro.data.repository.AppPreferencesRepository
+import com.smartledger.pro.di.AppContainer
+import com.smartledger.pro.ui.components.AppSecurityLockScreen
+import com.smartledger.pro.ui.components.AppSensoryConfig
 import com.smartledger.pro.ui.navigation.MainAppScaffold
+import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerTheme
-import com.smartledger.pro.util.AppSecurityLockScreen
 
 class MainActivity : FragmentActivity() {
 
@@ -18,8 +20,12 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val prefsRepo = AppPreferencesRepository.getInstance(applicationContext)
+        val container = AppContainer.getInstance(applicationContext)
+        val prefsRepo = container.preferencesRepository
         val initialSettings = prefsRepo.settings.value
+
+        AppDesignState.syncFromSettings(initialSettings)
+        AppSensoryConfig.syncFromSettings(initialSettings)
 
         if (initialSettings.biometricLockEnabled) {
             needsUnlockState = true
@@ -27,6 +33,11 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val settings by prefsRepo.settings.collectAsState()
+
+            LaunchedEffect(settings) {
+                AppDesignState.syncFromSettings(settings)
+                AppSensoryConfig.syncFromSettings(settings)
+            }
 
             // تطبيق حماية إخفاء المحتوى الحساس من معاينة التطبيقات الأخيرة (Recents Preview) عند التفعيل
             LaunchedEffect(settings.hideSensitivePreviewInRecents) {
@@ -60,7 +71,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
-        val settings = AppPreferencesRepository.getInstance(applicationContext).settings.value
+        val settings = AppContainer.getInstance(applicationContext).preferencesRepository.settings.value
         if (settings.biometricLockEnabled && lastBackgroundTimestamp > 0L) {
             val elapsedMinutes = (SystemClock.elapsedRealtime() - lastBackgroundTimestamp) / 60000L
             if (elapsedMinutes >= settings.lockTimeoutMinutes) {

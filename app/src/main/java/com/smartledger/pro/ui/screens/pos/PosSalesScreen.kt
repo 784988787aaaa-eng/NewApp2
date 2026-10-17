@@ -27,7 +27,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smartledger.pro.data.local.dao.AccountBalanceSummary
 import com.smartledger.pro.data.local.entity.InvoiceEntity
 import com.smartledger.pro.data.local.entity.InvoiceLineEntity
-import com.smartledger.pro.data.repository.AppPreferencesRepository
 import com.smartledger.pro.domain.model.UnitConversionEngine
 import com.smartledger.pro.ui.components.*
 import com.smartledger.pro.ui.theme.AppDesignState
@@ -51,8 +50,7 @@ fun PosSalesScreen(
     val cartLines = viewModel.cartLines
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val prefsRepo = remember { AppPreferencesRepository.getInstance(context) }
-    val settings by prefsRepo.settings.collectAsState()
+    val settings by viewModel.settings.collectAsState()
 
     var quickSearchQuery by rememberSaveable { mutableStateOf("") }
     var showProductPickerSheet by rememberSaveable { mutableStateOf(false) }

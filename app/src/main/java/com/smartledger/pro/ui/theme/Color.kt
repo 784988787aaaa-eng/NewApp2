@@ -6,20 +6,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.smartledger.pro.data.repository.AppSettingsSnapshot
 
-enum class AppThemeMode {
-    DARK,   // الوضع الداكن الاحترافي (الكحلي الفاخر)
-    LIGHT,  // الوضع الفاتح النهاري الواضح
-    AMOLED  // الوضع الأسود العميق لتوفير الطاقة والتباين العالي
-}
-
-enum class AppUiDensity {
-    COMFORTABLE, // مريح (مسافات قياسية متوازنة)
-    COMPACT      // كثيف (إظهار عناصر أكثر في الشاشة الواحدة)
-}
+typealias AppThemeMode = com.smartledger.pro.domain.model.AppThemeMode
+typealias AppUiDensity = com.smartledger.pro.domain.model.AppUiDensity
 
 /**
- * حالة نظام التصميم المركزية القابلة للتخصيص الفوري والدائم
+ * حالة نظام التصميم المركزية القابلة للتخصيص الفوري والدائم.
+ * تُزامن من طبقة الواجهة/الحاوية (`SmartLedgerTheme` / `AppContainer`) دون أن تعتمد طبقة البيانات على `ui.theme`.
  */
 object AppDesignState {
     var themeMode by mutableStateOf(AppThemeMode.DARK)
@@ -33,6 +27,20 @@ object AppDesignState {
     var allowNegativeStock by mutableStateOf(true)
     var warnOnLowStockInPos by mutableStateOf(true)
     var warnOnCreditLimit by mutableStateOf(true)
+
+    fun syncFromSettings(s: AppSettingsSnapshot) {
+        themeMode = s.themeMode
+        uiDensity = s.uiDensity
+        fontScale = s.fontScale
+        currencySymbol = s.currencySymbol
+        decimalPlaces = s.decimalPlaces
+        showBarcodeField = s.showBarcodeField
+        showShelfLocation = s.showShelfLocation
+        showPhoneInAccounts = s.showPhoneInAccounts
+        allowNegativeStock = s.allowNegativeStock
+        warnOnLowStockInPos = s.warnOnLowStockInPos
+        warnOnCreditLimit = s.warnOnCreditLimit
+    }
 }
 
 /**
@@ -69,137 +77,131 @@ object SmartLedgerColors {
     // 1. Window & Surface Tokens
     val SurfaceWindow: Color
         get() = when (AppDesignState.themeMode) {
-            AppThemeMode.DARK -> Color(0xFF0B111E)
+            AppThemeMode.LIGHT -> Color(0xFFF3F6FA)
             AppThemeMode.AMOLED -> Color(0xFF000000)
-            AppThemeMode.LIGHT -> Color(0xFFF4F6F9)
+            AppThemeMode.DARK -> Color(0xFF0B111E)
         }
-
-    val SurfaceShell: Color
-        get() = SurfaceWindow
 
     val SurfacePanel: Color
         get() = when (AppDesignState.themeMode) {
-            AppThemeMode.DARK -> Color(0xFF131C2E)
-            AppThemeMode.AMOLED -> Color(0xFF0B0F17)
             AppThemeMode.LIGHT -> Color(0xFFFFFFFF)
+            AppThemeMode.AMOLED -> Color(0xFF070B12)
+            AppThemeMode.DARK -> Color(0xFF10192B)
         }
 
     val SurfaceCard: Color
         get() = when (AppDesignState.themeMode) {
-            AppThemeMode.DARK -> Color(0xFF151F32)
-            AppThemeMode.AMOLED -> Color(0xFF0E1420)
             AppThemeMode.LIGHT -> Color(0xFFFFFFFF)
+            AppThemeMode.AMOLED -> Color(0xFF0B101B)
+            AppThemeMode.DARK -> Color(0xFF152036)
         }
 
     val SurfaceCardElevated: Color
         get() = when (AppDesignState.themeMode) {
-            AppThemeMode.DARK -> Color(0xFF1E2B45)
-            AppThemeMode.AMOLED -> Color(0xFF172033)
-            AppThemeMode.LIGHT -> Color(0xFFEEF2F7)
+            AppThemeMode.LIGHT -> Color(0xFFE9EFF8)
+            AppThemeMode.AMOLED -> Color(0xFF131C2E)
+            AppThemeMode.DARK -> Color(0xFF1C2B47)
         }
-
-    val SurfaceDialog: Color
-        get() = SurfacePanel
-
-    val SurfaceOverlay: Color
-        get() = if (isLight) Color(0x800F172A) else Color(0xB3070B14)
 
     val SurfaceInput: Color
         get() = when (AppDesignState.themeMode) {
-            AppThemeMode.DARK -> Color(0xFF101827)
-            AppThemeMode.AMOLED -> Color(0xFF0A0E17)
             AppThemeMode.LIGHT -> Color(0xFFF8FAFC)
+            AppThemeMode.AMOLED -> Color(0xFF0D1422)
+            AppThemeMode.DARK -> Color(0xFF0E1729)
+        }
+
+    val SurfaceInputFocused: Color
+        get() = when (AppDesignState.themeMode) {
+            AppThemeMode.LIGHT -> Color(0xFFFFFFFF)
+            AppThemeMode.AMOLED -> Color(0xFF121C30)
+            AppThemeMode.DARK -> Color(0xFF132038)
         }
 
     val SurfaceInputFocus: Color
+        get() = SurfaceInputFocused
+
+    val SurfaceDialog: Color
         get() = when (AppDesignState.themeMode) {
-            AppThemeMode.DARK -> Color(0xFF172338)
-            AppThemeMode.AMOLED -> Color(0xFF111827)
             AppThemeMode.LIGHT -> Color(0xFFFFFFFF)
+            AppThemeMode.AMOLED -> Color(0xFF0A0F1A)
+            AppThemeMode.DARK -> Color(0xFF141F35)
         }
 
-    // 2. Typography & Content Tokens
-    val TextPrimary: Color
-        get() = if (isLight) Color(0xFF0F172A) else Color(0xFFF1F5F9)
+    val SurfaceScrim: Color = Color(0xB3040811)
 
-    val TextSecondary: Color
-        get() = if (isLight) Color(0xFF334155) else Color(0xFFCBD5E1)
+    val SurfaceOverlay: Color
+        get() = SurfaceScrim
 
-    val TextMuted: Color
-        get() = if (isLight) Color(0xFF64748B) else Color(0xFF94A3B8)
-
-    val TextInverse: Color
-        get() = Color(0xFFFFFFFF)
-
-    val TextDisabled: Color
-        get() = if (isLight) Color(0xFF94A3B8) else Color(0xFF475569)
-
-    // 3. Primary & Accent Tokens (Financial Royal Blue & Sky Highlights)
-    val AccentPrimary: Color
-        get() = if (isLight) Color(0xFF0284C7) else Color(0xFF0EA5E9)
-
-    val AccentHover: Color
-        get() = if (isLight) Color(0xFF0369A1) else Color(0xFF0284C7)
-
-    val AccentLight: Color
-        get() = if (isLight) Color(0xFF0369A1) else Color(0xFF38BDF8)
-
-    val AccentSubtle: Color
-        get() = if (isLight) Color(0xFFE0F2FE) else Color(0xFF0C2D48)
-
-    val AccentText: Color
-        get() = if (isLight) Color(0xFF075985) else Color(0xFFE0F2FE)
-
-    // 4. Operational State Tokens (Strict Accounting Color System)
-    // Positive / Surplus / له (دائن) / مقبوضات
-    val StateSuccess: Color
-        get() = if (isLight) Color(0xFF059669) else Color(0xFF10B981)
-
-    val StateSuccessSubtle: Color
-        get() = if (isLight) Color(0xFFD1FAE5) else Color(0xFF0D2821)
-
-    val StateSuccessBorder: Color
-        get() = if (isLight) Color(0xFF6EE7B7) else Color(0xFF155E4B)
-
-    val StateSuccessText: Color
-        get() = if (isLight) Color(0xFF065F46) else Color(0xFFA7F3D0)
-
-    // Negative / Debt / عليه (مدين) / مصروفات
-    val StateDanger: Color
-        get() = if (isLight) Color(0xFFDC2626) else Color(0xFFF43F5E)
-
-    val StateDangerSubtle: Color
-        get() = if (isLight) Color(0xFFFEE2E2) else Color(0xFF2C1219)
-
-    val StateDangerBorder: Color
-        get() = if (isLight) Color(0xFFFCA5A5) else Color(0xFF6E2030)
-
-    val StateDangerText: Color
-        get() = if (isLight) Color(0xFF991B1B) else Color(0xFFFECDD3)
-
-    val StateDangerHover: Color
-        get() = Color(0xFFDC2626)
-
-    // Warning / Caution / تنبيهات المخزون
-    val StateWarning: Color
-        get() = if (isLight) Color(0xFFD97706) else Color(0xFFF59E0B)
-
-    val StateWarningSubtle: Color
-        get() = if (isLight) Color(0xFFFEF3C7) else Color(0xFF2D2108)
-
-    val StateWarningBorder: Color
-        get() = if (isLight) Color(0xFFFCD34D) else Color(0xFF63470F)
-
-    // 5. Borders & Dividers
+    // 2. Border & Divider Tokens
     val BorderSubtle: Color
-        get() = if (isLight) Color(0xFFE2E8F0) else Color(0xFF24324B)
+        get() = if (isLight) Color(0xFFD6E0EE) else Color(0xFF233352)
 
     val BorderStrong: Color
-        get() = if (isLight) Color(0xFFCBD5E1) else Color(0xFF334155)
+        get() = if (isLight) Color(0xFFB4C5DD) else Color(0xFF334973)
 
-    val BorderGridLine: Color
-        get() = if (isLight) Color(0xFFF1F5F9) else Color(0xFF1B263B)
+    val BorderFocus: Color = Color(0xFF2E90FA)
 
-    val BorderFocusRing: Color
-        get() = AccentLight
+    // 3. Text Hierarchy Tokens
+    val TextPrimary: Color
+        get() = if (isLight) Color(0xFF0F172A) else Color(0xFFF4F7FB)
+
+    val TextSecondary: Color
+        get() = if (isLight) Color(0xFF334155) else Color(0xFFB8C5D9)
+
+    val TextMuted: Color
+        get() = if (isLight) Color(0xFF64748B) else Color(0xFF7D8FA9)
+
+    val TextPlaceholder: Color
+        get() = if (isLight) Color(0xFF94A3B8) else Color(0xFF5A6C88)
+
+    val TextInverse: Color = Color(0xFFFFFFFF)
+
+    // 4. Brand & Accent Tokens
+    val AccentPrimary: Color = Color(0xFF1570EF)
+    val AccentHover: Color = Color(0xFF175CD3)
+    val AccentLight: Color
+        get() = if (isLight) Color(0xFF1570EF) else Color(0xFF53B1FD)
+    val AccentSubtle: Color
+        get() = if (isLight) Color(0xFFE0EFFE) else Color(0xFF102A4C)
+    val AccentText: Color
+        get() = if (isLight) Color(0xFF175CD3) else Color(0xFF84CAFF)
+
+    // 5. Semantic Status Tokens (Success / Credit / Profit)
+    val StateSuccess: Color
+        get() = if (isLight) Color(0xFF079455) else Color(0xFF17B26A)
+    val StateSuccessSubtle: Color
+        get() = if (isLight) Color(0xFFDCFAE6) else Color(0xFF082E1E)
+    val StateSuccessBorder: Color
+        get() = if (isLight) Color(0xFF75E0A7) else Color(0xFF0E5336)
+    val StateSuccessText: Color
+        get() = if (isLight) Color(0xFF067647) else Color(0xFF75E0A7)
+
+    // 6. Semantic Status Tokens (Warning / Low Stock)
+    val StateWarning: Color
+        get() = if (isLight) Color(0xFFDC6803) else Color(0xFFF79009)
+    val StateWarningSubtle: Color
+        get() = if (isLight) Color(0xFFFEF0C7) else Color(0xFF332007)
+    val StateWarningBorder: Color
+        get() = if (isLight) Color(0xFFFEC84B) else Color(0xFF613D0B)
+    val StateWarningText: Color
+        get() = if (isLight) Color(0xFFB54708) else Color(0xFFFEC84B)
+
+    // 7. Semantic Status Tokens (Danger / Debit / Debt)
+    val StateDanger: Color
+        get() = if (isLight) Color(0xFFD92D20) else Color(0xFFF04438)
+    val StateDangerSubtle: Color
+        get() = if (isLight) Color(0xFFFEE4E2) else Color(0xFF351113)
+    val StateDangerBorder: Color
+        get() = if (isLight) Color(0xFFFDA29B) else Color(0xFF661E20)
+    val StateDangerText: Color
+        get() = if (isLight) Color(0xFFB42318) else Color(0xFFFDA29B)
+
+    // 8. Semantic Status Tokens (Info / Neutral)
+    val StateInfo: Color = Color(0xFF0BA5EC)
+    val StateInfoSubtle: Color
+        get() = if (isLight) Color(0xFFE0F2FE) else Color(0xFF0B293D)
+    val StateInfoBorder: Color
+        get() = if (isLight) Color(0xFF7CD4FD) else Color(0xFF15496B)
+    val StateInfoText: Color
+        get() = if (isLight) Color(0xFF026AA2) else Color(0xFF7CD4FD)
 }

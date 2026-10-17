@@ -1,6 +1,7 @@
 package com.smartledger.pro.ui.viewmodels
 
 import android.app.Application
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -9,13 +10,15 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.smartledger.pro.data.local.dao.*
 import com.smartledger.pro.data.local.entity.*
+import com.smartledger.pro.data.repository.AppSettingsSnapshot
 import com.smartledger.pro.di.AppContainer
 import com.smartledger.pro.domain.model.UnitConversionEngine
 import com.smartledger.pro.domain.usecase.SaleLineDraft
-import com.smartledger.pro.util.NumberFormatter
+import com.smartledger.pro.util.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -23,9 +26,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private val container = AppContainer.getInstance(application)
     private val reportRepo = container.reportRepository
     private val voucherRepo = container.voucherRepository
-    private val identityDao = container.database.businessIdentityDao()
+    private val identityRepo = container.businessIdentityRepository
 
-    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityDao.getIdentity()
+    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityRepo.observeBusinessIdentity()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val metrics: StateFlow<DashboardMetrics> = reportRepo.getDashboardMetrics()
@@ -260,11 +263,13 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     private val invoiceRepo = container.invoiceRepository
     private val productRepo = container.inventoryRepository
     private val accountRepo = container.accountRepository
-    private val identityDao = container.database.businessIdentityDao()
+    private val identityRepo = container.businessIdentityRepository
     private val prefsRepo = container.preferencesRepository
     private val createSaleUseCase = container.createSaleUseCase
 
-    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityDao.getIdentity()
+    val settings: StateFlow<AppSettingsSnapshot> = prefsRepo.settings
+
+    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityRepo.observeBusinessIdentity()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val products: StateFlow<List<ProductStockItem>> = productRepo.getProducts()
@@ -357,7 +362,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         paidAmount: Double = 0.0,
         notes: String? = null
     ): Result<InvoiceEntity> {
-        val settings = prefsRepo.settings.value
+        val activeSettings = prefsRepo.settings.value
         val draftLines = cartLines.map { item ->
             SaleLineDraft(
                 productId = item.productId,
@@ -382,8 +387,8 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             discountAmount = discount,
             paidAmountInput = paidAmount,
             notes = notes,
-            allowNegativeStock = settings.allowNegativeStock,
-            invoicePrefix = settings.invoicePrefix
+            allowNegativeStock = activeSettings.allowNegativeStock,
+            invoicePrefix = activeSettings.invoicePrefix
         )
         if (result.isSuccess) {
             clearCart()
@@ -429,6 +434,49 @@ data class CartLineItem(
             largeUnit = largeUnit,
             unitFactor = unitFactor
         ).formattedText
+}
+
+class PurchasesViewModel(application: Application) : AndroidViewModel(application) {
+    private val container = AppContainer.getInstance(application)
+    private val invoiceRepo = container.invoiceRepository
+    private val accountRepo = container.accountRepository
+    private val inventoryRepo = container.inventoryRepository
+    private val createPurchaseUseCase = container.createPurchaseUseCase
+    private val prefsRepo = container.preferencesRepository
+
+    val suppliers: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries(bookId = 2)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val products: StateFlow<List<ProductStockItem>> = inventoryRepo.getProducts()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val recentPurchases: StateFlow<List<InvoiceEntity>> = invoiceRepo.getRecentInvoices()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    suspend fun createPurchase(
+        supplier: AccountBalanceSummary?,
+        product: ProductStockItem,
+        useMajorUnit: Boolean,
+        quantity: Double,
+        unitPurchaseCost: Double,
+        paidCash: Double,
+        notes: String?
+    ): Result<Long> {
+        return createPurchaseUseCase.execute(
+            supplier = supplier,
+            product = product,
+            useMajorUnit = useMajorUnit,
+            quantity = quantity,
+            unitPurchaseCost = unitPurchaseCost,
+            paidCash = paidCash,
+            notes = notes,
+            purchasePrefix = prefsRepo.settings.value.purchasePrefix
+        )
+    }
+
+    suspend fun reversePurchaseInvoice(invoiceId: Long, reason: String?): Result<Boolean> {
+        return invoiceRepo.reverseInvoice(invoiceId, reason)
+    }
 }
 
 class VouchersViewModel(application: Application) : AndroidViewModel(application) {
@@ -496,9 +544,9 @@ class ExpensesViewModel(application: Application) : AndroidViewModel(application
 class ReportsViewModel(application: Application) : AndroidViewModel(application) {
     private val container = AppContainer.getInstance(application)
     private val reportRepo = container.reportRepository
-    private val identityDao = container.database.businessIdentityDao()
+    private val identityRepo = container.businessIdentityRepository
 
-    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityDao.getIdentity()
+    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityRepo.observeBusinessIdentity()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     private val _selectedPeriod = MutableStateFlow("ALL")
@@ -541,6 +589,195 @@ class ReportsViewModel(application: Application) : AndroidViewModel(application)
                 fmt.format(cal.time)
             }
             else -> null
+        }
+    }
+}
+
+/**
+ * نموذج عرض الإعدادات والنسخ الاحتياطي والأمان (`SettingsViewModel`).
+ *
+ * يدير العمليات الحرجة (النسخ الاحتياطي، التصدير، الفحص، الاستعادة، الرفع السحابي، وتشفير PIN)
+ * داخل `viewModelScope` بدلاً من `rememberCoroutineScope()` التابع للـ Composable،
+ * مما يمنع انقطاع النسخ أو الاستعادة عند تدوير الشاشة أو إعادة بناء الواجهة.
+ */
+class SettingsViewModel(application: Application) : AndroidViewModel(application) {
+    private val appContext = application.applicationContext
+    private val container = AppContainer.getInstance(appContext)
+    private val identityRepo = container.businessIdentityRepository
+    val prefsRepo = container.preferencesRepository
+
+    val settings: StateFlow<AppSettingsSnapshot> = prefsRepo.settings
+
+    val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityRepo.observeBusinessIdentity()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    private val _indexedBackups = MutableStateFlow<List<BackupRecord>>(emptyList())
+    val indexedBackups: StateFlow<List<BackupRecord>> = _indexedBackups.asStateFlow()
+
+    init {
+        refreshIndexedBackups()
+    }
+
+    fun refreshIndexedBackups() {
+        viewModelScope.launch {
+            _indexedBackups.value = BackupRestoreHelper.getIndexedBackups(appContext)
+        }
+    }
+
+    fun saveBusinessIdentity(
+        tradeName: String,
+        phone: String,
+        address: String,
+        taxNumber: String?,
+        receiptHeader: String,
+        receiptFooter: String,
+        invoicePrefix: String,
+        purchasePrefix: String
+    ) {
+        viewModelScope.launch {
+            identityRepo.saveBusinessIdentity(
+                BusinessIdentityEntity(
+                    Id = 1,
+                    TradeName = tradeName.trim().ifBlank { "الدفتر الذكي للتجارة العامة" },
+                    LegalName = tradeName.trim().ifBlank { "الدفتر الذكي" },
+                    TaxNumber = taxNumber?.trim()?.ifBlank { null },
+                    Phone1 = phone.trim(),
+                    Address = address.trim(),
+                    ReceiptHeader = receiptHeader.trim(),
+                    ReceiptFooter = receiptFooter.trim()
+                )
+            )
+            prefsRepo.updateSettings {
+                it.copy(
+                    invoicePrefix = invoicePrefix.trim().ifBlank { "INV" },
+                    purchasePrefix = purchasePrefix.trim().ifBlank { "PUR" }
+                )
+            }
+        }
+    }
+
+    fun updateSettings(transform: (AppSettingsSnapshot) -> AppSettingsSnapshot) {
+        prefsRepo.updateSettings(transform)
+    }
+
+    fun updateAppPin(rawPin: String) {
+        val hashed = if (rawPin.isBlank()) "" else SecurityCryptoHelper.hashPin(rawPin.trim())
+        prefsRepo.updateSettings { it.copy(appPinCode = hashed) }
+    }
+
+    fun resetPreferencesToDefault() {
+        prefsRepo.resetToDefaultsPreservingBackupHistory()
+    }
+
+    fun createLocalArchiveBackup(onResult: (Result<BackupRecord>) -> Unit) {
+        viewModelScope.launch {
+            val res = BackupRestoreHelper.createStructuredArchiveBackup(
+                context = appContext,
+                sourceTag = "LocalArchive",
+                keepMaxCount = prefsRepo.settings.value.keepBackupCount
+            )
+            if (res.isSuccess) {
+                val rec = res.getOrThrow()
+                prefsRepo.updateSettings {
+                    it.copy(
+                        lastLocalBackupTime = rec.createdAt,
+                        lastLocalBackupSize = rec.sizeBytes,
+                        lastLocalBackupSha256 = rec.sha256
+                    )
+                }
+                _indexedBackups.value = BackupRestoreHelper.getIndexedBackups(appContext)
+            }
+            onResult(res)
+        }
+    }
+
+    fun exportBackupToSafUri(destUri: Uri, onResult: (Result<BackupRecord>) -> Unit) {
+        viewModelScope.launch {
+            val res = BackupRestoreHelper.exportBackupToUri(appContext, destUri)
+            if (res.isSuccess) {
+                val rec = res.getOrThrow()
+                prefsRepo.updateSettings {
+                    it.copy(
+                        lastLocalBackupTime = rec.createdAt,
+                        lastLocalBackupSize = rec.sizeBytes,
+                        lastLocalBackupSha256 = rec.sha256
+                    )
+                }
+                _indexedBackups.value = BackupRestoreHelper.getIndexedBackups(appContext)
+            }
+            onResult(res)
+        }
+    }
+
+    fun inspectBackupFromSafUri(srcUri: Uri, onResult: (BackupInspectionResult) -> Unit) {
+        viewModelScope.launch {
+            val inspection = BackupRestoreHelper.inspectBackupUri(appContext, srcUri)
+            onResult(inspection)
+        }
+    }
+
+    fun inspectBackupArchiveFile(file: File, onResult: (BackupInspectionResult) -> Unit) {
+        viewModelScope.launch {
+            val inspection = BackupRestoreHelper.inspectBackupFile(appContext, file)
+            onResult(inspection)
+        }
+    }
+
+    fun deleteIndexedBackup(recordId: String, onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            BackupRestoreHelper.deleteBackupRecord(appContext, recordId)
+            _indexedBackups.value = BackupRestoreHelper.getIndexedBackups(appContext)
+            onComplete()
+        }
+    }
+
+    fun restoreDatabase(
+        fileToRestore: File?,
+        uriToRestore: Uri?,
+        onResult: (Result<BackupInspectionResult>) -> Unit
+    ) {
+        viewModelScope.launch {
+            val res = when {
+                fileToRestore != null -> BackupRestoreHelper.restoreFromBackupFile(
+                    appContext,
+                    fileToRestore,
+                    createPreRestoreSafety = true
+                )
+                uriToRestore != null -> BackupRestoreHelper.restoreFromUri(appContext, uriToRestore)
+                else -> Result.failure(Exception("لم يتم تحديد مصدر الاستعادة"))
+            }
+            _indexedBackups.value = BackupRestoreHelper.getIndexedBackups(appContext)
+            onResult(res)
+        }
+    }
+
+    fun uploadBackupToGoogleDrive(
+        onProgress: (Int) -> Unit,
+        onResult: (Result<CloudBackupInfo>) -> Unit
+    ) {
+        viewModelScope.launch {
+            val archiveFile = GoogleDriveBackupHelper.createLocalArchive(appContext)
+            if (archiveFile == null) {
+                onResult(Result.failure(Exception("تعذر تجهيز ملف الأرشيف المحلي للرفع.")))
+                return@launch
+            }
+            val uploadRes = GoogleDriveBackupHelper.uploadBackupToDrive(
+                backupFile = archiveFile,
+                accessToken = prefsRepo.settings.value.googleDriveAccessToken,
+                onProgress = onProgress
+            )
+            if (uploadRes.isSuccess) {
+                val info = uploadRes.getOrThrow()
+                prefsRepo.updateSettings {
+                    it.copy(
+                        lastCloudBackupTime = info.modifiedTime,
+                        lastCloudBackupSize = info.sizeBytes,
+                        lastCloudStatusMessage = "تم الرفع بنجاح (${info.fileName})"
+                    )
+                }
+                _indexedBackups.value = BackupRestoreHelper.getIndexedBackups(appContext)
+            }
+            onResult(uploadRes)
         }
     }
 }

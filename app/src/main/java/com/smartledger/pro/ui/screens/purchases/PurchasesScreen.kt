@@ -22,65 +22,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.smartledger.pro.data.local.dao.AccountBalanceSummary
 import com.smartledger.pro.data.local.dao.ProductStockItem
 import com.smartledger.pro.data.local.entity.InvoiceEntity
-import com.smartledger.pro.di.AppContainer
 import com.smartledger.pro.ui.components.*
 import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
 import com.smartledger.pro.ui.theme.SmartLedgerTokens
+import com.smartledger.pro.ui.viewmodels.PurchasesViewModel
 import com.smartledger.pro.util.NumberFormatter
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-
-class PurchasesViewModel(application: android.app.Application) : AndroidViewModel(application) {
-    private val container = AppContainer.getInstance(application)
-    private val invoiceRepo = container.invoiceRepository
-    private val accountRepo = container.accountRepository
-    private val inventoryRepo = container.inventoryRepository
-    private val createPurchaseUseCase = container.createPurchaseUseCase
-    private val prefsRepo = container.preferencesRepository
-
-    val suppliers: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries(bookId = 2)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val products: StateFlow<List<ProductStockItem>> = inventoryRepo.getProducts()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val recentPurchases: StateFlow<List<InvoiceEntity>> = invoiceRepo.getRecentInvoices()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    suspend fun createPurchase(
-        supplier: AccountBalanceSummary?,
-        product: ProductStockItem,
-        useMajorUnit: Boolean,
-        quantity: Double,
-        unitPurchaseCost: Double,
-        paidCash: Double,
-        notes: String?
-    ): Result<Long> {
-        return createPurchaseUseCase.execute(
-            supplier = supplier,
-            product = product,
-            useMajorUnit = useMajorUnit,
-            quantity = quantity,
-            unitPurchaseCost = unitPurchaseCost,
-            paidCash = paidCash,
-            notes = notes,
-            purchasePrefix = prefsRepo.settings.value.purchasePrefix
-        )
-    }
-
-    suspend fun reversePurchaseInvoice(invoiceId: Long, reason: String?): Result<Boolean> {
-        return invoiceRepo.reverseInvoice(invoiceId, reason)
-    }
-}
 
 @Composable
 fun PurchasesScreen(

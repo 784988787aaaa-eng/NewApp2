@@ -557,7 +557,8 @@ fun ProductDetailsSheetContent(
     onAdjustStock: () -> Unit,
     onClose: () -> Unit
 ) {
-    val movements by viewModel.getMovementsForProduct(product.Id).collectAsState(initial = emptyList())
+    val movementsFlow = remember(product.Id) { viewModel.getMovementsForProduct(product.Id) }
+    val movements by movementsFlow.collectAsState(initial = emptyList())
     val breakdown = remember(product.CurrentStockMinor, product.SmallUnit, product.LargeUnit, product.UnitFactor) {
         UnitConversionEngine.breakdownStock(
             totalMinorQty = product.CurrentStockMinor,

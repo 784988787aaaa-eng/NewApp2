@@ -6,6 +6,24 @@ import kotlin.math.floor
 import kotlin.math.roundToLong
 
 /**
+ * أنماط المظهر الدلالية الموحدة على مستوى النطاق (Domain Configuration Model)
+ * لفك ارتباط طبقة البيانات (`AppPreferencesRepository`) بطبقة واجهة المستخدم (`ui.theme`).
+ */
+enum class AppThemeMode {
+    DARK,   // الوضع الداكن الاحترافي (الكحلي الفاخر)
+    LIGHT,  // الوضع الفاتح النهاري الواضح
+    AMOLED  // الوضع الأسود العميق لتوفير الطاقة والتباين العالي
+}
+
+/**
+ * مستويات الكثافة البصرية للشاشات والجداول
+ */
+enum class AppUiDensity {
+    COMFORTABLE, // مريح (مسافات قياسية متوازنة)
+    COMPACT      // كثيف (إظهار عناصر أكثر في الشاشة الواحدة)
+}
+
+/**
  * محرك التحويل المحاسبي والمخزني بين الوحدات الكبرى والصغرى (Major & Minor Units Engine)
  *
  * القاعدة الهندسية الصارمة:
@@ -70,6 +88,29 @@ object UnitConversionEngine {
         val safeMajor = if (majorQty < 0.0 || majorQty.isNaN()) 0.0 else majorQty
         val safeMinor = if (minorQty < 0.0 || minorQty.isNaN()) 0.0 else minorQty
         return roundClean((safeMajor * safeFactor) + safeMinor)
+    }
+
+    /**
+     * تنسيق نصي واضح للكمية المركبة (وحدة كبرى + وحدة صغرى) لحفظها في بنود الفواتير وإيصالات الطباعة
+     */
+    fun formatCompositeQuantity(
+        majorQty: Double,
+        minorQty: Double,
+        smallUnit: String,
+        largeUnit: String?
+    ): String {
+        val cleanSmall = smallUnit.trim().ifBlank { "قطعة" }
+        val cleanLarge = largeUnit?.trim()?.ifBlank { null }
+        val hasMajor = cleanLarge != null && majorQty > EPSILON
+        val hasMinor = minorQty > EPSILON
+        return when {
+            hasMajor && hasMinor ->
+                "${formatQuantity(majorQty)} $cleanLarge + ${formatQuantity(minorQty)} $cleanSmall"
+            hasMajor ->
+                "${formatQuantity(majorQty)} $cleanLarge"
+            else ->
+                "${formatQuantity(minorQty)} $cleanSmall"
+        }
     }
 
     /**

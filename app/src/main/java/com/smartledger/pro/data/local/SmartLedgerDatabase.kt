@@ -8,6 +8,10 @@ import com.smartledger.pro.data.local.dao.*
 import com.smartledger.pro.data.local.entity.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -17,6 +21,8 @@ import kotlinx.coroutines.launch
  * 1. `exportSchema = true` لحفظ وتوثيق مخطط كل إصدار في `app/schemas/` ومراجعته قبل أي ترقية.
  * 2. يُحظر تماماً تفعيل أي مسار ترحيل تدميري يحذف الجداول لحماية سجلات العملاء والفواتير من الفقد الصامت.
  * 3. أي تعديل مستقبلي على الجداول يجب أن يمر عبر كائن `Migration(from, to)` صريح داخل `ALL_MIGRATIONS`.
+ * 4. يوفر `databaseEpoch` تدفق حالة تفاعلياً (`StateFlow<Long>`) يتحدث تلقائياً عند إغلاق واستعادة قاعدة البيانات،
+ *    مما يضمن إعادة ربط جميع المستودعات والتدفقات (`Flows`) بنسخة القاعدة الجديدة فوراً دون الحاجة لإعادة تشغيل التطبيق.
  */
 @Database(
     entities = [
@@ -82,13 +88,24 @@ abstract class SmartLedgerDatabase : RoomDatabase() {
          */
         val ALL_MIGRATIONS: Array<Migration> = emptyArray()
 
+        private val databaseSeedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        private val _databaseEpoch = MutableStateFlow(0L)
+
+        /**
+         * مؤشر الجيل الحالي لاتصال قاعدة البيانات؛ يزداد عند إغلاق واستعادة قاعدة البيانات
+         * لإعادة ربط التدفقات التفاعلية (`Flows`) بالاتصال الجديد تلقائياً.
+         */
+        val databaseEpoch: StateFlow<Long> = _databaseEpoch.asStateFlow()
+
         @Volatile
         private var INSTANCE: SmartLedgerDatabase? = null
 
         fun getInstance(context: Context): SmartLedgerDatabase {
+            val appContext = context.applicationContext
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
+                INSTANCE ?: Room.databaseBuilder(
+                    appContext,
                     SmartLedgerDatabase::class.java,
                     DATABASE_NAME
                 )
@@ -97,15 +114,14 @@ abstract class SmartLedgerDatabase : RoomDatabase() {
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
-                            CoroutineScope(Dispatchers.IO).launch {
-                                val database = getInstance(context)
+                            databaseSeedScope.launch {
+                                val database = getInstance(appContext)
                                 seedInitialData(database)
                             }
                         }
                     })
                     .build()
-                INSTANCE = instance
-                instance
+                    .also { INSTANCE = it }
             }
         }
 
@@ -122,6 +138,13 @@ abstract class SmartLedgerDatabase : RoomDatabase() {
                     INSTANCE = null
                 }
             }
+        }
+
+        /**
+         * إشعار جميع المستودعات والتدفقات النشطة بأن قاعدة البيانات قد تمت استعادتها وإعادة فتحها
+         */
+        fun notifyDatabaseRestored() {
+            _databaseEpoch.value = _databaseEpoch.value + 1L
         }
 
         suspend fun seedInitialData(db: SmartLedgerDatabase) {
