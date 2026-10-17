@@ -8,6 +8,7 @@ import com.smartledger.pro.ui.components.AppSensoryConfig
 import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.AppThemeMode
 import com.smartledger.pro.ui.theme.AppUiDensity
+import com.smartledger.pro.util.SecurityCryptoHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,9 +54,9 @@ data class AppSettingsSnapshot(
     val lastCloudBackupTime: String = "",
     val lastCloudBackupSize: Long = 0L,
     val lastCloudStatusMessage: String = "",
-    // 6. الأمان والخصوصية
+    // 6. الأمان والخصوصية (لا يُخزن رمز PIN كنص صريح؛ بل تُخزن بصمة PBKDF2 المملحة فقط)
     val biometricLockEnabled: Boolean = false,
-    val appPinCode: String = "",
+    val appPinCode: String = "", // يحمل بصمة التحقق المملحة (v1$iterations$salt$hash) وليس الرمز الصريح
     val lockTimeoutMinutes: Int = 5,
     val hideSensitivePreviewInRecents: Boolean = false,
     // 7. المظهر وسهولة الاستخدام
@@ -64,37 +65,78 @@ data class AppSettingsSnapshot(
     val fontScale: Float = 1.0f,
     val enableHaptics: Boolean = true,
     val reduceMotion: Boolean = false
-)
+) {
+    val hasPinConfigured: Boolean
+        get() = appPinCode.isNotBlank()
+}
 
 /**
- * مستودع الإعدادات الدائم والموحد (AppPreferencesRepository)
- * يحفظ جميع إعدادات المستخدم بشكل دائم في SharedPreferences وقاعدة بيانات Room،
- * ويزامن فوراً حالة التصميم (AppDesignState) والمؤثرات الحسية (AppSensoryConfig).
+ * مستودع الإعدادات والأسرار الموحد (AppPreferencesRepository).
+ *
+ * سياسة مصدر الحقيقة (Single Source of Truth Policy):
+ * 1. الأسرار الحساسة (`appPinHash` المملح عبر PBKDF2 و`googleDriveAccessToken` المشفر عبر AndroidKeyStore AES-GCM)
+ *    تُحفظ حصراً في مخزن الأسرار المعزول `smartledger_secure_secrets` المستبعد من النسخ التلقائي ونقل الجهاز.
+ * 2. الإعدادات التشغيلية القابلة للنقل مع النسخة الاحتياطية (العملة، المنازل العشرية، البادئات، المظهر، سياسات المخزون)
+ *    تُحفظ في `SharedPreferences` وتُزامن مع جدول `AppPreferences` في Room بحيث تنتقل مع ملف `.slprobackup` عند الاستعادة.
+ * 3. عند استعادة قاعدة بيانات من نسخة احتياطية أو تشغيل التطبيق لأول مرة، تتم قراءة إعدادات `AppPreferences` من Room
+ *    دون الكتابة فوق أسرار الجهاز المحلية.
  */
 class AppPreferencesRepository private constructor(context: Context) {
 
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences("smartledger_pro_settings", Context.MODE_PRIVATE)
+    private val securePrefs: SharedPreferences =
+        context.applicationContext.getSharedPreferences("smartledger_secure_secrets", Context.MODE_PRIVATE)
     private val db = SmartLedgerDatabase.getInstance(context.applicationContext)
     private val prefDao = db.appPreferenceDao()
     private val ioScope = CoroutineScope(Dispatchers.IO)
 
-    private val _settings = MutableStateFlow(loadFromSharedPreferences())
+    init {
+        migrateLegacyPlaintextSecretsIfNeeded()
+    }
+
+    private val _settings = MutableStateFlow(loadFromPreferences())
     val settings: StateFlow<AppSettingsSnapshot> = _settings.asStateFlow()
 
     init {
         applyGlobalRuntimeStates(_settings.value)
-        // مزامنة أولية مع جدول AppPreferences في Room إن وجدت قيم محفوظة مسبقاً
+        syncPortablePreferencesFromRoomIfNeeded()
+    }
+
+    /**
+     * ترحيل أي رمز PIN صريح أو رمز Google Drive قديم من الإعدادات العادية إلى المخزن الآمن المشفر وحذفه فوراً من التخزين العادي
+     */
+    private fun migrateLegacyPlaintextSecretsIfNeeded() {
+        val legacyPin = prefs.getString("appPinCode", null)
+        if (!legacyPin.isNullOrBlank()) {
+            val hashed = if (legacyPin.startsWith("v1$")) legacyPin else SecurityCryptoHelper.hashPin(legacyPin)
+            securePrefs.edit().putString("appPinHash", hashed).apply()
+            prefs.edit().remove("appPinCode").apply()
+        }
+
+        val legacyToken = prefs.getString("googleDriveAccessToken", null)
+        if (!legacyToken.isNullOrBlank()) {
+            val encrypted = SecurityCryptoHelper.encryptSecret(legacyToken)
+            securePrefs.edit().putString("encryptedDriveToken", encrypted).apply()
+            prefs.edit().remove("googleDriveAccessToken").apply()
+        }
+    }
+
+    private fun syncPortablePreferencesFromRoomIfNeeded() {
         ioScope.launch {
             try {
                 val roomPrefs = prefDao.getAllPreferencesOnce().associate { it.Key to (it.Value ?: "") }
                 if (roomPrefs.isNotEmpty() && !prefs.getBoolean("_initialized", false)) {
                     val editor = prefs.edit().putBoolean("_initialized", true)
                     roomPrefs["currency_symbol"]?.takeIf { it.isNotBlank() }?.let { editor.putString("currencySymbol", it) }
+                    roomPrefs["decimal_places"]?.toIntOrNull()?.let { editor.putInt("decimalPlaces", it) }
+                    roomPrefs["invoice_prefix"]?.takeIf { it.isNotBlank() }?.let { editor.putString("invoicePrefix", it) }
+                    roomPrefs["purchase_prefix"]?.takeIf { it.isNotBlank() }?.let { editor.putString("purchasePrefix", it) }
+                    roomPrefs["allow_negative_stock"]?.toBooleanStrictOrNull()?.let { editor.putBoolean("allowNegativeStock", it) }
                     roomPrefs["enable_haptics"]?.toBooleanStrictOrNull()?.let { editor.putBoolean("enableHaptics", it) }
                     roomPrefs["reduce_motion"]?.toBooleanStrictOrNull()?.let { editor.putBoolean("reduceMotion", it) }
                     editor.apply()
-                    val updated = loadFromSharedPreferences()
+                    val updated = loadFromPreferences()
                     _settings.value = updated
                     applyGlobalRuntimeStates(updated)
                 } else {
@@ -105,9 +147,13 @@ class AppPreferencesRepository private constructor(context: Context) {
         }
     }
 
-    private fun loadFromSharedPreferences(): AppSettingsSnapshot {
+    private fun loadFromPreferences(): AppSettingsSnapshot {
         val themeStr = prefs.getString("themeMode", AppThemeMode.DARK.name) ?: AppThemeMode.DARK.name
         val densityStr = prefs.getString("uiDensity", AppUiDensity.COMFORTABLE.name) ?: AppUiDensity.COMFORTABLE.name
+
+        val encryptedToken = securePrefs.getString("encryptedDriveToken", "") ?: ""
+        val decryptedToken = SecurityCryptoHelper.decryptSecret(encryptedToken)
+        val storedPinVerifier = securePrefs.getString("appPinHash", "") ?: ""
 
         return AppSettingsSnapshot(
             currencySymbol = prefs.getString("currencySymbol", "ر.ي") ?: "ر.ي",
@@ -138,12 +184,12 @@ class AppPreferencesRepository private constructor(context: Context) {
             lastLocalBackupSize = prefs.getLong("lastLocalBackupSize", 0L),
             lastLocalBackupSha256 = prefs.getString("lastLocalBackupSha256", "") ?: "",
             googleDriveAccountEmail = prefs.getString("googleDriveAccountEmail", "") ?: "",
-            googleDriveAccessToken = prefs.getString("googleDriveAccessToken", "") ?: "",
+            googleDriveAccessToken = decryptedToken,
             lastCloudBackupTime = prefs.getString("lastCloudBackupTime", "") ?: "",
             lastCloudBackupSize = prefs.getLong("lastCloudBackupSize", 0L),
             lastCloudStatusMessage = prefs.getString("lastCloudStatusMessage", "") ?: "",
             biometricLockEnabled = prefs.getBoolean("biometricLockEnabled", false),
-            appPinCode = prefs.getString("appPinCode", "") ?: "",
+            appPinCode = storedPinVerifier,
             lockTimeoutMinutes = prefs.getInt("lockTimeoutMinutes", 5),
             hideSensitivePreviewInRecents = prefs.getBoolean("hideSensitivePreviewInRecents", false),
             themeMode = runCatching { AppThemeMode.valueOf(themeStr) }.getOrDefault(AppThemeMode.DARK),
@@ -172,15 +218,32 @@ class AppPreferencesRepository private constructor(context: Context) {
     }
 
     fun updateSettings(transform: (AppSettingsSnapshot) -> AppSettingsSnapshot) {
-        val next = transform(_settings.value)
+        val rawNext = transform(_settings.value)
+        // ضمان عدم بقاء أي رمز PIN بصيغة نص صريح في الذاكرة أو التخزين
+        val normalizedPinVerifier = when {
+            rawNext.appPinCode.isBlank() -> ""
+            rawNext.appPinCode.startsWith("v1$") -> rawNext.appPinCode
+            else -> SecurityCryptoHelper.hashPin(rawNext.appPinCode)
+        }
+        val next = rawNext.copy(appPinCode = normalizedPinVerifier)
         saveSnapshotToDisk(next)
         _settings.value = next
         applyGlobalRuntimeStates(next)
     }
 
     private fun saveSnapshotToDisk(s: AppSettingsSnapshot) {
+        // 1. حفظ الأسرار الحساسة مشفرة ومملحة في المخزن المعزول
+        val encryptedToken = if (s.googleDriveAccessToken.isBlank()) "" else SecurityCryptoHelper.encryptSecret(s.googleDriveAccessToken)
+        securePrefs.edit()
+            .putString("appPinHash", s.appPinCode)
+            .putString("encryptedDriveToken", encryptedToken)
+            .apply()
+
+        // 2. حفظ الإعدادات غير الحساسة في SharedPreferences (مع ضمان إزالة أي مفاتيح نصية قديمة للأسرار)
         prefs.edit()
             .putBoolean("_initialized", true)
+            .remove("appPinCode")
+            .remove("googleDriveAccessToken")
             .putString("currencySymbol", s.currencySymbol)
             .putInt("decimalPlaces", s.decimalPlaces)
             .putString("dateFormat", s.dateFormat)
@@ -209,12 +272,10 @@ class AppPreferencesRepository private constructor(context: Context) {
             .putLong("lastLocalBackupSize", s.lastLocalBackupSize)
             .putString("lastLocalBackupSha256", s.lastLocalBackupSha256)
             .putString("googleDriveAccountEmail", s.googleDriveAccountEmail)
-            .putString("googleDriveAccessToken", s.googleDriveAccessToken)
             .putString("lastCloudBackupTime", s.lastCloudBackupTime)
             .putLong("lastCloudBackupSize", s.lastCloudBackupSize)
             .putString("lastCloudStatusMessage", s.lastCloudStatusMessage)
             .putBoolean("biometricLockEnabled", s.biometricLockEnabled)
-            .putString("appPinCode", s.appPinCode)
             .putInt("lockTimeoutMinutes", s.lockTimeoutMinutes)
             .putBoolean("hideSensitivePreviewInRecents", s.hideSensitivePreviewInRecents)
             .putString("themeMode", s.themeMode.name)
@@ -224,10 +285,14 @@ class AppPreferencesRepository private constructor(context: Context) {
             .putBoolean("reduceMotion", s.reduceMotion)
             .apply()
 
+        // 3. مزامنة الإعدادات القابلة للنقل مع جدول Room
         ioScope.launch {
             try {
                 prefDao.setPreference(AppPreferenceEntity("currency_symbol", s.currencySymbol))
                 prefDao.setPreference(AppPreferenceEntity("decimal_places", s.decimalPlaces.toString()))
+                prefDao.setPreference(AppPreferenceEntity("invoice_prefix", s.invoicePrefix))
+                prefDao.setPreference(AppPreferenceEntity("purchase_prefix", s.purchasePrefix))
+                prefDao.setPreference(AppPreferenceEntity("allow_negative_stock", s.allowNegativeStock.toString()))
                 prefDao.setPreference(AppPreferenceEntity("theme_mode", s.themeMode.name))
                 prefDao.setPreference(AppPreferenceEntity("ui_density", s.uiDensity.name))
                 prefDao.setPreference(AppPreferenceEntity("font_scale", s.fontScale.toString()))
@@ -239,7 +304,7 @@ class AppPreferencesRepository private constructor(context: Context) {
     }
 
     /**
-     * استعادة الإعدادات الافتراضية دون المساس بالسجلات المالية أو سجل النسخ الاحتياطية
+     * استعادة الإعدادات الافتراضية دون المساس بالسجلات المالية أو سجل النسخ الاحتياطية أو القفل الأمني النشط
      */
     fun resetToDefaultsPreservingBackupHistory() {
         val current = _settings.value
@@ -251,7 +316,9 @@ class AppPreferencesRepository private constructor(context: Context) {
             googleDriveAccessToken = current.googleDriveAccessToken,
             lastCloudBackupTime = current.lastCloudBackupTime,
             lastCloudBackupSize = current.lastCloudBackupSize,
-            lastCloudStatusMessage = current.lastCloudStatusMessage
+            lastCloudStatusMessage = current.lastCloudStatusMessage,
+            biometricLockEnabled = current.biometricLockEnabled,
+            appPinCode = current.appPinCode
         )
         saveSnapshotToDisk(resetSnapshot)
         _settings.value = resetSnapshot

@@ -2,6 +2,7 @@ package com.smartledger.pro.data.local
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.smartledger.pro.data.local.dao.*
 import com.smartledger.pro.data.local.entity.*
@@ -9,6 +10,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
+/**
+ * قاعدة البيانات المركزية لتطبيق الدفتر الذكي Pro.
+ *
+ * القواعد الهندسية الصارمة:
+ * 1. `exportSchema = true` لحفظ وتوثيق مخطط كل إصدار في `app/schemas/` ومراجعته قبل أي ترقية.
+ * 2. يُمنع استخدام `fallbackToDestructiveMigration()` منعاً باتاً لحماية سجلات العملاء والفواتير من الحذف الصامت.
+ * 3. أي تعديل مستقبلي على الجداول يجب أن يمر عبر كائن `Migration(from, to)` صريح داخل `ALL_MIGRATIONS`.
+ */
 @Database(
     entities = [
         BookEntity::class,
@@ -24,7 +33,7 @@ import kotlinx.coroutines.launch
         AppPreferenceEntity::class
     ],
     version = 1,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class SmartLedgerDatabase : RoomDatabase() {
     abstract fun accountDao(): AccountDao
@@ -56,6 +65,15 @@ abstract class SmartLedgerDatabase : RoomDatabase() {
     }
 
     companion object {
+        const val DATABASE_NAME = "smartledger.db"
+        const val CURRENT_SCHEMA_VERSION = 1
+
+        /**
+         * سجل الترحيلات المعتمدة (Migrations).
+         * عند رفع رقم الإصدار مستقبلاً (مثلاً من 1 إلى 2)، يُضاف كائن `Migration(1, 2)` هنا ويُختبر قبل الإطلاق.
+         */
+        val ALL_MIGRATIONS: Array<Migration> = emptyArray()
+
         @Volatile
         private var INSTANCE: SmartLedgerDatabase? = null
 
@@ -64,10 +82,10 @@ abstract class SmartLedgerDatabase : RoomDatabase() {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     SmartLedgerDatabase::class.java,
-                    "smartledger.db"
+                    DATABASE_NAME
                 )
                     .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
-                    .fallbackToDestructiveMigration()
+                    .addMigrations(*ALL_MIGRATIONS)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

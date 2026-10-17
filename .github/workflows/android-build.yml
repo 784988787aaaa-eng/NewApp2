@@ -1,4 +1,4 @@
-name: SmartLedger Pro Android CI/CD
+name: SmartLedger Pro Android CI/CD Quality Gate
 
 on:
   push:
@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Test, Build & Package Android APK
+  quality_gate_and_build:
+    name: Schema Check, Unit & Flow Tests, Lint & APK Build
     runs-on: ubuntu-latest
 
     steps:
@@ -35,18 +35,30 @@ jobs:
       - name: Grant Execute Permission to Gradlew
         run: chmod +x gradlew
 
-      - name: Run Unit Tests & Build Debug APK
-        run: ./gradlew testDebugUnitTest assembleDebug --stacktrace --no-daemon
-
-      - name: Verify Generated APK Output
+      - name: Verify Room Baseline Schema & Non-Destructive Policy
         run: |
-          echo "Listing generated APK files:"
+          test -f app/schemas/com.smartledger.pro.data.local.SmartLedgerDatabase/1.json
+          ! grep -q "fallbackToDestructiveMigration" app/src/main/java/com/smartledger/pro/data/local/SmartLedgerDatabase.kt
+
+      - name: Run Unit, Security & Accounting Business Flow Tests
+        run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
+
+      - name: Run Android Lint Static Analysis
+        run: ./gradlew lintDebug --stacktrace --no-daemon
+
+      - name: Build Debug & Release APKs
+        run: ./gradlew assembleDebug assembleRelease --stacktrace --no-daemon
+
+      - name: Verify Generated APK Outputs
+        run: |
+          echo "Listing generated Debug and Release APK files:"
           ls -lh app/build/outputs/apk/debug/ || true
+          ls -lh app/build/outputs/apk/release/ || true
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmartLedger-Pro-v2.2.0-Debug
+          name: SmartLedger-Pro-v2.4.0-Debug
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
           if-no-files-found: warn

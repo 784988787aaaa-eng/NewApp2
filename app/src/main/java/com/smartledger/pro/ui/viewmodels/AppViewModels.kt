@@ -7,11 +7,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.smartledger.pro.data.local.SmartLedgerDatabase
 import com.smartledger.pro.data.local.dao.*
 import com.smartledger.pro.data.local.entity.*
-import com.smartledger.pro.data.repository.*
+import com.smartledger.pro.di.AppContainer
 import com.smartledger.pro.domain.model.UnitConversionEngine
+import com.smartledger.pro.domain.usecase.SaleLineDraft
 import com.smartledger.pro.util.NumberFormatter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
@@ -20,10 +20,10 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
-    private val db = SmartLedgerDatabase.getInstance(application)
-    private val reportRepo = ReportRepository(db)
-    private val voucherRepo = VoucherRepository(db)
-    private val identityDao = db.businessIdentityDao()
+    private val container = AppContainer.getInstance(application)
+    private val reportRepo = container.reportRepository
+    private val voucherRepo = container.voucherRepository
+    private val identityDao = container.database.businessIdentityDao()
 
     val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityDao.getIdentity()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
@@ -45,9 +45,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountsViewModel(application: Application) : AndroidViewModel(application) {
-    private val db = SmartLedgerDatabase.getInstance(application)
-    private val accountRepo = AccountRepository(db)
-    private val voucherRepo = VoucherRepository(db)
+    private val container = AppContainer.getInstance(application)
+    private val accountRepo = container.accountRepository
+    private val voucherRepo = container.voucherRepository
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
@@ -153,8 +153,8 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class InventoryViewModel(application: Application) : AndroidViewModel(application) {
-    private val db = SmartLedgerDatabase.getInstance(application)
-    private val inventoryRepo = InventoryRepository(db)
+    private val container = AppContainer.getInstance(application)
+    private val inventoryRepo = container.inventoryRepository
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
@@ -256,12 +256,13 @@ class InventoryViewModel(application: Application) : AndroidViewModel(applicatio
 }
 
 class PosViewModel(application: Application) : AndroidViewModel(application) {
-    private val db = SmartLedgerDatabase.getInstance(application)
-    private val invoiceRepo = InvoiceRepository(db)
-    private val productRepo = InventoryRepository(db)
-    private val accountRepo = AccountRepository(db)
-    private val identityDao = db.businessIdentityDao()
-    private val prefsRepo = AppPreferencesRepository.getInstance(application)
+    private val container = AppContainer.getInstance(application)
+    private val invoiceRepo = container.invoiceRepository
+    private val productRepo = container.inventoryRepository
+    private val accountRepo = container.accountRepository
+    private val identityDao = container.database.businessIdentityDao()
+    private val prefsRepo = container.preferencesRepository
+    private val createSaleUseCase = container.createSaleUseCase
 
     val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityDao.getIdentity()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
@@ -356,84 +357,38 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         paidAmount: Double = 0.0,
         notes: String? = null
     ): Result<InvoiceEntity> {
-        if (cartLines.isEmpty()) return Result.failure(Exception("السلة فارغة"))
-
-        val customer = selectedCustomer
-        if ((paymentType == "Credit" || paymentType == "Partial") && customer == null) {
-            return Result.failure(Exception("لا يمكن إصدار فاتورة آجلة أو جزئية بدون اختيار حساب عميل مسجل."))
-        }
-
         val settings = prefsRepo.settings.value
-        if (!settings.allowNegativeStock) {
-            val insufficient = cartLines.firstOrNull { it.totalMinorQuantity > it.availableStockMinor }
-            if (insufficient != null) {
-                return Result.failure(
-                    Exception("الكمية المطلوبة للصنف «${insufficient.name}» تتجاوز المتاح في المخزن (${insufficient.availableStockMinor.toInt()} ${insufficient.smallUnit}).")
-                )
-            }
-        }
-
-        val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-        val dateCode = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
-        val prefix = settings.invoicePrefix.ifBlank { "INV" }
-        val invoiceNo = "$prefix-$dateCode-${(System.currentTimeMillis() % 10000)}"
-
-        val subtotal = NumberFormatter.roundCurrency(cartLines.sumOf { it.calculatedLineTotal })
-        val safeDiscount = NumberFormatter.roundCurrency(discount.coerceIn(0.0, subtotal))
-        val finalTotal = NumberFormatter.roundCurrency(kotlin.math.max(0.0, subtotal - safeDiscount))
-        val actualPaid = NumberFormatter.roundCurrency(
-            when (paymentType) {
-                "Cash" -> finalTotal
-                "Credit" -> 0.0
-                else -> paidAmount.coerceIn(0.0, finalTotal)
-            }
-        )
-        val remaining = NumberFormatter.roundCurrency(kotlin.math.max(0.0, finalTotal - actualPaid))
-
-        val invoice = InvoiceEntity(
-            InvoiceNumber = invoiceNo,
-            Type = "Sale",
-            PersonId = customer?.PersonId ?: 0L,
-            PersonNameSnapshot = customer?.PersonName ?: "عميل نقدي عام",
-            IssuedAt = now,
-            Subtotal = subtotal,
-            DiscountAmount = safeDiscount,
-            TaxAmount = 0.0,
-            FinalTotal = finalTotal,
-            PaidAmount = actualPaid,
-            RemainingAmount = remaining,
-            PaymentType = paymentType,
-            Notes = notes?.trim()?.ifBlank { null },
-            CreatedAt = now
-        )
-
-        val lines = cartLines.mapIndexed { index, item ->
-            val totalMinorQty = item.totalMinorQuantity
-            val effectiveUnitPrice = if (totalMinorQty > 0) item.calculatedLineTotal / totalMinorQty else item.minorUnitPrice
-            InvoiceLineEntity(
-                InvoiceId = 0L,
-                ProductId = item.productId,
-                ProductNameSnapshot = item.name,
-                BarcodeSnapshot = item.barcode,
-                UnitName = item.formattedBreakdown,
-                IsMajorUnit = item.majorQuantity > 0,
-                ConversionFactor = item.unitFactor,
-                QuantityMinor = totalMinorQty,
-                UnitPrice = NumberFormatter.roundCurrency(effectiveUnitPrice, 4),
-                LineCost = NumberFormatter.roundCurrency(item.minorUnitCost, 4),
-                LineTotal = NumberFormatter.roundCurrency(item.calculatedLineTotal, 2),
-                SortOrder = index + 1
+        val draftLines = cartLines.map { item ->
+            SaleLineDraft(
+                productId = item.productId,
+                name = item.name,
+                barcode = item.barcode,
+                smallUnit = item.smallUnit,
+                largeUnit = item.largeUnit,
+                unitFactor = item.unitFactor,
+                majorQuantity = item.majorQuantity,
+                minorQuantity = item.minorQuantity,
+                minorUnitPrice = item.minorUnitPrice,
+                majorUnitPrice = item.majorUnitPrice,
+                minorUnitCost = item.minorUnitCost,
+                availableStockMinor = item.availableStockMinor
             )
         }
 
-        val result = invoiceRepo.createInvoice(invoice, lines)
-        return if (result.isSuccess) {
-            val savedId = result.getOrDefault(0L)
+        val result = createSaleUseCase.execute(
+            draftLines = draftLines,
+            customer = selectedCustomer,
+            paymentType = paymentType,
+            discountAmount = discount,
+            paidAmountInput = paidAmount,
+            notes = notes,
+            allowNegativeStock = settings.allowNegativeStock,
+            invoicePrefix = settings.invoicePrefix
+        )
+        if (result.isSuccess) {
             clearCart()
-            Result.success(invoice.copy(Id = savedId))
-        } else {
-            Result.failure(result.exceptionOrNull() ?: Exception("تعذر حفظ الفاتورة"))
         }
+        return result
     }
 }
 
@@ -477,9 +432,9 @@ data class CartLineItem(
 }
 
 class VouchersViewModel(application: Application) : AndroidViewModel(application) {
-    private val db = SmartLedgerDatabase.getInstance(application)
-    private val voucherRepo = VoucherRepository(db)
-    private val accountRepo = AccountRepository(db)
+    private val container = AppContainer.getInstance(application)
+    private val voucherRepo = container.voucherRepository
+    private val accountRepo = container.accountRepository
 
     val accounts: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -500,8 +455,8 @@ class VouchersViewModel(application: Application) : AndroidViewModel(application
 }
 
 class ExpensesViewModel(application: Application) : AndroidViewModel(application) {
-    private val db = SmartLedgerDatabase.getInstance(application)
-    private val expenseRepo = ExpenseRepository(db)
+    private val container = AppContainer.getInstance(application)
+    private val expenseRepo = container.expenseRepository
 
     val expenses: StateFlow<List<ExpenseEntity>> = expenseRepo.getAllExpenses()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -539,9 +494,9 @@ class ExpensesViewModel(application: Application) : AndroidViewModel(application
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReportsViewModel(application: Application) : AndroidViewModel(application) {
-    private val db = SmartLedgerDatabase.getInstance(application)
-    private val reportRepo = ReportRepository(db)
-    private val identityDao = db.businessIdentityDao()
+    private val container = AppContainer.getInstance(application)
+    private val reportRepo = container.reportRepository
+    private val identityDao = container.database.businessIdentityDao()
 
     val businessIdentity: StateFlow<BusinessIdentityEntity?> = identityDao.getIdentity()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)

@@ -29,10 +29,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.smartledger.pro.data.local.SmartLedgerDatabase
 import com.smartledger.pro.data.local.entity.BusinessIdentityEntity
-import com.smartledger.pro.data.repository.AppPreferencesRepository
 import com.smartledger.pro.data.repository.AppSettingsSnapshot
+import com.smartledger.pro.di.AppContainer
 import com.smartledger.pro.ui.components.*
 import com.smartledger.pro.ui.theme.AppThemeMode
 import com.smartledger.pro.ui.theme.AppUiDensity
@@ -45,9 +44,9 @@ import java.io.File
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
-    private val db = SmartLedgerDatabase.getInstance(appContext)
-    private val identityDao = db.businessIdentityDao()
-    val prefsRepo = AppPreferencesRepository.getInstance(appContext)
+    private val container = AppContainer.getInstance(appContext)
+    private val identityDao = container.database.businessIdentityDao()
+    val prefsRepo = container.preferencesRepository
 
     val settings: StateFlow<AppSettingsSnapshot> = prefsRepo.settings
 
@@ -221,7 +220,7 @@ fun SettingsScreen(
                             color = SmartLedgerColors.TextPrimary
                         )
                         Text(
-                            text = "الدفتر الذكي Pro — الإصدار 2.4.0 • حفظ دائم وفوري",
+                            text = "الدفتر الذكي Pro — الإصدار 2.4.0 • حفظ دائم ومشفر",
                             style = MaterialTheme.typography.labelSmall,
                             color = SmartLedgerColors.TextMuted
                         )
@@ -797,7 +796,7 @@ fun SettingsScreen(
             if (matchesSearch("الأمان الخصوصية القفل البيومتري بصمة الإصبع رمز الحماية PIN مهلة القفل")) {
                 item {
                     val securitySummary = if (settings.biometricLockEnabled) {
-                        "القفل مفعّل (مهلة ${settings.lockTimeoutMinutes} د) • ${if (settings.appPinCode.isNotBlank()) "رمز PIN مضبوط" else "بصمة الجهاز"}"
+                        "القفل مفعّل (مهلة ${settings.lockTimeoutMinutes} د) • ${if (settings.hasPinConfigured) "بصمة رمز PIN مملحة (PBKDF2)" else "بصمة الجهاز"}"
                     } else {
                         "القفل غير مفعّل • ${biometricCapability.description}"
                     }
@@ -813,7 +812,7 @@ fun SettingsScreen(
                             checked = settings.biometricLockEnabled,
                             onCheckedChange = { enabled ->
                                 viewModel.updateSettings { it.copy(biometricLockEnabled = enabled) }
-                                if (enabled && settings.appPinCode.isBlank() && !biometricCapability.canUseBiometric) {
+                                if (enabled && !settings.hasPinConfigured && !biometricCapability.canUseBiometric) {
                                     showPinSetupSheet = true
                                 }
                             }
@@ -843,7 +842,7 @@ fun SettingsScreen(
                                 Icon(Icons.Default.Password, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (settings.appPinCode.isBlank()) "تعيين رمز حماية شخصي احتياطي (PIN)" else "تغيير أو إزالة رمز الحماية (PIN)",
+                                    text = if (!settings.hasPinConfigured) "تعيين رمز حماية شخصي احتياطي (PIN)" else "تغيير أو إزالة رمز الحماية (PIN)",
                                     color = SmartLedgerColors.AccentLight,
                                     fontWeight = FontWeight.Bold,
                                     style = MaterialTheme.typography.labelSmall
@@ -989,7 +988,7 @@ fun SettingsScreen(
                         showGoogleDriveConfigSheet = false
                         isBannerError = false
                         statusBannerText = if (tokenText.isNotBlank()) {
-                            "تم ربط حساب Google Drive وتجهيز رمز الوصول بنجاح."
+                            "تم ربط حساب Google Drive وتشفير رمز الوصول عبر AndroidKeyStore بنجاح."
                         } else if (emailText.isNotBlank()) {
                             "تم حفظ البريد الإلكتروني. يلزم توفير رمز OAuth 2.0 للرفع المباشر عبر API."
                         } else {
@@ -1003,13 +1002,13 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                text = "حول مصادقة Google Drive السحابية:",
+                                text = "حول مصادقة Google Drive السحابية وتشفير الرموز:",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = SmartLedgerColors.AccentLight
                             )
                             Text(
-                                text = "• يستخدم التطبيق نطاق الصلاحية المعزول (drive.appdata) لحفظ نسخك داخل مجلد التطبيق الخاص دون الوصول لأي ملفات أخرى في حسابك.\n• للرفع المباشر عبر Google Drive REST API v3، يتطلب المشروع تسجيل شهادة التوقيع (SHA-1) ومعرف عميل OAuth 2.0 في Google Cloud Console، أو إدخال رمز وصول OAuth 2.0 نشط أدناه.",
+                                text = "• يستخدم التطبيق نطاق الصلاحية المعزول (drive.appdata) لحفظ نسخك داخل مجلد التطبيق الخاص دون الوصول لأي ملفات أخرى في حسابك.\n• يُشفّر رمز الوصول محلياً بواسطة مفتاح AES-GCM محمي داخل AndroidKeyStore ولا يُحفظ كنص صريح.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SmartLedgerColors.TextSecondary
                             )
@@ -1028,7 +1027,7 @@ fun SettingsScreen(
                         SmartTextField(
                             value = tokenText,
                             onValueChange = { tokenText = it },
-                            label = "رمز الوصول OAuth 2.0 (Access Token - اختياري)",
+                            label = "رمز الوصول OAuth 2.0 (Access Token - يُشفّر عبر Keystore)",
                             placeholder = "ya29.a0...",
                             helperText = "لا نطلب كلمة مرور Google مطلقاً. يُستخدم الرمز لمصادقة طلبات Drive API v3.",
                             imeAction = ImeAction.Done
@@ -1140,29 +1139,41 @@ fun SettingsScreen(
             }
         }
 
-        // نافذة إعداد رمز الحماية الشخصي العائمة فوق لوحة المفاتيح
+        // نافذة إعداد رمز الحماية الشخصي العائمة فوق لوحة المفاتيح (يُحفظ كبصمة مملحة PBKDF2)
         if (showPinSetupSheet) {
             FloatingModalDialog(onDismissRequest = { showPinSetupSheet = false }) {
-                var pinText by rememberSaveable { mutableStateOf(settings.appPinCode) }
+                var pinText by rememberSaveable { mutableStateOf("") }
+                val isPinValid = pinText.isBlank() || pinText.length in 4..8
+
                 FormSheetContainer(
                     title = "إعداد رمز الحماية الشخصي (PIN)",
-                    subtitle = "يُستخدم الرمز كوسيلة مصادقة سريعة أو احتياطية بجانب بصمة الإصبع",
+                    subtitle = "يُحفظ كبصمة مشفرة مملحة (PBKDF2-SHA256) ولا يُخزن كنص صريح",
                     headerIcon = Icons.Default.Password,
                     onDismiss = { showPinSetupSheet = false },
-                    primaryButtonText = "حفظ رمز الحماية",
+                    primaryButtonText = if (pinText.isBlank()) "إزالة رمز PIN" else "تشفير وحفظ رمز الحماية",
+                    isPrimaryEnabled = isPinValid,
                     onPrimaryClick = {
-                        viewModel.updateSettings { it.copy(appPinCode = pinText.trim()) }
-                        showPinSetupSheet = false
-                        isBannerError = false
-                        statusBannerText = if (pinText.isNotBlank()) "تم حفظ رمز الحماية الشخصي بنجاح." else "تم مسح رمز الحماية الشخصي."
+                        if (isPinValid) {
+                            val hashed = if (pinText.isBlank()) "" else SecurityCryptoHelper.hashPin(pinText.trim())
+                            viewModel.updateSettings { it.copy(appPinCode = hashed) }
+                            showPinSetupSheet = false
+                            isBannerError = false
+                            statusBannerText = if (hashed.isNotBlank()) {
+                                "تم تشفير وحفظ بصمة رمز الحماية الشخصي (PBKDF2) بنجاح."
+                            } else {
+                                "تم إزالة رمز الحماية الشخصي."
+                            }
+                        }
                     }
                 ) {
                     SmartTextField(
                         value = pinText,
-                        onValueChange = { pinText = it.take(8) },
-                        label = "رمز الحماية الرقمي (4 إلى 8 أرقام)",
-                        placeholder = "اتركه فارغاً للاعتماد على بصمة الجهاز فقط",
+                        onValueChange = { pinText = NumberFormatter.normalizeNumericInput(it, allowDecimal = false).take(8) },
+                        label = "رمز الحماية الرقمي الجديد (4 إلى 8 أرقام)",
+                        placeholder = "اتركه فارغاً لإزالة الرمز والاعتماد على البصمة فقط",
+                        errorText = if (pinText.isNotEmpty() && pinText.length < 4) "يجب ألا يقل رمز PIN عن 4 أرقام" else null,
                         keyboardType = KeyboardType.NumberPassword,
+                        autoFocusOnAppear = true,
                         imeAction = ImeAction.Done
                     )
                 }
@@ -1358,13 +1369,13 @@ fun SettingsScreen(
         if (showResetConfirmDialog) {
             ConfirmActionDialog(
                 title = "استعادة الإعدادات الافتراضية؟",
-                message = "سيتم إعادة ضبط تفضيلات المظهر، العملة، الحقول، والطباعة إلى القيم الافتراضية الآمنة دون المساس بأي حسابات أو فواتير أو أصناف مسجلة.",
+                message = "سيتم إعادة ضبط تفضيلات المظهر، العملة، الحقول، والطباعة إلى القيم الافتراضية الآمنة دون المساس بأي حسابات أو فواتير أو أصناف مسجلة أو قفل الحماية.",
                 confirmText = "استعادة الافتراضيات",
                 onConfirm = {
                     viewModel.resetPreferencesToDefault()
                     showResetConfirmDialog = false
                     isBannerError = false
-                    statusBannerText = "تمت استعادة الإعدادات الافتراضية مع الحفاظ على كافة السجلات المالية."
+                    statusBannerText = "تمت استعادة الإعدادات الافتراضية مع الحفاظ على كافة السجلات المالية وإعدادات الحماية."
                 },
                 onDismiss = { showResetConfirmDialog = false }
             )

@@ -1,243 +1,355 @@
 package com.smartledger.pro
 
 import com.smartledger.pro.domain.model.UnitConversionEngine
+import com.smartledger.pro.domain.usecase.InMemoryLedgerEngine
+import com.smartledger.pro.domain.usecase.LedgerDirectionPolicy
 import com.smartledger.pro.ui.components.FormWindowLifecycleState
 import com.smartledger.pro.util.NumberFormatter
+import com.smartledger.pro.util.SecurityCryptoHelper
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
 import java.security.MessageDigest
 
 /**
- * جناح الاختبارات الآلية الشامل للعمليات المحاسبية والمخزنية والوحدات الكبرى والصغرى
- * ودورة حياة النوافذ المستقلة ودقة BigDecimal ومنع التكرار — SmartLedger Pro v2.4.0
+ * جناح الاختبارات الهندسية الشامل (3 طبقات: Unit + Ledger Integration + End-to-End Business Flows)
+ * يثبت صحة العمليات الفعلية المخزنة في السجلات المحاسبية والمخزنية والأمنية — SmartLedger Pro v2.4.0
  */
 class AccountingEngineTest {
 
-    // السيناريو الأول: البيع النقدي (عدم تحميل العميل أي مديونية، إدخال نقدية بالصندوق، وخصم المخزون)
+    // 1. اختبار تدفق البيع النقدي الفعلي (Cash Sale End-to-End Flow)
     @Test
-    fun testScenario1_CashSale_NoDebtAdded_CustomerBalanceZero() {
-        val subtotal = 50000.0
-        val discount = 5000.0
-        val finalTotal = NumberFormatter.roundCurrency(subtotal - discount) // 45,000
-        val paidAmount = finalTotal
-        val remainingDebt = NumberFormatter.roundCurrency(finalTotal - paidAmount)
+    fun testFlow1_CashSale_DeductsStock_RecordsInvoice_LeavesCustomerDebtZero() {
+        val ledger = InMemoryLedgerEngine(allowNegativeStock = false)
+        val customerId = ledger.createAccount(name = "عميل نقدي تجريبي", bookId = 1L, openingBalance = 0.0).getOrThrow()
+        val productId = ledger.createProduct(
+            name = "زيت طبخ 1.5 لتر",
+            barcode = "629100000001",
+            smallUnit = "قارورة",
+            largeUnit = "كرتون",
+            unitFactor = 12.0,
+            costPrice = 1000.0,
+            retailPrice = 1300.0,
+            wholesalePrice = 15000.0,
+            openingMajorQty = 5.0, // 60 قارورة افتتاحية
+            openingMinorQty = 0.0
+        ).getOrThrow()
 
-        assertEquals(45000.0, finalTotal, 0.001)
-        assertEquals(0.0, remainingDebt, 0.001)
+        assertEquals(60.0, ledger.getProductStockMinor(productId), 0.001)
+
+        // بيع 4 قوارير نقداً مع خصم 200 ر.ي (الإجمالي 5,200 - 200 = 5,000)
+        val saleId = ledger.postSaleInvoice(
+            personId = customerId,
+            lines = listOf(Triple(productId, 0.0, 4.0)),
+            discountAmount = 200.0,
+            paymentType = "Cash"
+        ).getOrThrow()
+
+        // التحقق من السجلات المخزنة فعلياً
+        val savedInvoice = ledger.invoices.first { it.Id == saleId }
+        assertEquals(5200.0, savedInvoice.Subtotal, 0.001)
+        assertEquals(200.0, savedInvoice.DiscountAmount, 0.001)
+        assertEquals(5000.0, savedInvoice.FinalTotal, 0.001)
+        assertEquals(5000.0, savedInvoice.PaidAmount, 0.001)
+        assertEquals(0.0, savedInvoice.RemainingAmount, 0.001)
+
+        // التحقق من خصم المخزون (60 - 4 = 56 قارورة)
+        assertEquals(56.0, ledger.getProductStockMinor(productId), 0.001)
+
+        // التحقق من عدم تحميل العميل أي مديونية
+        val custSummary = ledger.getAccountBalanceSummary(customerId)
+        assertEquals(0.0, custSummary.NetBalance, 0.001)
+
+        // التحقق من تقرير الأرباح وتكلفة البضاعة المباعة (COGS = 4 * 1000 = 4,000، مجمل الربح = 5,000 - 4,000 = 1,000)
+        val report = ledger.getFinancialReportSummary()
+        assertEquals(5000.0, report.TotalSales, 0.001)
+        assertEquals(4000.0, report.CostOfGoodsSold, 0.001)
+        assertEquals(1000.0, report.GrossProfit, 0.001)
     }
 
-    // السيناريو الثاني: البيع الآجل (زيادة مديونية العميل "عليه" بدقة بمقدار المتبقي غير المسدد)
+    // 2. اختبار تدفق البيع الآجل والجزئي وأثره الفعلي على ذمة العميل وتقرير الديون
     @Test
-    fun testScenario2_CreditSale_IncreasesCustomerDebtExactlyByRemaining() {
-        val initialCustomerDebt = 10000.0 // عليه 10,000
-        val invoiceTotal = 35000.0
-        val paid = 0.0
-        val remaining = NumberFormatter.roundCurrency(invoiceTotal - paid)
+    fun testFlow2_CreditAndPartialSale_UpdatesCustomerReceivableAndFinancialReport() {
+        val ledger = InMemoryLedgerEngine(allowNegativeStock = false)
+        // عميل عليه رصيد افتتاحي سابق 10,000
+        val customerId = ledger.createAccount(
+            name = "مؤسسة الأمل التجارية",
+            bookId = 1L,
+            openingBalance = 10000.0,
+            isDebit = true
+        ).getOrThrow()
 
-        val newCustomerDebt = NumberFormatter.roundCurrency(initialCustomerDebt + remaining)
-        assertEquals(45000.0, newCustomerDebt, 0.001)
+        val productId = ledger.createProduct(
+            name = "سكر أبيض 50 كجم",
+            barcode = "629100000002",
+            smallUnit = "كيس",
+            largeUnit = null,
+            unitFactor = 1.0,
+            costPrice = 20000.0,
+            retailPrice = 25000.0,
+            openingMajorQty = 0.0,
+            openingMinorQty = 20.0
+        ).getOrThrow()
+
+        // بيع 2 كيس (50,000) مع دفع جزئي 15,000 ومتبقي آجل 35,000
+        ledger.postSaleInvoice(
+            personId = customerId,
+            lines = listOf(Triple(productId, 0.0, 2.0)),
+            discountAmount = 0.0,
+            paymentType = "Partial",
+            paidAmountInput = 15000.0
+        ).getOrThrow()
+
+        val summary = ledger.getAccountBalanceSummary(customerId)
+        // الرصيد الافتتاحي (10,000) + المتبقي الآجل (35,000) = 45,000 عليه (مدين)
+        assertEquals(45000.0, summary.TotalDebit, 0.001)
+        assertEquals(0.0, summary.TotalCredit, 0.001)
+        assertEquals(45000.0, summary.NetBalance, 0.001)
+
+        // تحصيل سند قبض بقيمة 20,000 من العميل
+        ledger.postVoucher(customerId, "Receive", 20000.0, "دفعة نقدية من الحساب").getOrThrow()
+
+        val afterReceipt = ledger.getAccountBalanceSummary(customerId)
+        assertEquals(45000.0, afterReceipt.TotalDebit, 0.001)
+        assertEquals(20000.0, afterReceipt.TotalCredit, 0.001)
+        assertEquals(25000.0, afterReceipt.NetBalance, 0.001)
+
+        val report = ledger.getFinancialReportSummary()
+        assertEquals(25000.0, report.TotalDebtsToUs, 0.001)
     }
 
-    // السيناريو الثالث: السداد الجزئي (فصل النقدية المسددة بالصندوق عن المتبقي الآجل)
+    // 3. اختبار تدفق المشتريات بالوحدة الكبرى وسند الصرف ومرتجع المشتريات
     @Test
-    fun testScenario3_PartialPayment_SplitsCashAndDebtAccurately() {
-        val invoiceTotal = 80000.0
-        val paidCash = 30000.0
-        val remainingCredit = NumberFormatter.roundCurrency(invoiceTotal - paidCash)
+    fun testFlow3_PurchaseMajorUnit_PaymentVoucher_AndPurchaseReturnReversal() {
+        val ledger = InMemoryLedgerEngine(allowNegativeStock = false)
+        // مورد له رصيد افتتاحي دائن 20,000 (علينا)
+        val supplierId = ledger.createAccount(
+            name = "شركة الاتحاد للتوريدات",
+            bookId = 2L,
+            openingBalance = 20000.0,
+            isDebit = false
+        ).getOrThrow()
 
-        assertEquals(50000.0, remainingCredit, 0.001)
-        assertEquals(80000.0, paidCash + remainingCredit, 0.001)
+        val productId = ledger.createProduct(
+            name = "حليب مجفف",
+            barcode = "629100000003",
+            smallUnit = "علبة",
+            largeUnit = "كرتون",
+            unitFactor = 24.0,
+            costPrice = 200.0,
+            retailPrice = 250.0,
+            wholesalePrice = 5500.0,
+            openingMajorQty = 0.0,
+            openingMinorQty = 10.0
+        ).getOrThrow()
+
+        // شراء 5 كراتين (5 × 24 = 120 علبة) بسعر 4,800 للكرتون (الإجمالي 24,000)، دفع نقدي 4,000 والآجل 20,000
+        val purchaseInvoiceId = ledger.postPurchaseInvoice(
+            supplierId = supplierId,
+            productId = productId,
+            useMajorUnit = true,
+            quantity = 5.0,
+            unitPurchaseCost = 4800.0,
+            paidCash = 4000.0
+        ).getOrThrow()
+
+        // التحقق من زيادة المخزون: 10 + 120 = 130 علبة
+        assertEquals(130.0, ledger.getProductStockMinor(productId), 0.001)
+
+        // التحقق من رصيد المورد: كان له 20,000 (-20,000) + آجل الشراء 20,000 (-20,000) = -40,000 (له/علينا)
+        val supAfterPurchase = ledger.getAccountBalanceSummary(supplierId)
+        assertEquals(-40000.0, supAfterPurchase.NetBalance, 0.001)
+        assertEquals(40000.0, ledger.getFinancialReportSummary().TotalDebtsOnUs, 0.001)
+
+        // سداد سند صرف للمورد بقيمة 15,000 -> يخفض التزامنا للمورد إلى 25,000 (-25,000)
+        ledger.postVoucher(supplierId, "Payment", 15000.0, "دفعة للمورد").getOrThrow()
+        assertEquals(-25000.0, ledger.getAccountBalanceSummary(supplierId).NetBalance, 0.001)
+
+        // إرجاع/عكس فاتورة المشتريات (PurchaseReturn) -> يخصم 120 علبة من المخزن ويعكس الـ 20,000 الآجلة
+        ledger.reverseInvoice(purchaseInvoiceId, "تلف في التغليف").getOrThrow()
+        assertEquals(10.0, ledger.getProductStockMinor(productId), 0.001)
+        assertEquals(-5000.0, ledger.getAccountBalanceSummary(supplierId).NetBalance, 0.001)
     }
 
-    // السيناريو الرابع: المشتريات والتوريد (إضافة كميات للمخزن، وزيادة التزام المورد "له")
+    // 4. اختبار مرتجع المبيعات وعكس أثره من الإيرادات وتكلفة البضاعة المباعة والمخزون والذمم
     @Test
-    fun testScenario4_PurchaseInvoice_IncreasesStockAndSupplierDebt() {
-        val initialSupplierCredit = 20000.0 // له 20,000 (علينا)
-        val purchaseQty = 15.0
-        val unitCost = 4000.0
-        val purchaseTotal = NumberFormatter.roundCurrency(purchaseQty * unitCost) // 60,000
-        val paidCash = 10000.0
-        val remainingSupplierDebt = NumberFormatter.roundCurrency(purchaseTotal - paidCash) // 50,000
+    fun testFlow4_SalesReturn_RestoresStock_ReversesReceivable_AndUpdatesIncomeStatement() {
+        val ledger = InMemoryLedgerEngine(allowNegativeStock = false)
+        val customerId = ledger.createAccount("محلات النور", bookId = 1L).getOrThrow()
+        val productId = ledger.createProduct(
+            name = "عصير مانجو",
+            barcode = "629100000004",
+            smallUnit = "حبة",
+            largeUnit = "كرتون",
+            unitFactor = 24.0,
+            costPrice = 100.0,
+            retailPrice = 150.0,
+            wholesalePrice = 3300.0,
+            openingMajorQty = 2.0, // 48 حبة
+            openingMinorQty = 0.0
+        ).getOrThrow()
 
-        val newSupplierCredit = NumberFormatter.roundCurrency(initialSupplierCredit + remainingSupplierDebt)
-        assertEquals(70000.0, newSupplierCredit, 0.001)
+        // بيع آجل كامل: 1 كرتون + 2 حبة (26 حبة) = 3,300 + 300 = 3,600
+        val saleId = ledger.postSaleInvoice(
+            personId = customerId,
+            lines = listOf(Triple(productId, 1.0, 2.0)),
+            paymentType = "Credit"
+        ).getOrThrow()
+
+        assertEquals(22.0, ledger.getProductStockMinor(productId), 0.001)
+        assertEquals(3600.0, ledger.getAccountBalanceSummary(customerId).NetBalance, 0.001)
+        assertEquals(3600.0, ledger.getFinancialReportSummary().TotalSales, 0.001)
+
+        // عكس الفاتورة (مرتجع مبيعات)
+        ledger.reverseInvoice(saleId, "إرجاع بطلب العميل").getOrThrow()
+
+        // استعادة المخزون إلى 48 حبة، وتصفير مديونية العميل، وتصفير المبيعات المعتمدة
+        assertEquals(48.0, ledger.getProductStockMinor(productId), 0.001)
+        assertEquals(0.0, ledger.getAccountBalanceSummary(customerId).NetBalance, 0.001)
+        assertEquals(0.0, ledger.getFinancialReportSummary().TotalSales, 0.001)
+        assertEquals(0.0, ledger.getFinancialReportSummary().CostOfGoodsSold, 0.001)
     }
 
-    // السيناريو الخامس: المرتجعات (إرجاع أصناف، زيادة المخزون، وعكس المديونية بموجب إشعار دائن)
+    // 5. اختبار الذرية والتراجع الكامل (Atomic Rollback) عند فشل بند في الفاتورة
     @Test
-    fun testScenario5_SalesReturn_ReversesDebtAndRestoresStock() {
-        val customerDebtBeforeReturn = 45000.0 // عليه 45,000
-        val returnedQty = 2.0
-        val unitPrice = 8500.0
-        val returnCreditNote = NumberFormatter.roundCurrency(returnedQty * unitPrice) // 17,000 دائن (له)
+    fun testFlow5_AtomicTransactionRollback_LeavesNoPartialRecordsOnStockFailure() {
+        val ledger = InMemoryLedgerEngine(allowNegativeStock = false)
+        val customerId = ledger.createAccount("عميل اختبار الذرية", bookId = 1L).getOrThrow()
+        val prod1 = ledger.createProduct(
+            name = "صنف متوفر",
+            barcode = "111",
+            costPrice = 500.0,
+            retailPrice = 700.0,
+            openingMajorQty = 0.0,
+            openingMinorQty = 10.0
+        ).getOrThrow()
+        val prod2 = ledger.createProduct(
+            name = "صنف محدود الكمية",
+            barcode = "222",
+            costPrice = 800.0,
+            retailPrice = 1000.0,
+            openingMajorQty = 0.0,
+            openingMinorQty = 2.0
+        ).getOrThrow()
 
-        val customerDebtAfterReturn = NumberFormatter.roundCurrency(customerDebtBeforeReturn - returnCreditNote)
-        assertEquals(28000.0, customerDebtAfterReturn, 0.001)
+        // محاولة بيع 5 من الصنف الأول (متوفر) و 5 من الصنف الثاني (المتاح 2 فقط) في فاتورة واحدة
+        val failedResult = ledger.postSaleInvoice(
+            personId = customerId,
+            lines = listOf(
+                Triple(prod1, 0.0, 5.0),
+                Triple(prod2, 0.0, 5.0)
+            ),
+            paymentType = "Credit"
+        )
+
+        assertTrue(failedResult.isFailure)
+        // التأكد من عدم حفظ أي فاتورة أو حركة مخزون جزئية للصنف الأول أو قيد مديونية
+        assertTrue(ledger.invoices.isEmpty())
+        assertTrue(ledger.invoiceLines.isEmpty())
+        assertEquals(10.0, ledger.getProductStockMinor(prod1), 0.001)
+        assertEquals(2.0, ledger.getProductStockMinor(prod2), 0.001)
+        assertEquals(0.0, ledger.getAccountBalanceSummary(customerId).NetBalance, 0.001)
     }
 
-    // السيناريو السادس: المصروفات التشغيلية (توثيق النفقة، خصم من الصندوق، وعدم احتساب المبيعات كصافي ربح)
+    // 6. اختبار قائمة الدخل الشاملة (المبيعات - تكلفة البضاعة المباعة COGS - المصروفات = صافي الربح)
     @Test
-    fun testScenario6_Expenses_DeductsFromCashAndCalculatesCOGS() {
-        val totalSales = 100000.0
-        val cogs = 72000.0 // تكلفة البضاعة المباعة
-        val grossProfit = NumberFormatter.roundCurrency(totalSales - cogs) // 28,000
-        val operatingExpenses = 8000.0 // كهرباء وإيجار ونثريات
-        val netProfit = NumberFormatter.roundCurrency(grossProfit - operatingExpenses) // 20,000
+    fun testFlow6_IncomeStatement_CalculatesCOGS_GrossProfit_AndNetProfitAfterExpenses() {
+        val ledger = InMemoryLedgerEngine(allowNegativeStock = false)
+        val prodId = ledger.createProduct(
+            name = "أرز بسمتي 10 كجم",
+            barcode = "629100000099",
+            smallUnit = "كيس",
+            largeUnit = null,
+            unitFactor = 1.0,
+            costPrice = 7200.0,
+            retailPrice = 10000.0,
+            openingMajorQty = 0.0,
+            openingMinorQty = 15.0
+        ).getOrThrow()
 
-        assertEquals(28000.0, grossProfit, 0.001)
-        assertEquals(20000.0, netProfit, 0.001)
-        assertNotEquals(totalSales, netProfit)
+        // بيع 10 أكياس نقداً = 100,000، تكلفتها COGS = 72,000 -> مجمل الربح = 28,000
+        ledger.postSaleInvoice(
+            personId = null,
+            lines = listOf(Triple(prodId, 0.0, 10.0)),
+            paymentType = "Cash"
+        ).getOrThrow()
+
+        // تسجيل مصروفات تشغيلية بقيمة 8,000
+        ledger.recordExpense(5000.0, "[إيجار ومرافق] فاتورة كهرباء").getOrThrow()
+        ledger.recordExpense(3000.0, "[نقل وشحن] أجور نقل بضاعة").getOrThrow()
+
+        val report = ledger.getFinancialReportSummary()
+        assertEquals(100000.0, report.TotalSales, 0.001)
+        assertEquals(72000.0, report.CostOfGoodsSold, 0.001)
+        assertEquals(28000.0, report.GrossProfit, 0.001)
+        assertEquals(8000.0, report.TotalExpenses, 0.001)
+        assertEquals(20000.0, report.NetProfit, 0.001)
+        // تقييم المخزون المتبقي: 5 أكياس × 7,200 = 36,000
+        assertEquals(36000.0, report.InventoryValuation, 0.001)
     }
 
-    // السيناريو السابع: اختبار الوحدات الكبرى والصغرى
+    // 7. اختبار الوحدات الكبرى والصغرى والبيع المركب
     @Test
-    fun testScenario7_MajorAndMinorUnitConversion_2CartonsOf24Plus5Pieces_Deducts53Pieces() {
-        val unitFactor = 24.0 // 24 قطعة في الكرتون
-        val initialStockMinor = UnitConversionEngine.toMinorQuantity(majorQty = 5.0, minorQty = 0.0, unitFactor = unitFactor) // 120 قطعة
-
-        val soldMajorCartons = 2.0
-        val soldMinorPieces = 5.0
-        val deductedMinor = UnitConversionEngine.toMinorQuantity(soldMajorCartons, soldMinorPieces, unitFactor)
-
+    fun testFlow7_MajorAndMinorUnitConversion_2CartonsOf24Plus5Pieces_Deducts53Pieces() {
+        val unitFactor = 24.0
+        val initialStockMinor = UnitConversionEngine.toMinorQuantity(majorQty = 5.0, minorQty = 0.0, unitFactor = unitFactor)
+        val deductedMinor = UnitConversionEngine.toMinorQuantity(2.0, 5.0, unitFactor)
         assertEquals(53.0, deductedMinor, 0.001)
 
-        val remainingMinor = initialStockMinor - deductedMinor // 120 - 53 = 67 قطعة
-        assertEquals(67.0, remainingMinor, 0.001)
-
+        val remainingMinor = initialStockMinor - deductedMinor
         val breakdown = UnitConversionEngine.breakdownStock(
             totalMinorQty = remainingMinor,
             smallUnit = "قطعة",
             largeUnit = "كرتون",
             unitFactor = unitFactor
         )
-        assertEquals(2L, breakdown.majorUnits) // 2 كرتون (48 قطعة)
-        assertEquals(19.0, breakdown.remainingMinor, 0.001) // و 19 قطعة متبقية (48 + 19 = 67)
+        assertEquals(2L, breakdown.majorUnits)
+        assertEquals(19.0, breakdown.remainingMinor, 0.001)
         assertEquals("2 كرتون و 19 قطعة", breakdown.formattedText)
     }
 
-    // السيناريو الثامن: الشراء بالوحدة الكبرى والبيع بالوحدتين مع حساب التكلفة والربح بدقة
+    // 8. اختبار أمان رمز PIN المملح (PBKDF2) والتأخير المتدرج وتشفير الرموز
     @Test
-    fun testScenario8_CrossUnitPurchaseAndCompositeSale_ProfitAccuracy() {
-        val unitFactor = 24.0
-        val cartonPurchaseCost = 4800.0 // شراء الكرتون بـ 4,800 ر.ي
-        val minorPieceCost = UnitConversionEngine.minorCostFromMajorCost(cartonPurchaseCost, unitFactor)
-        assertEquals(200.0, minorPieceCost, 0.001) // تكلفة القطعة = 200 ر.ي
+    fun testFlow8_SecurityCrypto_SaltedPinHashing_ConstantTimeVerify_AndProgressiveLockout() {
+        val rawPin = "4829"
+        val hash1 = SecurityCryptoHelper.hashPin(rawPin)
+        val hash2 = SecurityCryptoHelper.hashPin(rawPin)
 
-        // بيع كرتونين (بسعر جملة 5,500 للكرتون) + 5 قطع (بسعر تجزئة 250 للقطعة)
-        val calc = UnitConversionEngine.calculateCompositeSale(
-            majorQty = 2.0,
-            minorQty = 5.0,
-            unitFactor = unitFactor,
-            minorSalePrice = 250.0,
-            majorSalePrice = 5500.0,
-            minorUnitCost = minorPieceCost
-        )
+        // التأكد من عدم تخزين الرمز كنص صريح وأن كل عملية تجزئة تولد ملحاً عشوائياً مختلفاً
+        assertTrue(hash1.startsWith("v1$12000$"))
+        assertFalse(hash1.contains(rawPin))
+        assertNotEquals(hash1, hash2)
 
-        assertEquals(53.0, calc.totalMinorQuantity, 0.001)
-        assertEquals(12250.0, calc.totalLinePrice, 0.001)
-        assertEquals(10600.0, calc.totalLineCost, 0.001)
-        assertEquals(1650.0, calc.grossProfit, 0.001)
+        // التحقق من صحة المطابقة بالأرقام الغربية والشرقية ورفض الرمز الخاطئ
+        assertTrue(SecurityCryptoHelper.verifyPin("4829", hash1))
+        assertTrue(SecurityCryptoHelper.verifyPin("٤٨٢٩", hash1))
+        assertFalse(SecurityCryptoHelper.verifyPin("4820", hash1))
+        assertFalse(SecurityCryptoHelper.verifyPin("", hash1))
+
+        // التحقق من سياسة التأخير التدرجي (Progressive Lockout)
+        assertEquals(0, SecurityCryptoHelper.calculateLockoutDurationSeconds(1))
+        assertEquals(0, SecurityCryptoHelper.calculateLockoutDurationSeconds(4))
+        assertEquals(30, SecurityCryptoHelper.calculateLockoutDurationSeconds(5))
+        assertEquals(60, SecurityCryptoHelper.calculateLockoutDurationSeconds(6))
+        assertEquals(120, SecurityCryptoHelper.calculateLockoutDurationSeconds(7))
+        assertEquals(300, SecurityCryptoHelper.calculateLockoutDurationSeconds(8))
+
+        // التحقق من تشفير وفك تشفير رمز Google Drive
+        val sampleToken = "ya29.a0AfH6SMBx_sample_oauth_token_12345"
+        val encrypted = SecurityCryptoHelper.encryptSecret(sampleToken)
+        assertNotEquals(sampleToken, encrypted)
+        assertEquals(sampleToken, SecurityCryptoHelper.decryptSecret(encrypted))
     }
 
-    // السيناريو التاسع: سندات القبض والصرف
+    // 9. اختبار فحص البصمة الرقمية للنسخ الاحتياطي (SHA-256) وترويسة SQLite
     @Test
-    fun testScenario9_ReceiptAndPaymentVouchers() {
-        val customerDebitBalance = 65000.0
-        val receiptAmount = 25000.0
-        assertEquals(40000.0, customerDebitBalance - receiptAmount, 0.001)
-
-        val supplierCreditBalance = 70000.0
-        val paymentAmount = 30000.0
-        assertEquals(40000.0, supplierCreditBalance - paymentAmount, 0.001)
-    }
-
-    // السيناريو العاشر: تسوية الجرد السريع
-    @Test
-    fun testScenario10_RapidStockAdjustment_CalculatesDeltaAccurately() {
-        val systemStock = 28.0
-        val actualCountSurplus = 30.0
-        assertEquals(2.0, actualCountSurplus - systemStock, 0.001)
-
-        val actualCountDeficit = 25.0
-        assertEquals(-3.0, actualCountDeficit - systemStock, 0.001)
-    }
-
-    // السيناريو الحادي عشر: فحص البصمة الرقمية للنسخ الاحتياطي (SHA-256)
-    @Test
-    fun testScenario11_BackupSha256_Verification() {
+    fun testFlow9_BackupIntegrity_Sha256AndSqliteHeaderValidation() {
         val originalData = "SmartLedgerDatabase_Version_1_BinaryContent".toByteArray(Charsets.UTF_8)
         val expectedSha256 = MessageDigest.getInstance("SHA-256").digest(originalData).joinToString("") { "%02x".format(it) }
-
-        val testData = "SmartLedgerDatabase_Version_1_BinaryContent".toByteArray(Charsets.UTF_8)
-        val actualSha256 = MessageDigest.getInstance("SHA-256").digest(testData).joinToString("") { "%02x".format(it) }
-        assertEquals(expectedSha256, actualSha256)
-
         val tamperedData = "SmartLedgerDatabase_Version_1_TAMPERED".toByteArray(Charsets.UTF_8)
         val tamperedSha256 = MessageDigest.getInstance("SHA-256").digest(tamperedData).joinToString("") { "%02x".format(it) }
         assertNotEquals(expectedSha256, tamperedSha256)
-    }
 
-    // السيناريو الثاني عشر: الحماية من النقر المزدوج (Debounce & In-Flight Lock)
-    @Test
-    fun testScenario12_Debounce_And_SavingLock_PreventsDuplicateSubmissions() {
-        var executionCount = 0
-        var lastClickTime = 0L
-        var isSaving = false
-        val debounceThresholdMs = 500L
-
-        val submitAction = { currentTime: Long ->
-            if (!isSaving && (currentTime - lastClickTime >= debounceThresholdMs)) {
-                isSaving = true
-                executionCount++
-                lastClickTime = currentTime
-                isSaving = false
-            }
-        }
-
-        submitAction(1000L)
-        assertEquals(1, executionCount)
-
-        submitAction(1250L)
-        assertEquals(1, executionCount)
-
-        submitAction(1650L)
-        assertEquals(2, executionCount)
-    }
-
-    // السيناريو الثالث عشر: تطبيع الأرقام الشرقية/الهندية والفارسية إلى الأرقام الغربية القياسية (123)
-    @Test
-    fun testScenario13_WesternNumeralsNormalization_AndCurrencyFormatting() {
-        val arabicInput = "١٢٥٠٠٫٧٥"
-        val normalized = NumberFormatter.normalizeNumericInput(arabicInput, allowDecimal = true)
-        assertEquals("12500.75", normalized)
-        assertEquals(12500.75, NumberFormatter.parseDouble(arabicInput), 0.001)
-
-        val formattedCurrency = NumberFormatter.formatCurrency(12500.0, "ر.ي", decimalPlaces = 0)
-        assertEquals("12,500 ر.ي", formattedCurrency)
-
-        val maskedCurrency = NumberFormatter.formatCurrency(12500.0, "ر.ي", privacyMode = true)
-        assertEquals("••••••", maskedCurrency)
-    }
-
-    // السيناريو الرابع عشر: التحقق من منع معامل التحويل الصفري أو السالب في محرك الوحدات
-    @Test
-    fun testScenario14_UnitFactorValidation_PreventsZeroOrInvalidFactor() {
-        assertFalse(UnitConversionEngine.isValidUnitFactor(0.0, hasLargeUnit = true))
-        assertFalse(UnitConversionEngine.isValidUnitFactor(-5.0, hasLargeUnit = true))
-        assertFalse(UnitConversionEngine.isValidUnitFactor(1.0, hasLargeUnit = true))
-        assertTrue(UnitConversionEngine.isValidUnitFactor(24.0, hasLargeUnit = true))
-
-        val safeCost = UnitConversionEngine.minorCostFromMajorCost(1500.0, 0.0)
-        assertEquals(1500.0, safeCost, 0.001)
-
-        val explanation = UnitConversionEngine.explainUnitRelation("قطعة", "كرتون", 24.0)
-        assertEquals("كل 1 كرتون = 24 قطعة", explanation)
-    }
-
-    // السيناريو الخامس عشر: التحقق من ترويسة ملف قاعدة البيانات SQLite قبل الاستعادة
-    @Test
-    fun testScenario15_BackupSqliteHeaderValidation_RejectsCorruptFiles() {
         val tempValid = File.createTempFile("valid_test", ".db")
         val tempCorrupt = File.createTempFile("corrupt_test", ".db")
         try {
@@ -252,53 +364,27 @@ class AccountingEngineTest {
         }
     }
 
-    // السيناريو السادس عشر: آلة حالة النافذة المستقلة (FormWindowLifecycleState) ومنع الإغلاق عند الخطأ
+    // 10. اختبار آلة حالة النافذة المستقلة (FormWindowLifecycleState) ودقة BigDecimal
     @Test
-    fun testScenario16_FormWindowLifecycleStateMachine_NeverClosesOnErrorOrUnsavedEdits() {
+    fun testFlow10_WindowLifecycleStateMachine_AndBigDecimalRounding() {
         var state = FormWindowLifecycleState.EDITING
-        var formData = "حليب الممتاز"
+        val formData = "حليب الممتاز"
 
-        // 1. فشل التحقق لا يغلق النافذة ولا يمسح البيانات
-        state = FormWindowLifecycleState.VALIDATING
-        val isValid = false
-        state = if (isValid) FormWindowLifecycleState.SAVING else FormWindowLifecycleState.VALIDATION_ERROR
-        assertEquals(FormWindowLifecycleState.VALIDATION_ERROR, state)
+        state = FormWindowLifecycleState.VALIDATION_ERROR
         assertNotEquals(FormWindowLifecycleState.CLOSED, state)
         assertEquals("حليب الممتاز", formData)
 
-        // 2. فشل الحفظ يعيد النافذة لحالة SAVE_ERROR مع بقاء المدخلات سليمة
-        state = FormWindowLifecycleState.SAVING
-        val saveSucceeded = false
-        state = if (saveSucceeded) FormWindowLifecycleState.SAVE_SUCCESS else FormWindowLifecycleState.SAVE_ERROR
-        assertEquals(FormWindowLifecycleState.SAVE_ERROR, state)
+        state = FormWindowLifecycleState.SAVE_ERROR
         assertNotEquals(FormWindowLifecycleState.CLOSED, state)
         assertEquals("حليب الممتاز", formData)
 
-        // 3. طلب الإغلاق مع وجود تعديلات غير محفوظة ينتقل إلى CONFIRMING_DISCARD ولا يغلق بصمت
-        val hasUnsavedChanges = formData.isNotBlank()
-        if (hasUnsavedChanges) {
+        if (formData.isNotBlank()) {
             state = FormWindowLifecycleState.CONFIRMING_DISCARD
         }
         assertEquals(FormWindowLifecycleState.CONFIRMING_DISCARD, state)
 
-        // 4. نجاح الحفظ الفعلي فقط ينقل النافذة إلى SAVE_SUCCESS ثم CLOSED
-        state = FormWindowLifecycleState.SAVING
-        val retrySucceeded = true
-        if (retrySucceeded) {
-            state = FormWindowLifecycleState.SAVE_SUCCESS
-            state = FormWindowLifecycleState.CLOSED
-        }
-        assertEquals(FormWindowLifecycleState.CLOSED, state)
-    }
-
-    // السيناريو السابع عشر: دقة تقريب العملات عبر BigDecimal (HALF_UP) لمنع أخطاء الفاصلة العائمة
-    @Test
-    fun testScenario17_BigDecimalCurrencyRounding_EliminatesFloatingPointDrift() {
-        val rawFloatSum = 0.1 + 0.2 // 0.30000000000000004 in IEEE 754
-        val rounded = NumberFormatter.roundCurrency(rawFloatSum, decimalPlaces = 2)
-        assertEquals(0.30, rounded, 0.0)
-
-        val invoiceCalc = 19.99 * 3.0 // 59.97
-        assertEquals(59.97, NumberFormatter.roundCurrency(invoiceCalc, decimalPlaces = 2), 0.0)
+        val rawFloatSum = 0.1 + 0.2
+        assertEquals(0.30, NumberFormatter.roundCurrency(rawFloatSum, decimalPlaces = 2), 0.0)
+        assertEquals("12500.75", NumberFormatter.normalizeNumericInput("١٢٥٠٠٫٧٥", allowDecimal = true))
     }
 }

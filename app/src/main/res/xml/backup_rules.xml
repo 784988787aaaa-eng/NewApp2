@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- استبعاد قاعدة البيانات المالية والأسرار المشفرة من النسخ السحابي التلقائي غير المشفر للنظام -->
+    <exclude domain="database" path="smartledger.db" />
+    <exclude domain="database" path="smartledger.db-wal" />
+    <exclude domain="database" path="smartledger.db-shm" />
+    <exclude domain="sharedpref" path="smartledger_pro_settings.xml" />
+    <exclude domain="sharedpref" path="smartledger_secure_secrets.xml" />
+</full-backup-content>

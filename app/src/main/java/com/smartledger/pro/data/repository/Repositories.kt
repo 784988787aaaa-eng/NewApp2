@@ -419,7 +419,7 @@ class InvoiceRepository(private val db: SmartLedgerDatabase) {
                     stockMovementDao.insertMovements(returnMovements)
 
                     if (invoice.PersonId > 0 && invoice.RemainingAmount > 0) {
-                        val opType = if (invoice.Type == "Sale") "SaleReturn" else "Payment"
+                        val opType = if (invoice.Type == "Sale") "SaleReturn" else "PurchaseReturn"
                         operationDao.insertOperation(
                             OperationEntity(
                                 PersonId = invoice.PersonId,

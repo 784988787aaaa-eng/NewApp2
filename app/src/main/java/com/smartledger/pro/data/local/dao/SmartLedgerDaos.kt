@@ -77,10 +77,10 @@ interface AccountDao {
             p.Name AS PersonName,
             p.Phone AS Phone,
             p.BookId AS BookId,
-            COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment') THEN o.Amount ELSE 0.0 END), 0.0) AS TotalDebit,
+            COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment', 'PurchaseReturn') THEN o.Amount ELSE 0.0 END), 0.0) AS TotalDebit,
             COALESCE(SUM(CASE WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN o.Amount ELSE 0.0 END), 0.0) AS TotalCredit,
             COALESCE(SUM(CASE 
-                WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment') THEN o.Amount 
+                WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment', 'PurchaseReturn') THEN o.Amount 
                 WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount 
                 ELSE 0.0 
             END), 0.0) AS NetBalance,
@@ -102,10 +102,10 @@ interface AccountDao {
             p.Name AS PersonName,
             p.Phone AS Phone,
             p.BookId AS BookId,
-            COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment') THEN o.Amount ELSE 0.0 END), 0.0) AS TotalDebit,
+            COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment', 'PurchaseReturn') THEN o.Amount ELSE 0.0 END), 0.0) AS TotalDebit,
             COALESCE(SUM(CASE WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN o.Amount ELSE 0.0 END), 0.0) AS TotalCredit,
             COALESCE(SUM(CASE 
-                WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment') THEN o.Amount 
+                WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment', 'PurchaseReturn') THEN o.Amount 
                 WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount 
                 ELSE 0.0 
             END), 0.0) AS NetBalance,
@@ -376,7 +376,7 @@ interface DashboardDao {
             SELECT 
                 p.Id,
                 COALESCE(SUM(CASE 
-                    WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment') THEN o.Amount 
+                    WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment', 'PurchaseReturn') THEN o.Amount 
                     WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount 
                     ELSE 0.0 
                 END), 0.0) AS NetBalance
@@ -412,13 +412,13 @@ interface ReportDao {
             ) AS InventoryValuation,
             (
                 SELECT COALESCE(SUM(CASE WHEN NetBalance > 0 THEN NetBalance ELSE 0 END), 0.0) FROM (
-                    SELECT p.Id, COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment') THEN o.Amount WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount ELSE 0.0 END), 0.0) AS NetBalance
+                    SELECT p.Id, COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment', 'PurchaseReturn') THEN o.Amount WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount ELSE 0.0 END), 0.0) AS NetBalance
                     FROM People p LEFT JOIN Operations o ON p.Id = o.PersonId WHERE p.IsActive = 1 GROUP BY p.Id
                 )
             ) AS TotalDebtsToUs,
             (
                 SELECT COALESCE(SUM(CASE WHEN NetBalance < 0 THEN ABS(NetBalance) ELSE 0 END), 0.0) FROM (
-                    SELECT p.Id, COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment') THEN o.Amount WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount ELSE 0.0 END), 0.0) AS NetBalance
+                    SELECT p.Id, COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment', 'PurchaseReturn') THEN o.Amount WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount ELSE 0.0 END), 0.0) AS NetBalance
                     FROM People p LEFT JOIN Operations o ON p.Id = o.PersonId WHERE p.IsActive = 1 GROUP BY p.Id
                 )
             ) AS TotalDebtsOnUs
@@ -446,13 +446,13 @@ interface ReportDao {
             ) AS InventoryValuation,
             (
                 SELECT COALESCE(SUM(CASE WHEN NetBalance > 0 THEN NetBalance ELSE 0 END), 0.0) FROM (
-                    SELECT p.Id, COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment') THEN o.Amount WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount ELSE 0.0 END), 0.0) AS NetBalance
+                    SELECT p.Id, COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment', 'PurchaseReturn') THEN o.Amount WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount ELSE 0.0 END), 0.0) AS NetBalance
                     FROM People p LEFT JOIN Operations o ON p.Id = o.PersonId WHERE p.IsActive = 1 GROUP BY p.Id
                 )
             ) AS TotalDebtsToUs,
             (
                 SELECT COALESCE(SUM(CASE WHEN NetBalance < 0 THEN ABS(NetBalance) ELSE 0 END), 0.0) FROM (
-                    SELECT p.Id, COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment') THEN o.Amount WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount ELSE 0.0 END), 0.0) AS NetBalance
+                    SELECT p.Id, COALESCE(SUM(CASE WHEN o.Type IN ('DebtOnUs', 'Sale', 'Payment', 'PurchaseReturn') THEN o.Amount WHEN o.Type IN ('DebtToUs', 'Purchase', 'Receive', 'SaleReturn') THEN -o.Amount ELSE 0.0 END), 0.0) AS NetBalance
                     FROM People p LEFT JOIN Operations o ON p.Id = o.PersonId WHERE p.IsActive = 1 GROUP BY p.Id
                 )
             ) AS TotalDebtsOnUs

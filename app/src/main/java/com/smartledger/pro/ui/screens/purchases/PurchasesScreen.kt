@@ -25,15 +25,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.smartledger.pro.data.local.SmartLedgerDatabase
 import com.smartledger.pro.data.local.dao.AccountBalanceSummary
 import com.smartledger.pro.data.local.dao.ProductStockItem
 import com.smartledger.pro.data.local.entity.InvoiceEntity
-import com.smartledger.pro.data.local.entity.InvoiceLineEntity
-import com.smartledger.pro.data.repository.AccountRepository
-import com.smartledger.pro.data.repository.InventoryRepository
-import com.smartledger.pro.data.repository.InvoiceRepository
-import com.smartledger.pro.domain.model.UnitConversionEngine
+import com.smartledger.pro.di.AppContainer
 import com.smartledger.pro.ui.components.*
 import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
@@ -43,14 +38,14 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.*
 
 class PurchasesViewModel(application: android.app.Application) : AndroidViewModel(application) {
-    private val db = SmartLedgerDatabase.getInstance(application)
-    private val invoiceRepo = InvoiceRepository(db)
-    private val accountRepo = AccountRepository(db)
-    private val inventoryRepo = InventoryRepository(db)
+    private val container = AppContainer.getInstance(application)
+    private val invoiceRepo = container.invoiceRepository
+    private val accountRepo = container.accountRepository
+    private val inventoryRepo = container.inventoryRepository
+    private val createPurchaseUseCase = container.createPurchaseUseCase
+    private val prefsRepo = container.preferencesRepository
 
     val suppliers: StateFlow<List<AccountBalanceSummary>> = accountRepo.getAccountSummaries(bookId = 2)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -70,66 +65,16 @@ class PurchasesViewModel(application: android.app.Application) : AndroidViewMode
         paidCash: Double,
         notes: String?
     ): Result<Long> {
-        val safeFactor = if (product.UnitFactor <= 0.0 || product.LargeUnit.isNullOrBlank()) 1.0 else product.UnitFactor
-        val totalMinorQty = if (useMajorUnit && safeFactor > 1.0) quantity * safeFactor else quantity
-        val minorCost = NumberFormatter.roundCurrency(
-            if (useMajorUnit && safeFactor > 1.0) {
-                UnitConversionEngine.minorCostFromMajorCost(unitPurchaseCost, safeFactor)
-            } else {
-                unitPurchaseCost
-            },
-            4
+        return createPurchaseUseCase.execute(
+            supplier = supplier,
+            product = product,
+            useMajorUnit = useMajorUnit,
+            quantity = quantity,
+            unitPurchaseCost = unitPurchaseCost,
+            paidCash = paidCash,
+            notes = notes,
+            purchasePrefix = prefsRepo.settings.value.purchasePrefix
         )
-        val total = NumberFormatter.roundCurrency(quantity * unitPurchaseCost)
-        val safePaid = NumberFormatter.roundCurrency(paidCash.coerceIn(0.0, total))
-        val remaining = NumberFormatter.roundCurrency(kotlin.math.max(0.0, total - safePaid))
-
-        if (remaining > 0.0 && supplier == null) {
-            return Result.failure(Exception("المشتريات الآجلة أو الجزئية تتطلب اختيار مورد مسجل لقيد الالتزام له."))
-        }
-
-        val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-        val dateCode = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
-        val invoiceNo = "PUR-$dateCode-${(System.currentTimeMillis() % 10000)}"
-        val unitLabel = if (useMajorUnit && !product.LargeUnit.isNullOrBlank()) {
-            "${NumberFormatter.formatQuantity(quantity)} ${product.LargeUnit}"
-        } else {
-            "${NumberFormatter.formatQuantity(quantity)} ${product.SmallUnit}"
-        }
-
-        val invoice = InvoiceEntity(
-            InvoiceNumber = invoiceNo,
-            Type = "Purchase",
-            PersonId = supplier?.PersonId ?: 0L,
-            PersonNameSnapshot = supplier?.PersonName ?: "مورد نقدي عام",
-            IssuedAt = now,
-            Subtotal = total,
-            DiscountAmount = 0.0,
-            TaxAmount = 0.0,
-            FinalTotal = total,
-            PaidAmount = safePaid,
-            RemainingAmount = remaining,
-            PaymentType = if (remaining == 0.0) "Cash" else if (safePaid == 0.0) "Credit" else "Partial",
-            Notes = notes?.trim()?.ifBlank { null },
-            CreatedAt = now
-        )
-
-        val line = InvoiceLineEntity(
-            InvoiceId = 0L,
-            ProductId = product.Id,
-            ProductNameSnapshot = product.Name,
-            BarcodeSnapshot = product.Barcode,
-            UnitName = unitLabel,
-            IsMajorUnit = useMajorUnit,
-            ConversionFactor = safeFactor,
-            QuantityMinor = totalMinorQty,
-            UnitPrice = minorCost,
-            LineCost = minorCost,
-            LineTotal = total,
-            SortOrder = 1
-        )
-
-        return invoiceRepo.createInvoice(invoice, listOf(line))
     }
 
     suspend fun reversePurchaseInvoice(invoiceId: Long, reason: String?): Result<Boolean> {

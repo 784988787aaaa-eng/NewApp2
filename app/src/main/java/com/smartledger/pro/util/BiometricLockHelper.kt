@@ -1,6 +1,8 @@
 package com.smartledger.pro.util
 
 import android.content.Context
+import android.os.Build
+import android.os.SystemClock
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.background
@@ -13,6 +15,7 @@ import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,10 +28,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import com.smartledger.pro.ui.components.AppHaptics
 import com.smartledger.pro.ui.components.SmartTextField
-import com.smartledger.pro.ui.components.bounceClick
+import com.smartledger.pro.ui.components.pressScaleEffect
 import com.smartledger.pro.ui.theme.SmartLedgerColors
 import com.smartledger.pro.ui.theme.SmartLedgerTokens
+import kotlinx.coroutines.delay
 
 enum class BiometricCapabilityStatus(val canUseBiometric: Boolean, val description: String) {
     READY(true, "القياسات الحيوية متاحة ومفعّلة على هذا الجهاز"),
@@ -39,14 +44,30 @@ enum class BiometricCapabilityStatus(val canUseBiometric: Boolean, val descripti
 
 object BiometricLockHelper {
 
+    /**
+     * اختيار تركيبة وسائل المصادقة المتوافقة رسمياً مع قواعد AndroidX Biometric حسب إصدار أندرويد:
+     * - في Android 11+ (API 30+): يُسمح بدمج `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`.
+     * - في Android 8–10 (API 26–29): ترفض مكتبة AndroidX Biometric جمع `BIOMETRIC_STRONG` مع `DEVICE_CREDENTIAL`
+     *   في `PromptInfo.Builder`، لذا نستخدم `BIOMETRIC_WEAK or DEVICE_CREDENTIAL` أو `BIOMETRIC_STRONG` مع زر بديل.
+     */
+    fun getAllowedAuthenticatorsForOs(sdkInt: Int = Build.VERSION.SDK_INT): Int {
+        return if (sdkInt >= Build.VERSION_CODES.R) {
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        } else {
+            BiometricManager.Authenticators.BIOMETRIC_WEAK or
+                BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        }
+    }
+
     fun checkBiometricSupport(context: Context): BiometricCapabilityStatus {
         return try {
             val manager = BiometricManager.from(context)
-            val result = manager.canAuthenticate(
-                BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                    BiometricManager.Authenticators.BIOMETRIC_WEAK or
-                    BiometricManager.Authenticators.DEVICE_CREDENTIAL
-            )
+            val primaryAuth = getAllowedAuthenticatorsForOs()
+            var result = manager.canAuthenticate(primaryAuth)
+            if (result != BiometricManager.BIOMETRIC_SUCCESS) {
+                result = manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)
+            }
             when (result) {
                 BiometricManager.BIOMETRIC_SUCCESS -> BiometricCapabilityStatus.READY
                 BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> BiometricCapabilityStatus.NO_HARDWARE
@@ -78,7 +99,11 @@ object BiometricLockHelper {
 
                     override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                         super.onAuthenticationError(errorCode, errString)
-                        onError(errString.toString())
+                        if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
+                            errorCode != BiometricPrompt.ERROR_USER_CANCELED
+                        ) {
+                            onError(errString.toString())
+                        }
                     }
 
                     override fun onAuthenticationFailed() {
@@ -88,15 +113,25 @@ object BiometricLockHelper {
                 }
             )
 
-            val promptInfo = BiometricPrompt.PromptInfo.Builder()
-                .setTitle(title)
-                .setSubtitle(subtitle)
-                .setAllowedAuthenticators(
-                    BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                        BiometricManager.Authenticators.BIOMETRIC_WEAK or
-                        BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                )
-                .build()
+            val manager = BiometricManager.from(activity)
+            val osAuthenticators = getAllowedAuthenticatorsForOs()
+            val promptInfo = if (manager.canAuthenticate(osAuthenticators) == BiometricManager.BIOMETRIC_SUCCESS) {
+                BiometricPrompt.PromptInfo.Builder()
+                    .setTitle(title)
+                    .setSubtitle(subtitle)
+                    .setAllowedAuthenticators(osAuthenticators)
+                    .build()
+            } else {
+                BiometricPrompt.PromptInfo.Builder()
+                    .setTitle(title)
+                    .setSubtitle(subtitle)
+                    .setAllowedAuthenticators(
+                        BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                            BiometricManager.Authenticators.BIOMETRIC_WEAK
+                    )
+                    .setNegativeButtonText("استخدام رمز الحماية (PIN)")
+                    .build()
+            }
 
             prompt.authenticate(promptInfo)
         } catch (e: Exception) {
@@ -107,25 +142,68 @@ object BiometricLockHelper {
 
 /**
  * شاشة قفل التطبيق الآمنة (AppSecurityLockScreen)
- * تدعم فتح القفل عبر BiometricPrompt الرسمي أو عبر رمز PIN الاحتياطي عند غياب المستشعر أو فشل القراءة.
+ * - تتحقق من رمز PIN عبر `SecurityCryptoHelper.verifyPin` (مقارنة مملحة PBKDF2 بزمن ثابت).
+ * - تفرض تأخيراً متدرجاً (`Progressive Lockout`) عند تكرار المحاولات الفاشلة لمنع التخمين.
  */
 @Composable
 fun AppSecurityLockScreen(
-    expectedPin: String,
+    expectedPinVerifier: String,
     onUnlocked: () -> Unit
 ) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
+    val view = androidx.compose.ui.platform.LocalView.current
     val capability = remember { BiometricLockHelper.checkBiometricSupport(context) }
 
-    var pinInput by remember { mutableStateOf("") }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var pinInput by rememberSaveable { mutableStateOf("") }
+    var failedAttempts by rememberSaveable { mutableStateOf(0) }
+    var lockoutRemainingSeconds by rememberSaveable { mutableStateOf(0) }
+    var lockoutUntilRealtime by rememberSaveable { mutableStateOf(0L) }
+    var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(lockoutUntilRealtime) {
+        while (lockoutUntilRealtime > SystemClock.elapsedRealtime()) {
+            val remaining = ((lockoutUntilRealtime - SystemClock.elapsedRealtime() + 999L) / 1000L).toInt()
+            lockoutRemainingSeconds = remaining.coerceAtLeast(0)
+            delay(250L)
+        }
+        lockoutRemainingSeconds = 0
+    }
+
+    val verifyEnteredPin: () -> Unit = {
+        if (lockoutRemainingSeconds > 0) {
+            errorMessage = "تم إيقاف المحاولات مؤقتاً لحماية الحساب. انتظر $lockoutRemainingSeconds ثانية."
+            AppHaptics.perform(view, AppHaptics.FeedbackKind.ERROR)
+        } else if (SecurityCryptoHelper.verifyPin(pinInput, expectedPinVerifier)) {
+            failedAttempts = 0
+            lockoutUntilRealtime = 0L
+            lockoutRemainingSeconds = 0
+            AppHaptics.perform(view, AppHaptics.FeedbackKind.CONFIRM)
+            onUnlocked()
+        } else {
+            failedAttempts++
+            val penaltySec = SecurityCryptoHelper.calculateLockoutDurationSeconds(failedAttempts)
+            if (penaltySec > 0) {
+                lockoutUntilRealtime = SystemClock.elapsedRealtime() + (penaltySec * 1000L)
+                lockoutRemainingSeconds = penaltySec
+                errorMessage = "تجاوزت الحد المسموح للمحاولات ($failedAttempts). يرجى الانتظار $penaltySec ثانية."
+            } else {
+                val remainingTries = (5 - failedAttempts).coerceAtLeast(1)
+                errorMessage = "رمز الحماية غير صحيح (متبقي $remainingTries محاولات قبل الإيقاف المؤقت)"
+            }
+            AppHaptics.perform(view, AppHaptics.FeedbackKind.ERROR)
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (activity != null && capability.canUseBiometric) {
             BiometricLockHelper.showBiometricPrompt(
                 activity = activity,
-                onSuccess = onUnlocked,
+                onSuccess = {
+                    failedAttempts = 0
+                    lockoutUntilRealtime = 0L
+                    onUnlocked()
+                },
                 onError = { err -> errorMessage = err }
             )
         }
@@ -181,49 +259,41 @@ fun AppSecurityLockScreen(
                     textAlign = TextAlign.Center
                 )
 
-                if (expectedPin.isNotBlank()) {
+                if (expectedPinVerifier.isNotBlank()) {
                     SmartTextField(
                         value = pinInput,
                         onValueChange = {
-                            pinInput = it.take(8)
-                            errorMessage = null
-                            if (pinInput == expectedPin) {
-                                onUnlocked()
+                            pinInput = NumberFormatter.normalizeNumericInput(it, allowDecimal = false).take(8)
+                            if (lockoutRemainingSeconds == 0) {
+                                errorMessage = null
                             }
                         },
                         label = "رمز الحماية الشخصي (PIN)",
                         placeholder = "أدخل الرمز الرقمي...",
-                        errorText = errorMessage,
+                        enabled = lockoutRemainingSeconds == 0,
+                        errorText = if (lockoutRemainingSeconds > 0) {
+                            "يرجى الانتظار $lockoutRemainingSeconds ثانية قبل المحاولة مجدداً"
+                        } else errorMessage,
                         keyboardType = KeyboardType.NumberPassword,
                         imeAction = ImeAction.Done,
-                        onDoneAction = {
-                            if (pinInput == expectedPin) {
-                                onUnlocked()
-                            } else {
-                                errorMessage = "رمز الحماية غير صحيح"
-                            }
-                        }
+                        onDoneAction = { verifyEnteredPin() }
                     )
 
                     Button(
-                        onClick = {
-                            if (pinInput == expectedPin) {
-                                onUnlocked()
-                            } else {
-                                errorMessage = "رمز الحماية غير صحيح"
-                            }
-                        },
+                        onClick = { verifyEnteredPin() },
+                        enabled = pinInput.length >= 4 && lockoutRemainingSeconds == 0,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(46.dp)
-                            .bounceClick {
-                                if (pinInput == expectedPin) onUnlocked()
-                                else errorMessage = "رمز الحماية غير صحيح"
-                            },
+                            .pressScaleEffect(enabled = pinInput.length >= 4 && lockoutRemainingSeconds == 0),
                         colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                     ) {
-                        Text("فتح القفل", fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextInverse)
+                        Text(
+                            text = if (lockoutRemainingSeconds > 0) "مقفل مؤقتاً ($lockoutRemainingSeconds ث)" else "تحقق وفتح القفل",
+                            fontWeight = FontWeight.Bold,
+                            color = SmartLedgerColors.TextInverse
+                        )
                     }
                 } else if (!errorMessage.isNullOrBlank()) {
                     Text(
@@ -239,11 +309,18 @@ fun AppSecurityLockScreen(
                         onClick = {
                             BiometricLockHelper.showBiometricPrompt(
                                 activity = activity,
-                                onSuccess = onUnlocked,
+                                onSuccess = {
+                                    failedAttempts = 0
+                                    lockoutUntilRealtime = 0L
+                                    onUnlocked()
+                                },
                                 onError = { err -> errorMessage = err }
                             )
                         },
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .pressScaleEffect(),
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                         border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
                     ) {
@@ -251,8 +328,7 @@ fun AppSecurityLockScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("المصادقة ببصمة الإصبع / قفل الجهاز", color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
                     }
-                } else if (expectedPin.isBlank()) {
-                    // إذا لم يكن هناك عتاد بيومتري ولا رمز PIN مضبوط، اسمح بالدخول الآمن مع تنبيه المستخدم
+                } else if (expectedPinVerifier.isBlank()) {
                     Text(
                         text = capability.description,
                         style = MaterialTheme.typography.labelSmall,
@@ -261,6 +337,7 @@ fun AppSecurityLockScreen(
                     )
                     Button(
                         onClick = onUnlocked,
+                        modifier = Modifier.pressScaleEffect(),
                         colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                     ) {

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="database" path="smartledger.db" />
+        <exclude domain="database" path="smartledger.db-wal" />
+        <exclude domain="database" path="smartledger.db-shm" />
+        <exclude domain="sharedpref" path="smartledger_pro_settings.xml" />
+        <exclude domain="sharedpref" path="smartledger_secure_secrets.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="smartledger_secure_secrets.xml" />
+    </device-transfer>
+</data-extraction-rules>

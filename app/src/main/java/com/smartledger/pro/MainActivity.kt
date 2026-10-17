@@ -43,7 +43,7 @@ class MainActivity : FragmentActivity() {
             SmartLedgerTheme {
                 if (needsUnlockState && settings.biometricLockEnabled) {
                     AppSecurityLockScreen(
-                        expectedPin = settings.appPinCode,
+                        expectedPinVerifier = settings.appPinCode,
                         onUnlocked = { needsUnlockState = false }
                     )
                 } else {
