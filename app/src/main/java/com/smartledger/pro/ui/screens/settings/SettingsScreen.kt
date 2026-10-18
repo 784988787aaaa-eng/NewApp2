@@ -141,50 +141,11 @@ fun SettingsScreen(
     Scaffold(
         containerColor = SmartLedgerColors.SurfaceWindow,
         topBar = {
-            Column(
-                modifier = Modifier
-                    .background(SmartLedgerColors.SurfacePanel)
-                    .padding(horizontal = SmartLedgerTokens.screenHorizontalPadding, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "مركز التحكم والإعدادات",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = SmartLedgerColors.TextPrimary
-                        )
-                        Text(
-                            text = "الدفتر الذكي Pro — الإصدار 3.0.0 • حفظ دائم ومشفر",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SmartLedgerColors.TextMuted
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = { showResetConfirmDialog = true },
-                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.heightIn(min = 34.dp).pressScaleEffect()
-                    ) {
-                        Icon(Icons.Default.RestartAlt, contentDescription = null, tint = SmartLedgerColors.TextSecondary, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("الافتراضيات", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                CompactSearchBar(
-                    query = searchQuery,
-                    onQueryChange = { searchQuery = it },
-                    placeholder = "ابحث في الإعدادات (منشأة، عملة، مظهر، نسخ، طابعة، بصمة، محذوفات)..."
-                )
-            }
+            SettingsScreenHeader(
+                searchQuery = searchQuery,
+                onSearchQueryChange = { searchQuery = it },
+                onResetDefaults = { showResetConfirmDialog = true }
+            )
         }
     ) { innerPadding ->
         LazyColumn(
