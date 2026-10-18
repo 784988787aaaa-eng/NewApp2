@@ -28,6 +28,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -131,10 +132,13 @@ fun FormSheetContainer(
 
     val activeBannerError = errorMessage?.takeIf { it.isNotBlank() } ?: localValidationMessage
 
+    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    val maxSheetHeight = minOf(680.dp, screenHeight * 0.84f)
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(max = 680.dp)
+            .heightIn(max = maxSheetHeight)
     ) {
         // 1. ترويسة النافذة العائمة (Floating Window Header)
         Column(
