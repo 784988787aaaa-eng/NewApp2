@@ -247,7 +247,7 @@ fun InventoryScreen(
                             showRapidStockCountSheet = true
                         },
                         onDelete = { productIdToDelete = product.Id },
-                        showBarcodeField = fieldVisibility.inventoryBarcode,
+                        showBarcodeField = fieldVisibility.productBarcode,
                         showShelfLocationField = fieldVisibility.productShelf
                     )
                 }
