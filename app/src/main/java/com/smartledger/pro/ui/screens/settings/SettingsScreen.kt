@@ -44,6 +44,8 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by viewModel.settings.collectAsState()
+    val availableMeasurementUnits by viewModel.units.collectAsState()
+    val fieldVisibility by ScreenFieldVisibilityStore.observe(context).collectAsState()
     val identity by viewModel.businessIdentity.collectAsState()
     val indexedBackups by viewModel.indexedBackups.collectAsState()
     val deletedItems by viewModel.deletedItems.collectAsState()
@@ -560,6 +562,72 @@ fun SettingsScreen(
                         title = "6. سياسات المخزون ونقطة البيع والحقول",
                         statusSummary = "البيع بالسالب: ${if (settings.allowNegativeStock) "مسموح" else "ممنوع"} • الوحدات الافتراضية: ${settings.defaultSmallUnit} / ${settings.defaultLargeUnit} (${NumberFormatter.formatQuantity(settings.defaultUnitFactor)})"
                     ) {
+                        val smallUnitOptions = remember(availableMeasurementUnits, settings.defaultSmallUnit) {
+                            (availableMeasurementUnits.map { it.Name } + settings.defaultSmallUnit)
+                                .filter { it.isNotBlank() }
+                                .distinct()
+                                .map { it to it }
+                        }
+                        val largeUnitOptions = remember(availableMeasurementUnits, settings.defaultLargeUnit) {
+                            (availableMeasurementUnits.map { it.Name } + settings.defaultLargeUnit)
+                                .filter { it.isNotBlank() }
+                                .distinct()
+                                .map { it to it }
+                        }
+                        var defaultUnitFactorText by remember(settings.defaultUnitFactor) {
+                            mutableStateOf(NumberFormatter.formatQuantity(settings.defaultUnitFactor))
+                        }
+
+                        CompactDropdownPicker(
+                            label = "الوحدة الصغرى الافتراضية",
+                            options = smallUnitOptions,
+                            selectedOption = settings.defaultSmallUnit,
+                            onOptionSelected = { unit ->
+                                viewModel.updateSettings { it.copy(defaultSmallUnit = unit) }
+                            },
+                            leadingIcon = Icons.Default.Straighten
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        CompactDropdownPicker(
+                            label = "الوحدة الكبرى الافتراضية",
+                            options = largeUnitOptions,
+                            selectedOption = settings.defaultLargeUnit,
+                            onOptionSelected = { unit ->
+                                viewModel.updateSettings { it.copy(defaultLargeUnit = unit) }
+                            },
+                            leadingIcon = Icons.Default.Inventory2
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SmartTextField(
+                                value = defaultUnitFactorText,
+                                onValueChange = { defaultUnitFactorText = it },
+                                label = "عدد الصغرى في الكبرى",
+                                placeholder = "24",
+                                keyboardType = KeyboardType.Decimal,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = {
+                                    val factor = NumberFormatter.parseDouble(defaultUnitFactorText, 0.0)
+                                    if (factor >= 1.0) {
+                                        viewModel.updateSettings { it.copy(defaultUnitFactor = factor) }
+                                        isBannerError = false
+                                        statusBannerText = "تم حفظ معامل التحويل"
+                                    } else {
+                                        isBannerError = true
+                                        statusBannerText = "أدخل معامل تحويل أكبر من صفر"
+                                    }
+                                }
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = "حفظ معامل التحويل", tint = SmartLedgerColors.AccentLight)
+                            }
+                        }
+                        Divider(color = SmartLedgerColors.BorderSubtle)
                         SettingSwitchRow(
                             title = "السماح بالبيع عند نفاد الكمية (الرصيد السالب)",
                             subtitle = "عند التعطيل، سيرفض النظام إصدار فاتورة مبيعات تتجاوز الرصيد المتاح في المخزن",
@@ -570,20 +638,38 @@ fun SettingsScreen(
                         )
                         Divider(color = SmartLedgerColors.BorderSubtle)
                         SettingSwitchRow(
-                            title = "إظهار حقول وأزرار الباركود",
-                            subtitle = "عرض مسح الباركود في شريط المخزون ونقطة البيع",
-                            checked = settings.showBarcodeField,
+                            title = "الباركود في المخزون",
+                            subtitle = "",
+                            checked = fieldVisibility.inventoryBarcode,
                             onCheckedChange = { show ->
-                                viewModel.updateSettings { it.copy(showBarcodeField = show) }
+                                ScreenFieldVisibilityStore.update(context) { it.copy(inventoryBarcode = show) }
                             }
                         )
                         Divider(color = SmartLedgerColors.BorderSubtle)
                         SettingSwitchRow(
-                            title = "إظهار حقل موقع الرف في المخزون",
-                            subtitle = "تحديد رقم الرف أو الممر لكل صنف",
-                            checked = settings.showShelfLocation,
+                            title = "الباركود في بطاقة الصنف",
+                            subtitle = "",
+                            checked = fieldVisibility.productBarcode,
                             onCheckedChange = { show ->
-                                viewModel.updateSettings { it.copy(showShelfLocation = show) }
+                                ScreenFieldVisibilityStore.update(context) { it.copy(productBarcode = show) }
+                            }
+                        )
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        SettingSwitchRow(
+                            title = "موقع الرف في بطاقة الصنف",
+                            subtitle = "",
+                            checked = fieldVisibility.productShelf,
+                            onCheckedChange = { show ->
+                                ScreenFieldVisibilityStore.update(context) { it.copy(productShelf = show) }
+                            }
+                        )
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        SettingSwitchRow(
+                            title = "الباركود في نقطة البيع",
+                            subtitle = "",
+                            checked = fieldVisibility.posBarcode,
+                            onCheckedChange = { show ->
+                                ScreenFieldVisibilityStore.update(context) { it.copy(posBarcode = show) }
                             }
                         )
                         Divider(color = SmartLedgerColors.BorderSubtle)
@@ -1530,6 +1616,7 @@ fun SettingsScreen(
                 confirmText = "استعادة الافتراضيات",
                 onConfirm = {
                     viewModel.resetPreferencesToDefault()
+                    ScreenFieldVisibilityStore.reset(context)
                     showResetConfirmDialog = false
                     isBannerError = false
                     statusBannerText = "تمت استعادة الإعدادات الافتراضية مع الحفاظ على كافة السجلات المالية وإعدادات الحماية."

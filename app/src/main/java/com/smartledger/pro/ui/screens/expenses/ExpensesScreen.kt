@@ -36,6 +36,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun ExpensesScreen(
     onBack: (() -> Unit)? = null,
+    createAction: String? = null,
+    onCreateActionConsumed: () -> Unit = {},
     viewModel: ExpensesViewModel = viewModel()
 ) {
     val allExpenses by viewModel.expenses.collectAsState()
@@ -47,6 +49,12 @@ fun ExpensesScreen(
     var selectedTypeFilter by rememberSaveable { mutableStateOf("ALL") } // ALL, EXPENSE, REVENUE
     var selectedCategoryFilter by rememberSaveable { mutableStateOf("ALL") }
     var showAddExpenseDialog by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(createAction) {
+        if (createAction == "expense") {
+            showAddExpenseDialog = true
+            onCreateActionConsumed()
+        }
+    }
     var expenseIdToDelete by rememberSaveable { mutableStateOf<Long?>(null) }
     val expenseToDelete = remember(allExpenses, expenseIdToDelete) { expenseIdToDelete?.let { id -> allExpenses.firstOrNull { it.Id == id } } }
     var lastDeletedExpense by remember { mutableStateOf<ExpenseEntity?>(null) }
@@ -122,18 +130,6 @@ fun ExpensesScreen(
                         }
                     }
 
-                    Button(
-                        onClick = { showAddExpenseDialog = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
-                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                        modifier = Modifier
-                            .heightIn(min = 38.dp)
-                            .pressScaleEffect()
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = SmartLedgerColors.TextInverse)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("قيد جديد", color = SmartLedgerColors.TextInverse, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-                    }
                 }
 
                 CompactSearchBar(
@@ -197,8 +193,6 @@ fun ExpensesScreen(
                         icon = Icons.Default.TrendingDown,
                         title = "لا توجد سجلات مصروفات أو إيرادات بعد",
                         subtitle = "سجّل المصروفات أو الإيرادات التشغيلية بتصنيفاتك وصناديقك الخاصة دون أي قوائم مفروضة.",
-                        actionText = "تسجيل أول عملية",
-                        onActionClick = { showAddExpenseDialog = true },
                         isFiltered = isFiltered,
                         onClearFilters = {
                             searchQuery = ""

@@ -68,20 +68,16 @@ fun AddExpenseDialog(
     val categorySuggestions = remember(domainCategories) {
         domainCategories.map { HierarchicalCategoryValidator.formatCategoryPath(it.Id, domainCategories) }
     }
-    val sourceSuggestions = remember(financialAccounts) {
-        financialAccounts.map { it.Name }
-    }
-
     val focusStatement = remember { FocusRequester() }
     val amount = NumberFormatter.parseDouble(amountText, 0.0)
     val isFormValid = amount > 0.0 && statement.trim().isNotEmpty()
 
     FormSheetContainer(
-        title = if (entryType == "REVENUE") "تسجيل إيراد تشغيلي آخر" else "تسجيل نفقة تشغيلية",
-        subtitle = "اختر من تصنيفاتك وصناديقك الخاصة أو اكتب اسماً جديداً ليُحفظ تلقائياً",
+        title = if (entryType == "REVENUE") "إيراد" else "مصروف",
+        
         headerIcon = if (entryType == "REVENUE") Icons.Default.TrendingUp else Icons.Default.TrendingDown,
         onDismiss = onDismiss,
-        primaryButtonText = if (entryType == "REVENUE") "تأكيد وقيد الإيراد" else "تأكيد وقيد المصروف",
+        primaryButtonText = "حفظ",
         primaryButtonColor = if (entryType == "REVENUE") SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger,
         isPrimaryEnabled = isFormValid,
         isSaving = isSaving,
@@ -101,7 +97,7 @@ fun AddExpenseDialog(
             }
         }
     ) {
-        FormSectionGroup(title = "1. نوع العملية والمبلغ والتصنيف") {
+        FormSectionGroup(title = "النوع والمبلغ") {
             SegmentedOptionRow(
                 options = listOf(
                     "EXPENSE" to "مصروف تشغيلي (-)",
@@ -142,7 +138,7 @@ fun AddExpenseDialog(
             )
         }
 
-        FormSectionGroup(title = "2. البيان والحساب المالي (الصندوق / المحفظة)") {
+        FormSectionGroup(title = "البيان والحساب") {
             SmartTextField(
                 value = statement,
                 onValueChange = { statement = it },
@@ -153,17 +149,15 @@ fun AddExpenseDialog(
                 imeAction = ImeAction.Next
             )
 
-            SmartAutocompleteField(
-                value = sourceText,
-                onValueChange = { typed ->
-                    sourceText = typed
-                    selectedAccountId = financialAccounts.firstOrNull { it.Name.equals(typed.trim(), ignoreCase = true) }?.Id
+            CompactDropdownPicker(
+                label = if (entryType == "REVENUE") "الحساب المستلم" else "حساب السداد",
+                options = listOf<Pair<Long?, String>>(null to "صندوق عام") + financialAccounts.map { it.Id as Long? to it.Name },
+                selectedOption = selectedAccountId,
+                onOptionSelected = { accountId ->
+                    selectedAccountId = accountId
+                    sourceText = financialAccounts.firstOrNull { it.Id == accountId }?.Name ?: "صندوق عام"
                 },
-                label = if (entryType == "REVENUE") "الحساب المالي المستلم (صندوق / محفظة / بنك)" else "الحساب المالي المسدد منه (صندوق / محفظة / بنك)",
-                placeholder = "اكتب أو اختر الصندوق أو المحفظة...",
-                suggestions = sourceSuggestions,
-                leadingIcon = Icons.Default.AccountBalanceWallet,
-                imeAction = ImeAction.Done
+                leadingIcon = Icons.Default.AccountBalanceWallet
             )
         }
     }

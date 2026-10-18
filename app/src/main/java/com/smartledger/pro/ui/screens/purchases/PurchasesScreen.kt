@@ -37,6 +37,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun PurchasesScreen(
     onBack: (() -> Unit)? = null,
+    createAction: String? = null,
+    onCreateActionConsumed: () -> Unit = {},
     viewModel: PurchasesViewModel = viewModel()
 ) {
     val allInvoices by viewModel.recentPurchases.collectAsState()
@@ -47,6 +49,12 @@ fun PurchasesScreen(
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var showAddPurchaseSheet by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(createAction) {
+        if (createAction == "purchase") {
+            showAddPurchaseSheet = true
+            onCreateActionConsumed()
+        }
+    }
     var purchaseIdToReverse by rememberSaveable { mutableStateOf<Long?>(null) }
     val purchaseToReverse = remember(allInvoices, purchaseIdToReverse) { purchaseIdToReverse?.let { id -> allInvoices.firstOrNull { it.Id == id } } }
     var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
@@ -105,18 +113,6 @@ fun PurchasesScreen(
                         }
                     }
 
-                    Button(
-                        onClick = { showAddPurchaseSheet = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
-                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                        modifier = Modifier
-                            .heightIn(min = 38.dp)
-                            .pressScaleEffect()
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("فاتورة شراء", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-                    }
                 }
 
                 CompactSearchBar(
@@ -150,8 +146,6 @@ fun PurchasesScreen(
                         icon = Icons.Default.LocalShipping,
                         title = "لا توجد فواتير مشتريات مسجلة",
                         subtitle = "سجّل فواتير التوريد لزيادة كميات المخزن تلقائياً وتحديث حسابات الموردين.",
-                        actionText = "تسجيل أول فاتورة شراء",
-                        onActionClick = { showAddPurchaseSheet = true },
                         isFiltered = searchQuery.isNotBlank(),
                         onClearFilters = { searchQuery = "" }
                     )

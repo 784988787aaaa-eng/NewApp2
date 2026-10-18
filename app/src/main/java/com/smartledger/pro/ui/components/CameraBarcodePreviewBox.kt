@@ -55,7 +55,7 @@ import java.util.concurrent.Executors
  */
 @Composable
 @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
-private fun CameraBarcodePreviewBox(
+fun CameraBarcodePreviewBox(
     onDetected: (String) -> Unit
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current

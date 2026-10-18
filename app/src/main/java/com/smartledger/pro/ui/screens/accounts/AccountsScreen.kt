@@ -45,6 +45,8 @@ import kotlin.math.abs
 fun AccountsScreen(
     privacyMode: Boolean,
     onNavigateToVouchers: () -> Unit = {},
+    createAction: String? = null,
+    onCreateActionConsumed: () -> Unit = {},
     viewModel: AccountsViewModel = viewModel()
 ) {
     val accounts by viewModel.accounts.collectAsState()
@@ -61,6 +63,13 @@ fun AccountsScreen(
 
     var showAddOrEditDialog by rememberSaveable { mutableStateOf(false) }
     var editingAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
+    LaunchedEffect(createAction) {
+        if (createAction == "account") {
+            editingAccountId = null
+            showAddOrEditDialog = true
+            onCreateActionConsumed()
+        }
+    }
     var selectedAccountIdForStatement by rememberSaveable { mutableStateOf<Long?>(null) }
     var quickVoucherPersonId by rememberSaveable { mutableStateOf<Long?>(null) }
     var quickVoucherInitialReceipt by rememberSaveable { mutableStateOf(true) }
@@ -145,22 +154,6 @@ fun AccountsScreen(
                             Text("السندات", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
                         }
 
-                        Button(
-                            onClick = {
-                                editingAccountId = null
-                                showAddOrEditDialog = true
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
-                            shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier
-                                .heightIn(min = 38.dp)
-                                .pressScaleEffect()
-                        ) {
-                            Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("حساب جديد", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                        }
                     }
                 }
 
@@ -232,11 +225,6 @@ fun AccountsScreen(
                         icon = Icons.Default.AccountBalanceWallet,
                         title = "لا توجد حسابات مسجلة في هذا الدفتر",
                         subtitle = "أضف حسابات العملاء والموردين لمتابعة الأرصدة وإصدار كشوف الحساب والسندات.",
-                        actionText = "تعريف حساب جديد",
-                        onActionClick = {
-                            editingAccountId = null
-                            showAddOrEditDialog = true
-                        },
                         isFiltered = isFiltered,
                         onClearFilters = { viewModel.clearFilters() }
                     )

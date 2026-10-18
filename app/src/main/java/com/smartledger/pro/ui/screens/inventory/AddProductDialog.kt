@@ -44,6 +44,8 @@ fun AddProductDialog(
     categories: List<CategoryEntity> = emptyList(),
     unitSuggestions: List<String> = emptyList(),
     warehouseSuggestions: List<String> = emptyList(),
+    showBarcodeField: Boolean = true,
+    showShelfLocationField: Boolean = true,
     isSaving: Boolean = false,
     saveErrorMessage: String? = null,
     onOpenExistingProduct: (ProductStockItem) -> Unit,
@@ -139,11 +141,10 @@ fun AddProductDialog(
         retailPriceText != (if (existingProduct != null) NumberFormatter.formatQuantity(existingProduct.RetailPrice) else "")
 
     FormSheetContainer(
-        title = if (isEditing) "تعديل بيانات الصنف بالمخزن" else "تعريف صنف جديد بالمخزن",
-        subtitle = "ضبط الوحدات الكبرى والصغرى ومعامل التحويل وأسعار البيع",
+        title = if (isEditing) "تعديل الصنف" else "صنف جديد",
         headerIcon = Icons.Default.Inventory2,
         onDismiss = onDismiss,
-        primaryButtonText = if (isEditing) "حفظ التعديلات" else "تأكيد وحفظ الصنف",
+        primaryButtonText = if (isEditing) "حفظ التعديلات" else "حفظ",
         isPrimaryEnabled = isFormValid,
         isSaving = isSaving,
         hasUnsavedChanges = hasUnsavedChanges,
@@ -184,10 +185,10 @@ fun AddProductDialog(
                 isRequired = true,
                 leadingIcon = Icons.Default.ShoppingBag,
                 autoFocusOnAppear = !isEditing && name.isBlank(),
-                nextFocusRequester = if (AppDesignState.showBarcodeField) focusBarcode else focusSmallUnit
+                nextFocusRequester = if (showBarcodeField) focusBarcode else focusSmallUnit
             )
 
-            if (AppDesignState.showBarcodeField) {
+            if (showBarcodeField) {
                 SmartTextField(
                     value = barcode,
                     onValueChange = { barcode = it },
@@ -217,14 +218,51 @@ fun AddProductDialog(
                     )
                 }
 
-                SmartAutocompleteField(
-                    value = warehouse,
-                    onValueChange = { warehouse = it },
-                    label = "المخزن / المستودع",
-                    placeholder = "اختر أو اكتب اسم المخزن...",
-                    suggestions = warehouseSuggestions,
-                    leadingIcon = Icons.Default.Warehouse
-                )
+                val availableWarehouses = remember(warehouseSuggestions) {
+                    warehouseSuggestions.map(String::trim).filter(String::isNotBlank).distinct()
+                }
+                var warehouseMenuExpanded by rememberSaveable(stateKey) { mutableStateOf(false) }
+
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = warehouse,
+                        onValueChange = {},
+                        readOnly = true,
+                        singleLine = true,
+                        label = { Text("المخزن") },
+                        leadingIcon = { Icon(Icons.Default.Warehouse, contentDescription = null) },
+                        trailingIcon = {
+                            Icon(
+                                imageVector = if (warehouseMenuExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = null
+                            )
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { warehouseMenuExpanded = availableWarehouses.isNotEmpty() },
+                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = SmartLedgerColors.AccentPrimary,
+                            unfocusedBorderColor = SmartLedgerColors.BorderSubtle
+                        )
+                    )
+                    DropdownMenu(
+                        expanded = warehouseMenuExpanded,
+                        onDismissRequest = { warehouseMenuExpanded = false },
+                        modifier = Modifier.widthIn(min = 180.dp, max = 320.dp)
+                    ) {
+                        availableWarehouses.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option, maxLines = 1) },
+                                onClick = {
+                                    warehouse = option
+                                    warehouseMenuExpanded = false
+                                },
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
 
                 if (duplicateBarcodeProduct != null) {
                     Row(
@@ -404,12 +442,12 @@ fun AddProductDialog(
                     placeholder = "5",
                     keyboardType = KeyboardType.Decimal,
                     focusRequester = focusThreshold,
-                    nextFocusRequester = if (AppDesignState.showShelfLocation) focusShelf else null,
-                    imeAction = if (AppDesignState.showShelfLocation) ImeAction.Next else ImeAction.Done,
+                    nextFocusRequester = if (showShelfLocationField) focusShelf else null,
+                    imeAction = if (showShelfLocationField) ImeAction.Next else ImeAction.Done,
                     modifier = Modifier.weight(1f)
                 )
 
-                if (AppDesignState.showShelfLocation) {
+                if (showShelfLocationField) {
                     SmartTextField(
                         value = shelfLocation,
                         onValueChange = { shelfLocation = it },

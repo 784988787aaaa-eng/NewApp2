@@ -41,8 +41,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.Locale
 
-@Composable
-private fun buildPlainTextReport(
+fun buildPlainTextReport(
     tradeName: String,
     periodLabel: String,
     currency: String,
@@ -69,7 +68,7 @@ private fun buildPlainTextReport(
     """.trimIndent()
 }
 
-private fun buildCsvFinancialReport(
+fun buildCsvFinancialReport(
     tradeName: String,
     periodLabel: String,
     currency: String,
@@ -94,7 +93,7 @@ private fun buildCsvFinancialReport(
     return sb.toString()
 }
 
-private fun buildPrintableHtmlReport(
+fun buildPrintableHtmlReport(
     tradeName: String,
     periodLabel: String,
     currency: String,
