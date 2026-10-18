@@ -39,6 +39,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun InventoryScreen(
     onNavigateToPurchases: (() -> Unit)? = null,
+    createAction: String? = null,
+    onCreateActionConsumed: () -> Unit = {},
     viewModel: InventoryViewModel = viewModel()
 ) {
     val products by viewModel.products.collectAsState()
@@ -54,6 +56,15 @@ fun InventoryScreen(
     var showAddOrEditSheet by rememberSaveable { mutableStateOf(false) }
     var editingProductId by rememberSaveable { mutableStateOf<Long?>(null) }
     var initialScannedBarcode by rememberSaveable { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(createAction) {
+        if (createAction == "product") {
+            editingProductId = null
+            initialScannedBarcode = null
+            showAddOrEditSheet = true
+            onCreateActionConsumed()
+        }
+    }
 
     var selectedProductIdForDetails by rememberSaveable { mutableStateOf<Long?>(null) }
     var productIdToDelete by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -146,23 +157,6 @@ fun InventoryScreen(
                             Text("جرد", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         }
 
-                        Button(
-                            onClick = {
-                                editingProductId = null
-                                initialScannedBarcode = null
-                                showAddOrEditSheet = true
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
-                            shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                            modifier = Modifier
-                                .heightIn(min = 38.dp)
-                                .pressScaleEffect()
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("صنف جديد", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                        }
                     }
                 }
 
@@ -227,12 +221,6 @@ fun InventoryScreen(
                         icon = Icons.Default.Inventory2,
                         title = "لا توجد أصناف في المخزن بعد",
                         subtitle = "اضغط على «صنف جديد» لتعريف البضاعة ووحداتها الصغرى والكبرى وأسعار البيع.",
-                        actionText = "إضافة أول صنف",
-                        onActionClick = {
-                            editingProductId = null
-                            initialScannedBarcode = null
-                            showAddOrEditSheet = true
-                        },
                         isFiltered = isFiltered,
                         onClearFilters = { viewModel.clearFilters() }
                     )
