@@ -101,5 +101,3 @@ class ExpensesViewModel(application: Application) : AndroidViewModel(application
         }
     }
 }
-
-@OptIn(ExperimentalCoroutinesApi::class)
