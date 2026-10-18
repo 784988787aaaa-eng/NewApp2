@@ -168,7 +168,7 @@ fun AddEditAccountDialog(
             }
         }
 
-        FormSectionGroup(title = if (isEditing) "الائتمان والملاحظات" else "الائتمان والملاحظات") {
+        FormSectionGroup(title = "الائتمان والملاحظات") {
             SmartTextField(
                 value = creditLimitText,
                 onValueChange = { creditLimitText = it },
