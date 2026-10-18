@@ -282,7 +282,7 @@ private fun GlobalCreateActionMenu(
     }
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 45f else 0f,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = tween(durationMillis = if (AppSensoryConfig.reduceMotion) 0 else 180),
         label = "globalCreateRotation"
     )
     val options = remember {
@@ -305,16 +305,19 @@ private fun GlobalCreateActionMenu(
             val column = index % columns
             val x = -((column + 1) * 72).dp
             val y = -((row + 1) * 82).dp
+            val motionDelay = if (AppSensoryConfig.reduceMotion) 0 else index * 22
+            val motionDuration = if (AppSensoryConfig.reduceMotion) 0 else 190
 
             AnimatedVisibility(
                 visible = expanded,
                 modifier = Modifier.offset(x = x, y = y),
-                enter = fadeIn(tween(190, delayMillis = index * 22)) +
-                    scaleIn(animationSpec = tween(230, delayMillis = index * 22), initialScale = 0.45f),
-                exit = fadeOut(tween(100)) + scaleOut(animationSpec = tween(120), targetScale = 0.65f)
+                enter = fadeIn(tween(motionDuration, delayMillis = motionDelay)) +
+                    scaleIn(animationSpec = tween(if (AppSensoryConfig.reduceMotion) 0 else 230, delayMillis = motionDelay), initialScale = if (AppSensoryConfig.reduceMotion) 1f else 0.45f),
+                exit = fadeOut(tween(if (AppSensoryConfig.reduceMotion) 0 else 100)) +
+                    scaleOut(animationSpec = tween(if (AppSensoryConfig.reduceMotion) 0 else 120), targetScale = if (AppSensoryConfig.reduceMotion) 1f else 0.65f)
             ) {
                 Column(
-                    modifier = Modifier.width(68.dp),
+                    modifier = Modifier.requiredWidth(68.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
