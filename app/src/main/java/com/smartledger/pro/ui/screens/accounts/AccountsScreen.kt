@@ -62,6 +62,7 @@ fun AccountsScreen(
     val scope = rememberCoroutineScope()
 
     var showAddOrEditDialog by rememberSaveable { mutableStateOf(false) }
+    var editingAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
     LaunchedEffect(createAction) {
         if (createAction == "account") {
             editingAccountId = null
@@ -69,7 +70,6 @@ fun AccountsScreen(
             onCreateActionConsumed()
         }
     }
-    var editingAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
     var selectedAccountIdForStatement by rememberSaveable { mutableStateOf<Long?>(null) }
     var quickVoucherPersonId by rememberSaveable { mutableStateOf<Long?>(null) }
     var quickVoucherInitialReceipt by rememberSaveable { mutableStateOf(true) }
