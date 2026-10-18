@@ -19,14 +19,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.smartledger.pro.domain.model.AppAccentPalette
+import com.smartledger.pro.domain.model.AppCornerStyle
+import com.smartledger.pro.domain.model.AppFabStyle
+import com.smartledger.pro.domain.model.AppNavStyle
+import com.smartledger.pro.domain.model.AppUsageMode
 import com.smartledger.pro.ui.components.*
 import com.smartledger.pro.ui.theme.AppThemeMode
 import com.smartledger.pro.ui.theme.AppUiDensity
@@ -39,17 +42,25 @@ import java.io.File
 
 @Composable
 fun SettingsScreen(
+    createAction: String? = null,
+    onCreateActionConsumed: () -> Unit = {},
     viewModel: SettingsViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by viewModel.settings.collectAsState()
+    val availableMeasurementUnits by viewModel.units.collectAsState()
+    val fieldVisibility by ScreenFieldVisibilityStore.observe(context).collectAsState()
     val identity by viewModel.businessIdentity.collectAsState()
     val indexedBackups by viewModel.indexedBackups.collectAsState()
     val deletedItems by viewModel.deletedItems.collectAsState()
+    val financialAccounts by viewModel.financialAccounts.collectAsState()
+    val warehouses by viewModel.warehouses.collectAsState()
+    val categories by viewModel.categories.collectAsState()
     val biometricCapability = remember { BiometricLockHelper.checkBiometricSupport(context) }
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var activeCategoryTab by rememberSaveable { mutableStateOf("ALL") } // ALL, STYLE, VISIBILITY, TREASURY_CATALOG, BUSINESS_PRINT, SECURITY_BACKUP
     var statusBannerText by rememberSaveable { mutableStateOf<String?>(null) }
     var isBannerError by rememberSaveable { mutableStateOf(false) }
 
@@ -63,6 +74,13 @@ fun SettingsScreen(
     var showCategoriesSheet by rememberSaveable { mutableStateOf(false) }
     var showFinancialAccountsSheet by rememberSaveable { mutableStateOf(false) }
     var showUnitsWarehousesSheet by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(createAction) {
+        if (createAction == "treasury") {
+            showFinancialAccountsSheet = true
+            onCreateActionConsumed()
+        }
+    }
 
     var isWorkingOnBackup by remember { mutableStateOf(false) }
     var driveState by remember(settings.googleDriveAccountEmail, settings.googleDriveAccessToken, settings.lastCloudBackupTime) {
@@ -134,56 +152,50 @@ fun SettingsScreen(
         }
     }
 
-    val matchesSearch: (String) -> Boolean = { keywords ->
-        searchQuery.isBlank() || keywords.contains(searchQuery.trim(), ignoreCase = true)
+    val shouldShowSection: (String, String) -> Boolean = { tabId, keywords ->
+        if (searchQuery.isNotBlank()) {
+            keywords.contains(searchQuery.trim(), ignoreCase = true)
+        } else {
+            activeCategoryTab == "ALL" || activeCategoryTab == tabId
+        }
+    }
+
+    val settingsTabs = remember(financialAccounts.size, indexedBackups.size, deletedItems.size) {
+        listOf(
+            SmartTabOption("ALL", "الكل", Icons.Default.Apps),
+            SmartTabOption("STYLE", "النمط والجماليات", Icons.Default.Palette),
+            SmartTabOption("VISIBILITY", "تخصيص الشاشات", Icons.Default.DashboardCustomize),
+            SmartTabOption("TREASURY_CATALOG", "الصناديق والمخازن", Icons.Default.AccountBalanceWallet, "${financialAccounts.size}"),
+            SmartTabOption("BUSINESS_PRINT", "المنشأة والطباعة", Icons.Default.Storefront),
+            SmartTabOption("SECURITY_BACKUP", "الأمان والنسخ", Icons.Default.Security, "${indexedBackups.size}")
+        )
     }
 
     Scaffold(
         containerColor = SmartLedgerColors.SurfaceWindow,
         topBar = {
             Column(
-                modifier = Modifier
-                    .background(SmartLedgerColors.SurfacePanel)
-                    .padding(horizontal = SmartLedgerTokens.screenHorizontalPadding, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.background(SmartLedgerColors.SurfacePanel)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "مركز التحكم والإعدادات",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = SmartLedgerColors.TextPrimary
-                        )
-                        Text(
-                            text = "الدفتر الذكي Pro — الإصدار 3.0.0 • حفظ دائم ومشفر",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SmartLedgerColors.TextMuted
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = { showResetConfirmDialog = true },
-                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.heightIn(min = 34.dp).pressScaleEffect()
-                    ) {
-                        Icon(Icons.Default.RestartAlt, contentDescription = null, tint = SmartLedgerColors.TextSecondary, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("الافتراضيات", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                CompactSearchBar(
-                    query = searchQuery,
-                    onQueryChange = { searchQuery = it },
-                    placeholder = "ابحث في الإعدادات (منشأة، عملة، مظهر، نسخ، طابعة، بصمة، محذوفات)..."
+                SettingsScreenHeader(
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    onResetDefaults = { showResetConfirmDialog = true }
                 )
+                Box(
+                    modifier = Modifier.padding(
+                        start = SmartLedgerTokens.screenHorizontalPadding,
+                        end = SmartLedgerTokens.screenHorizontalPadding,
+                        bottom = 10.dp
+                    )
+                ) {
+                    SmartCategoryTabStrip(
+                        tabs = settingsTabs,
+                        selectedTab = activeCategoryTab,
+                        onTabSelected = { activeCategoryTab = it }
+                    )
+                }
+                Divider(color = SmartLedgerColors.BorderSubtle)
             }
         }
     ) { innerPadding ->
@@ -203,59 +215,353 @@ fun SettingsScreen(
                 )
             }
 
-            if (matchesSearch("التصنيفات الهرمية الصناديق المحافظ البنوك التحويلات الوحدات المخازن المستودعات الفروع")) {
+            // التبويب 1: النمط والجماليات (كلاسيكي / عادي / احترافي + الألوان الملكية + شكل الأزرار والتنقل)
+            if (shouldShowSection("STYLE", "المظهر الوضع الداكن الفاتح الخط حجم النص الكثافة الحركة الاهتزاز كلاسيكي عادي احترافي الألوان الأزرار التنقل")) {
                 item {
+                    val modeLabel = when (settings.usageMode) {
+                        AppUsageMode.CLASSIC -> "كلاسيكي مبسط"
+                        AppUsageMode.STANDARD -> "عادي متوازن"
+                        AppUsageMode.PRO -> "احترافي شامل"
+                    }
+                    val themeLabel = when (settings.themeMode) {
+                        AppThemeMode.DARK -> "داكن فخم"
+                        AppThemeMode.LIGHT -> "فاتح نهاري"
+                        AppThemeMode.AMOLED -> "أسود AMOLED"
+                    }
+
                     SettingsSectionCard(
-                        icon = Icons.Default.AccountTree,
-                        title = "0. الفهارس المرنة والصناديق والمحافظ والمخازن",
-                        statusSummary = "شجرة التصنيفات • الصناديق والتحويلات • الوحدات والمخازن"
+                        icon = Icons.Default.AutoAwesome,
+                        title = "1. نمط الاستخدام وهندسة الواجهة والأزرار الذكية",
+                        statusSummary = "الوضع: $modeLabel • $themeLabel • كثافة ${if (settings.uiDensity == AppUiDensity.COMPACT) "كثيفة" else "مريحة"}"
                     ) {
                         Text(
-                            text = "أدِر تصنيفاتك الهرمية، وصناديقك ومحافظك المالية والتحويلات الداخلية، ووحدات القياس والمخازن بمرونة كاملة دون بيانات مفروضة.",
+                            text = "أسلوب تجربة الاستخدام (يضبط مستوى التفاصيل والبطاقات تلقائياً مع حرية التعديل اليدوي):",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = SmartLedgerColors.TextSecondary
+                        )
+                        SegmentedOptionRow(
+                            options = listOf(
+                                AppUsageMode.CLASSIC to "كلاسيكي مبسط",
+                                AppUsageMode.STANDARD to "عادي متوازن",
+                                AppUsageMode.PRO to "احترافي متكامل"
+                            ),
+                            selectedOption = settings.usageMode,
+                            onOptionSelected = { mode ->
+                                viewModel.updateSettings { it.copy(usageMode = mode) }
+                                ScreenFieldVisibilityStore.applyUsageModePreset(context, mode)
+                                isBannerError = false
+                                statusBannerText = "تم تفعيل القالب «${when (mode) { AppUsageMode.CLASSIC -> "الكلاسيكي المبسط"; AppUsageMode.STANDARD -> "العادي المتوازن"; AppUsageMode.PRO -> "الاحترافي المتكامل" }}» بنجاح."
+                            }
+                        )
+
+                        Text("الباليت اللوني الملكي للتطبيق:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
+                        FilterChipRow(
+                            items = listOf(
+                                AppAccentPalette.ROYAL_SAPPHIRE to "ياقوتي ملكي (أزرق)",
+                                AppAccentPalette.EMERALD_LUXE to "زمردي مالي (أخضر)",
+                                AppAccentPalette.AMBER_GOLD to "ذهبي كهرماني",
+                                AppAccentPalette.VIOLET_PRO to "بنفسجي تقني"
+                            ),
+                            selectedItem = settings.accentPalette,
+                            onItemSelected = { palette ->
+                                viewModel.updateSettings { it.copy(accentPalette = palette) }
+                            }
+                        )
+
+                        Text("إضاءة الخلفية والسطوع:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
+                        SegmentedOptionRow(
+                            options = listOf(
+                                AppThemeMode.DARK to "داكن احترافي",
+                                AppThemeMode.LIGHT to "فاتح نهاري",
+                                AppThemeMode.AMOLED to "أسود AMOLED"
+                            ),
+                            selectedOption = settings.themeMode,
+                            onOptionSelected = { mode ->
+                                viewModel.updateSettings { it.copy(themeMode = mode) }
+                            }
+                        )
+
+                        Text("تصميم شريط التنقل السفلي:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
+                        SegmentedOptionRow(
+                            options = listOf(
+                                AppNavStyle.FLOATING_DOCK to "كبسولة عائمة",
+                                AppNavStyle.COMPACT_BAR to "شريط مدمج",
+                                AppNavStyle.HYBRID_PILL to "هجين موسّع"
+                            ),
+                            selectedOption = settings.navStyle,
+                            onOptionSelected = { nav ->
+                                viewModel.updateSettings { it.copy(navStyle = nav) }
+                            }
+                        )
+
+                        Text("تصميم زر الإضافة الذكي الموحد (+):", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
+                        SegmentedOptionRow(
+                            options = listOf(
+                                AppFabStyle.ORBITAL_RADIAL to "مدار ذكي",
+                                AppFabStyle.COMMAND_SHEET to "لوحة أوامر",
+                                AppFabStyle.SMART_PILL to "كبسولة سياقية"
+                            ),
+                            selectedOption = settings.fabStyle,
+                            onOptionSelected = { fab ->
+                                viewModel.updateSettings { it.copy(fabStyle = fab) }
+                            }
+                        )
+
+                        Text("شكل حواف البطاقات والأزرار والحقول:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
+                        SegmentedOptionRow(
+                            options = listOf(
+                                AppCornerStyle.ROUNDED to "عصري ناعم",
+                                AppCornerStyle.PILL to "كبسولي انسيابي",
+                                AppCornerStyle.SHARP to "هندسي حاد"
+                            ),
+                            selectedOption = settings.cornerStyle,
+                            onOptionSelected = { corner ->
+                                viewModel.updateSettings { it.copy(cornerStyle = corner) }
+                            }
+                        )
+
+                        Text("الكثافة البصرية وحجم النص:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
+                        SegmentedOptionRow(
+                            options = listOf(
+                                AppUiDensity.COMFORTABLE to "عرض مريح",
+                                AppUiDensity.COMPACT to "عرض كثيف (مساحة أقل)"
+                            ),
+                            selectedOption = settings.uiDensity,
+                            onOptionSelected = { density ->
+                                viewModel.updateSettings { it.copy(uiDensity = density) }
+                            }
+                        )
+
+                        SegmentedOptionRow(
+                            options = listOf(
+                                0.92f to "خط صغير (92%)",
+                                1.0f to "قياسي (100%)",
+                                1.1f to "كبير (110%)"
+                            ),
+                            selectedOption = settings.fontScale,
+                            onOptionSelected = { scale ->
+                                viewModel.updateSettings { it.copy(fontScale = scale) }
+                            }
+                        )
+
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+
+                        SettingSwitchRow(
+                            title = "الاهتزاز اللمسي التفاعلي (Haptic Feedback)",
+                            subtitle = "استجابة لمسية دقيقة عند الضغط على الأزرار الذكية وقراءة الباركود",
+                            checked = settings.enableHaptics,
+                            onCheckedChange = { enabled ->
+                                viewModel.updateSettings { it.copy(enableHaptics = enabled) }
+                            }
+                        )
+
+                        SettingSwitchRow(
+                            title = "تقليل المؤثرات الحركية (Reduce Motion)",
+                            subtitle = "إيقاف حركات الانتقال لتسريع الاستجابة الفورية",
+                            checked = settings.reduceMotion,
+                            onCheckedChange = { reduced ->
+                                viewModel.updateSettings { it.copy(reduceMotion = reduced) }
+                            }
+                        )
+                    }
+                }
+            }
+
+            // التبويب 2: تخصيص الشاشات والحقول (التحكم بكل تفصيلة إظهاراً وإخفاءً)
+            if (shouldShowSection("VISIBILITY", "تخصيص الشاشات الحقول إظهار إخفاء الباركود الرف التكلفة الربح الصناديق الفرعية الرئيسية الحسابات المبيعات")) {
+                item {
+                    SettingsSectionCard(
+                        icon = Icons.Default.DashboardCustomize,
+                        title = "2. التحكم التفصيلي بما يظهر أو يختفي في كل شاشة",
+                        statusSummary = "تحكم كامل في بطاقات الرئيسية، المخزون، الحسابات، ونوافذ الإدخال"
+                    ) {
+                        SettingsFieldVisibilityControls(
+                            inventoryBarcode = fieldVisibility.inventoryBarcode,
+                            productBarcode = fieldVisibility.productBarcode,
+                            productShelf = fieldVisibility.productShelf,
+                            posBarcode = fieldVisibility.posBarcode,
+                            onInventoryBarcodeChange = { show ->
+                                ScreenFieldVisibilityStore.update(context) { it.copy(inventoryBarcode = show) }
+                            },
+                            onProductBarcodeChange = { show ->
+                                ScreenFieldVisibilityStore.update(context) { it.copy(productBarcode = show) }
+                            },
+                            onProductShelfChange = { show ->
+                                ScreenFieldVisibilityStore.update(context) { it.copy(productShelf = show) }
+                            },
+                            onPosBarcodeChange = { show ->
+                                ScreenFieldVisibilityStore.update(context) { it.copy(posBarcode = show) }
+                            }
+                        )
+                    }
+                }
+            }
+
+            // التبويب 3: الصناديق الرئيسية والفرعية والمخازن والفهارس وسياسات المخزون
+            if (shouldShowSection("TREASURY_CATALOG", "التصنيفات الهرمية الصناديق المحافظ البنوك التحويلات الوحدات المخازن المستودعات الفروع الدفاتر")) {
+                item {
+                    SettingsSectionCard(
+                        icon = Icons.Default.AccountBalanceWallet,
+                        title = "3. منظومة الصناديق (الرئيسية والفرعية) والمخازن والفهارس",
+                        statusSummary = "${financialAccounts.size} صندوق/محفظة • ${warehouses.size} مخزن • ${categories.size} تصنيف"
+                    ) {
+                        Text(
+                            text = "أدِر صناديقك الرئيسية والفرعية والتحويلات الذرية والمطابقة الجردية، بالإضافة إلى المخازن ووحدات القياس وشجرة التصنيفات.",
                             style = MaterialTheme.typography.labelSmall,
                             color = SmartLedgerColors.TextMuted
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(
-                                onClick = { showCategoriesSheet = true },
-                                modifier = Modifier.weight(1f).heightIn(min = 38.dp).pressScaleEffect(),
+                                onClick = { showFinancialAccountsSheet = true },
+                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(),
                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                             ) {
-                                Text("التصنيفات الهرمية", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("الصناديق والتحويلات", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                             }
                             Button(
-                                onClick = { showFinancialAccountsSheet = true },
-                                modifier = Modifier.weight(1f).heightIn(min = 38.dp).pressScaleEffect(),
+                                onClick = { showCategoriesSheet = true },
+                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(),
                                 colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
                                 shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
                             ) {
-                                Text("الصناديق والمحافظ", color = SmartLedgerColors.AccentLight, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                Icon(Icons.Default.AccountTree, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("التصنيفات الهرمية", color = SmartLedgerColors.AccentLight, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                             }
                         }
                         OutlinedButton(
                             onClick = { showUnitsWarehousesSheet = true },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp).pressScaleEffect(),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).pressScaleEffect(),
                             shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                             border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
                         ) {
                             Icon(Icons.Default.Straighten, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("إدارة وحدات القياس والمخازن والفروع", color = SmartLedgerColors.AccentLight, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text("إدارة وحدات القياس والمخازن والدفاتر الحسابية", color = SmartLedgerColors.AccentLight, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         }
+                    }
+                }
+
+                item {
+                    SettingsSectionCard(
+                        icon = Icons.Default.Inventory2,
+                        title = "4. سياسات المخزن والوحدات والائتمان",
+                        statusSummary = "البيع بالسالب: ${if (settings.allowNegativeStock) "مسموح" else "ممنوع"} • الوحدات: ${settings.defaultSmallUnit} / ${settings.defaultLargeUnit} (${NumberFormatter.formatQuantity(settings.defaultUnitFactor)})"
+                    ) {
+                        val smallUnitOptions = remember(availableMeasurementUnits, settings.defaultSmallUnit) {
+                            (availableMeasurementUnits.map { it.Name } + settings.defaultSmallUnit)
+                                .filter { it.isNotBlank() }
+                                .distinct()
+                                .map { it to it }
+                        }
+                        val largeUnitOptions = remember(availableMeasurementUnits, settings.defaultLargeUnit) {
+                            (availableMeasurementUnits.map { it.Name } + settings.defaultLargeUnit)
+                                .filter { it.isNotBlank() }
+                                .distinct()
+                                .map { it to it }
+                        }
+                        var defaultUnitFactorText by remember(settings.defaultUnitFactor) {
+                            mutableStateOf(NumberFormatter.formatQuantity(settings.defaultUnitFactor))
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CompactDropdownPicker(
+                                label = "الوحدة الصغرى الافتراضية",
+                                options = smallUnitOptions,
+                                selectedOption = settings.defaultSmallUnit,
+                                onOptionSelected = { unit ->
+                                    viewModel.updateSettings { it.copy(defaultSmallUnit = unit) }
+                                },
+                                leadingIcon = Icons.Default.Straighten,
+                                modifier = Modifier.weight(1f)
+                            )
+                            CompactDropdownPicker(
+                                label = "الوحدة الكبرى الافتراضية",
+                                options = largeUnitOptions,
+                                selectedOption = settings.defaultLargeUnit,
+                                onOptionSelected = { unit ->
+                                    viewModel.updateSettings { it.copy(defaultLargeUnit = unit) }
+                                },
+                                leadingIcon = Icons.Default.Inventory2,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SmartTextField(
+                                value = defaultUnitFactorText,
+                                onValueChange = { defaultUnitFactorText = it },
+                                label = "معامل التحويل الافتراضي (عدد الصغرى في الكبرى)",
+                                placeholder = "24",
+                                keyboardType = KeyboardType.Decimal,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = {
+                                    val factor = NumberFormatter.parseDouble(defaultUnitFactorText, 0.0)
+                                    if (factor >= 1.0) {
+                                        viewModel.updateSettings { it.copy(defaultUnitFactor = factor) }
+                                        isBannerError = false
+                                        statusBannerText = "تم حفظ معامل التحويل الافتراضي"
+                                    } else {
+                                        isBannerError = true
+                                        statusBannerText = "أدخل معامل تحويل أكبر من صفر"
+                                    }
+                                },
+                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
+                                colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
+                                modifier = Modifier.padding(top = 18.dp).height(46.dp)
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = "حفظ", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        SettingSwitchRow(
+                            title = "السماح بالبيع عند نفاد الكمية (الرصيد السالب)",
+                            subtitle = "عند التعطيل، يرفض النظام إصدار فاتورة مبيعات تتجاوز الرصيد المتاح في المخزن",
+                            checked = settings.allowNegativeStock,
+                            onCheckedChange = { allow ->
+                                viewModel.updateSettings { it.copy(allowNegativeStock = allow) }
+                            }
+                        )
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        SettingSwitchRow(
+                            title = "التنبيه عند تجاوز سقف الائتمان للعميل",
+                            subtitle = "إظهار تحذير في بطاقة الحساب ونقطة البيع عند تجاوز الحد الائتماني",
+                            checked = settings.warnOnCreditLimit,
+                            onCheckedChange = { warn ->
+                                viewModel.updateSettings { it.copy(warnOnCreditLimit = warn) }
+                            }
+                        )
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        SettingSwitchRow(
+                            title = "إظهار رقم الهاتف وزر الاتصال السريع في الحسابات",
+                            subtitle = "عرض أيقونة الاتصال المباشر بجوار رصيد الحساب",
+                            checked = settings.showPhoneInAccounts,
+                            onCheckedChange = { show ->
+                                viewModel.updateSettings { it.copy(showPhoneInAccounts = show) }
+                            }
+                        )
                     }
                 }
             }
 
-            if (matchesSearch("بيانات المنشأة الفواتير الاسم التجاري الهاتف العنوان الضريبي الترويسة التذييل تسلسل الأرقام INV PUR")) {
+            // التبويب 4: المنشأة والعملة والطباعة الحرارية
+            if (shouldShowSection("BUSINESS_PRINT", "بيانات المنشأة الفواتير الاسم التجاري الهاتف العنوان الضريبي الترويسة التذييل تسلسل الأرقام INV PUR العملة الطباعة طابعة بلوتوث")) {
                 item {
                     SettingsSectionCard(
                         icon = Icons.Default.Storefront,
-                        title = "1. المنشأة وترويسة الفواتير",
-                        statusSummary = "${identity?.TradeName ?: "الدفتر الذكي"} • بادئة: ${settings.invoicePrefix}"
+                        title = "5. هوية المنشأة وترويسة الفواتير",
+                        statusSummary = "${identity?.TradeName ?: "الدفتر الذكي"} • بادئة: ${settings.invoicePrefix} / ${settings.purchasePrefix}"
                     ) {
                         Text(
-                            text = "الهاتف: ${identity?.Phone1 ?: ""} • العنوان: ${identity?.Address ?: "صنعاء"}",
+                            text = "الهاتف: ${identity?.Phone1?.ifBlank { "غير مسجل" } ?: "غير مسجل"} • العنوان: ${identity?.Address?.ifBlank { "صنعاء" } ?: "صنعاء"}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = SmartLedgerColors.TextSecondary
                         )
@@ -266,7 +572,6 @@ fun SettingsScreen(
                                 color = SmartLedgerColors.AccentLight
                             )
                         }
-                        Spacer(modifier = Modifier.height(6.dp))
                         Button(
                             onClick = { showEditIdentitySheet = true },
                             modifier = Modifier
@@ -282,213 +587,13 @@ fun SettingsScreen(
                         }
                     }
                 }
-            }
 
-            if (matchesSearch("النسخ الاحتياطي المحلي استعادة أرشيف slprobackup zip بصمة SHA-256 حفظ")) {
-                item {
-                    val lastLocalStatus = if (settings.lastLocalBackupTime.isNotBlank()) {
-                        "آخر نسخة: ${settings.lastLocalBackupTime} (${NumberFormatter.formatFileSize(settings.lastLocalBackupSize)})"
-                    } else {
-                        "لم يتم إنشاء نسخة محلية بعد"
-                    }
-                    SettingsSectionCard(
-                        icon = Icons.Default.Backup,
-                        title = "2. النسخ الاحتياطي المحلي والأرشيف (.slprobackup)",
-                        statusSummary = "${indexedBackups.size} نسخ مفهرسة • $lastLocalStatus"
-                    ) {
-                        Text(
-                            text = "يحفظ لقطة متماسكة من قاعدة البيانات مع بصمة التحقق الرقمية SHA-256 داخل مجلدات السنة والشهر (Backups/YYYY/MM).",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SmartLedgerColors.TextMuted
-                        )
-
-                        if (settings.lastLocalBackupSha256.isNotBlank()) {
-                            Text(
-                                text = "بصمة SHA-256 لآخر نسخة: ${settings.lastLocalBackupSha256.take(16)}...",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SmartLedgerColors.StateSuccess
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = {
-                                    isWorkingOnBackup = true
-                                    viewModel.createLocalArchiveBackup { res ->
-                                        isWorkingOnBackup = false
-                                        if (res.isSuccess) {
-                                            val rec = res.getOrThrow()
-                                            isBannerError = false
-                                            statusBannerText = "تم حفظ النسخة في أرشيف (${rec.yearFolder}/${rec.monthFolder}) بحجم ${NumberFormatter.formatFileSize(rec.sizeBytes)}."
-                                        } else {
-                                            isBannerError = true
-                                            statusBannerText = res.exceptionOrNull()?.message ?: "تعذر إنشاء النسخة الاحتياطية"
-                                        }
-                                    }
-                                },
-                                enabled = !isWorkingOnBackup,
-                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
-                                colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
-                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
-                            ) {
-                                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("نسخ فوري للأرشيف", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-                            }
-
-                            OutlinedButton(
-                                onClick = { showBackupsArchiveSheet = true },
-                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(),
-                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                                border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
-                            ) {
-                                Icon(Icons.Default.FolderSpecial, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("أرشيف النسخ (${indexedBackups.size})", color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    exportSafLauncher.launch(BackupRestoreHelper.generateBackupFileName())
-                                },
-                                enabled = !isWorkingOnBackup,
-                                modifier = Modifier.weight(1f).heightIn(min = 38.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
-                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                                border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle))
-                            ) {
-                                Icon(Icons.Default.IosShare, contentDescription = null, tint = SmartLedgerColors.TextSecondary, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("تصدير ملف خارجي", color = SmartLedgerColors.TextSecondary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                            }
-
-                            OutlinedButton(
-                                onClick = {
-                                    importSafLauncher.launch(arrayOf("*/*"))
-                                },
-                                enabled = !isWorkingOnBackup,
-                                modifier = Modifier.weight(1f).heightIn(min = 38.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
-                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                                border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle))
-                            ) {
-                                Icon(Icons.Default.RestorePage, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("استعادة من ملف خارجي", color = SmartLedgerColors.AccentLight, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (matchesSearch("Google Drive جوجل درايف سحابي مزامنة حساب ربط تلقائي")) {
-                item {
-                    val cloudStatusText = when {
-                        settings.lastCloudBackupTime.isNotBlank() ->
-                            "${driveState.arabicLabel} • آخر رفع: ${settings.lastCloudBackupTime} (${NumberFormatter.formatFileSize(settings.lastCloudBackupSize)})"
-                        settings.googleDriveAccountEmail.isNotBlank() ->
-                            "${driveState.arabicLabel} (${settings.googleDriveAccountEmail})"
-                        else -> driveState.arabicLabel
-                    }
-
-                    SettingsSectionCard(
-                        icon = Icons.Default.CloudSync,
-                        title = "3. النسخ الاحتياطي السحابي (Google Drive)",
-                        statusSummary = cloudStatusText
-                    ) {
-                        SettingSwitchRow(
-                            title = "تفعيل الجدولة التلقائية للنسخ الاحتياطي",
-                            subtitle = "إنشاء نسخة احتياطية دورية كل ${settings.autoBackupIntervalHours} ساعة عند استقرار البيانات",
-                            checked = settings.autoBackupEnabled,
-                            onCheckedChange = { enabled ->
-                                viewModel.updateSettings { it.copy(autoBackupEnabled = enabled) }
-                            }
-                        )
-
-                        if (driveState == DriveConnectionState.UPLOADING) {
-                            LinearProgressIndicator(
-                                progress = uploadProgress / 100f,
-                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                                color = SmartLedgerColors.AccentLight,
-                                trackColor = SmartLedgerColors.SurfaceCardElevated
-                            )
-                            Text(
-                                text = "جارٍ رفع النسخة الاحتياطية إلى Google Drive ($uploadProgress%)...",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SmartLedgerColors.AccentLight
-                            )
-                        }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = { showGoogleDriveConfigSheet = true },
-                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(),
-                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
-                                border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
-                            ) {
-                                Icon(Icons.Default.Link, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = if (settings.googleDriveAccountEmail.isBlank()) "ربط حساب Google Drive" else "إدارة حساب Drive",
-                                    color = SmartLedgerColors.AccentLight,
-                                    fontWeight = FontWeight.Bold,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                            }
-
-                            Button(
-                                onClick = {
-                                    if (settings.googleDriveAccessToken.isBlank()) {
-                                        showGoogleDriveConfigSheet = true
-                                    } else {
-                                        driveState = DriveConnectionState.UPLOADING
-                                        uploadProgress = 0
-                                        viewModel.uploadBackupToGoogleDrive(
-                                            onProgress = { p -> uploadProgress = p },
-                                            onResult = { uploadRes ->
-                                                if (uploadRes.isSuccess) {
-                                                    val info = uploadRes.getOrThrow()
-                                                    driveState = DriveConnectionState.SUCCESS
-                                                    isBannerError = false
-                                                    statusBannerText = "تم رفع النسخة إلى Google Drive (${NumberFormatter.formatFileSize(info.sizeBytes)}) بنجاح."
-                                                } else {
-                                                    driveState = DriveConnectionState.ERROR
-                                                    isBannerError = true
-                                                    statusBannerText = uploadRes.exceptionOrNull()?.message ?: "فشل الرفع السحابي"
-                                                }
-                                            }
-                                        )
-                                    }
-                                },
-                                enabled = driveState != DriveConnectionState.UPLOADING,
-                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(enabled = driveState != DriveConnectionState.UPLOADING),
-                                colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
-                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
-                            ) {
-                                Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("رفع سحابي الآن", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (matchesSearch("العملة التنسيق المنازل العشرية التقريب الأرقام ريال دولار ر.ي ر.س")) {
                 item {
                     SettingsSectionCard(
                         icon = Icons.Default.Payments,
-                        title = "4. العملة والمنازل العشرية والأرقام",
-                        statusSummary = "العملة: ${settings.currencySymbol} • المنازل العشرية: ${settings.decimalPlaces} • الأرقام: غربية (123)"
+                        title = "6. العملة والمنازل العشرية ومفتاح واتساب",
+                        statusSummary = "العملة: ${settings.currencySymbol} • المنازل العشرية: ${settings.decimalPlaces} • واتساب: ${settings.defaultCountryCode}"
                     ) {
-                        Text(
-                            text = "ملاحظة: تغيير رمز العملة أو عدد المنازل العشرية يضبط طريقة العرض والطباعة فقط ولا يغير القيم المحاسبية التاريخية المسجلة.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SmartLedgerColors.TextMuted
-                        )
-
                         FilterChipRow(
                             items = listOf(
                                 "ر.ي" to "ريال يمني (ر.ي)",
@@ -513,137 +618,7 @@ fun SettingsScreen(
                                 viewModel.updateSettings { it.copy(decimalPlaces = places) }
                             }
                         )
-                    }
-                }
-            }
 
-            if (matchesSearch("المظهر الوضع الداكن الفاتح الخط حجم النص الكثافة الحركة الاهتزاز")) {
-                item {
-                    val themeLabel = when (settings.themeMode) {
-                        AppThemeMode.DARK -> "داكن احترافي"
-                        AppThemeMode.LIGHT -> "فاتح نهاري"
-                        AppThemeMode.AMOLED -> "أسود عميق AMOLED"
-                    }
-                    val densityLabel = if (settings.uiDensity == AppUiDensity.COMPACT) "كثيف" else "مريح"
-
-                    SettingsSectionCard(
-                        icon = Icons.Default.Palette,
-                        title = "5. المظهر، الكثافة البصرية، وسهولة الاستخدام",
-                        statusSummary = "$themeLabel • عرض $densityLabel • حجم النص ${(settings.fontScale * 100).toInt()}%"
-                    ) {
-                        Text("نمط الألوان والسطوع:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
-                        SegmentedOptionRow(
-                            options = listOf(
-                                AppThemeMode.DARK to "داكن احترافي",
-                                AppThemeMode.LIGHT to "فاتح نهاري",
-                                AppThemeMode.AMOLED to "أسود AMOLED"
-                            ),
-                            selectedOption = settings.themeMode,
-                            onOptionSelected = { mode ->
-                                viewModel.updateSettings { it.copy(themeMode = mode) }
-                            }
-                        )
-
-                        Text("الكثافة البصرية للشاشات:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
-                        SegmentedOptionRow(
-                            options = listOf(
-                                AppUiDensity.COMFORTABLE to "عرض مريح (مسافات أوسع)",
-                                AppUiDensity.COMPACT to "عرض كثيف (عناصر أكثر)"
-                            ),
-                            selectedOption = settings.uiDensity,
-                            onOptionSelected = { density ->
-                                viewModel.updateSettings { it.copy(uiDensity = density) }
-                            }
-                        )
-
-                        Text("مقياس حجم الخط:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
-                        SegmentedOptionRow(
-                            options = listOf(
-                                0.92f to "صغير (92%)",
-                                1.0f to "قياسي (100%)",
-                                1.1f to "كبير (110%)"
-                            ),
-                            selectedOption = settings.fontScale,
-                            onOptionSelected = { scale ->
-                                viewModel.updateSettings { it.copy(fontScale = scale) }
-                            }
-                        )
-
-                        Divider(color = SmartLedgerColors.BorderSubtle)
-
-                        SettingSwitchRow(
-                            title = "الاهتزاز اللمسي التفاعلي (Haptic Feedback)",
-                            subtitle = "استجابة لمسية خفيفة عند تنفيذ الإجراءات وقراءة الباركود",
-                            checked = settings.enableHaptics,
-                            onCheckedChange = { enabled ->
-                                viewModel.updateSettings { it.copy(enableHaptics = enabled) }
-                            }
-                        )
-
-                        SettingSwitchRow(
-                            title = "تقليل المؤثرات الحركية (Reduce Motion)",
-                            subtitle = "إيقاف حركات الانتقال والارتداد لتسريع الاستجابة الفورية",
-                            checked = settings.reduceMotion,
-                            onCheckedChange = { reduced ->
-                                viewModel.updateSettings { it.copy(reduceMotion = reduced) }
-                            }
-                        )
-                    }
-                }
-            }
-
-            if (matchesSearch("المخزون الباركود موقع الرف البيع بالسالب الحد الأدنى تنبيه الائتمان الهاتف الوحدات قطعة كرتون")) {
-                item {
-                    SettingsSectionCard(
-                        icon = Icons.Default.Inventory2,
-                        title = "6. سياسات المخزون ونقطة البيع والحقول",
-                        statusSummary = "البيع بالسالب: ${if (settings.allowNegativeStock) "مسموح" else "ممنوع"} • الوحدات الافتراضية: ${settings.defaultSmallUnit} / ${settings.defaultLargeUnit} (${NumberFormatter.formatQuantity(settings.defaultUnitFactor)})"
-                    ) {
-                        SettingSwitchRow(
-                            title = "السماح بالبيع عند نفاد الكمية (الرصيد السالب)",
-                            subtitle = "عند التعطيل، سيرفض النظام إصدار فاتورة مبيعات تتجاوز الرصيد المتاح في المخزن",
-                            checked = settings.allowNegativeStock,
-                            onCheckedChange = { allow ->
-                                viewModel.updateSettings { it.copy(allowNegativeStock = allow) }
-                            }
-                        )
-                        Divider(color = SmartLedgerColors.BorderSubtle)
-                        SettingSwitchRow(
-                            title = "إظهار حقول وأزرار الباركود",
-                            subtitle = "عرض مسح الباركود في شريط المخزون ونقطة البيع",
-                            checked = settings.showBarcodeField,
-                            onCheckedChange = { show ->
-                                viewModel.updateSettings { it.copy(showBarcodeField = show) }
-                            }
-                        )
-                        Divider(color = SmartLedgerColors.BorderSubtle)
-                        SettingSwitchRow(
-                            title = "إظهار حقل موقع الرف في المخزون",
-                            subtitle = "تحديد رقم الرف أو الممر لكل صنف",
-                            checked = settings.showShelfLocation,
-                            onCheckedChange = { show ->
-                                viewModel.updateSettings { it.copy(showShelfLocation = show) }
-                            }
-                        )
-                        Divider(color = SmartLedgerColors.BorderSubtle)
-                        SettingSwitchRow(
-                            title = "التنبيه عند تجاوز سقف الائتمان للعميل",
-                            subtitle = "إظهار تحذير في بطاقة الحساب ونقطة البيع عند تجاوز الحد الائتماني",
-                            checked = settings.warnOnCreditLimit,
-                            onCheckedChange = { warn ->
-                                viewModel.updateSettings { it.copy(warnOnCreditLimit = warn) }
-                            }
-                        )
-                        Divider(color = SmartLedgerColors.BorderSubtle)
-                        SettingSwitchRow(
-                            title = "إظهار زر الاتصال السريع في قائمة الحسابات",
-                            subtitle = "عرض أيقونة الاتصال المباشر بجوار رصيد الحساب",
-                            checked = settings.showPhoneInAccounts,
-                            onCheckedChange = { show ->
-                                viewModel.updateSettings { it.copy(showPhoneInAccounts = show) }
-                            }
-                        )
-                        Divider(color = SmartLedgerColors.BorderSubtle)
                         Text(
                             text = "مفتاح الدولة الافتراضي لرسائل واتساب (${settings.defaultCountryCode}):",
                             style = MaterialTheme.typography.labelMedium,
@@ -665,9 +640,7 @@ fun SettingsScreen(
                         )
                     }
                 }
-            }
 
-            if (matchesSearch("الطباعة طابعة بلوتوث حرارية 80mm 58mm نسخ اختبار ESC POS")) {
                 item {
                     val printerSummary = if (settings.savedPrinterName.isNotBlank()) {
                         "${settings.savedPrinterName} • مقاس ${settings.printerPaperWidthMm}mm • ${settings.printerCopies} نسخة"
@@ -682,7 +655,6 @@ fun SettingsScreen(
                         title = "7. طابعة الفواتير الحرارية (ESC/POS)",
                         statusSummary = printerSummary
                     ) {
-                        Text("مقاس ورق الطابعة الحرارية:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
                         SegmentedOptionRow(
                             options = listOf(
                                 80 to "مقاس 80mm (48 حرفاً)",
@@ -694,7 +666,6 @@ fun SettingsScreen(
                             }
                         )
 
-                        Text("عدد النسخ المطبوعة لكل فاتورة:", style = MaterialTheme.typography.labelMedium, color = SmartLedgerColors.TextSecondary)
                         SegmentedOptionRow(
                             options = listOf(
                                 1 to "نسخة واحدة (1)",
@@ -781,21 +752,22 @@ fun SettingsScreen(
                 }
             }
 
-            if (matchesSearch("الأمان الخصوصية القفل البيومتري بصمة الإصبع رمز الحماية PIN مهلة القفل")) {
+            // التبويب 5: الأمان، بوابة الدخول، النسخ الاحتياطي المحلي والسحابي، وسلة المحذوفات
+            if (shouldShowSection("SECURITY_BACKUP", "الأمان الخصوصية القفل البيومتري بصمة الإصبع رمز الحماية PIN النسخ الاحتياطي المحلي Google Drive سلة المحذوفات استعادة")) {
                 item {
                     val securitySummary = if (settings.biometricLockEnabled) {
-                        "القفل مفعّل (مهلة ${settings.lockTimeoutMinutes} د) • ${if (settings.hasPinConfigured) "بصمة رمز PIN مملحة (PBKDF2)" else "بصمة الجهاز"}"
+                        "بوابة الأمان مفعّلة (مهلة ${settings.lockTimeoutMinutes} د) • ${if (settings.hasPinConfigured) "بصمة PIN مملحة (PBKDF2)" else "بصمة الجهاز"}"
                     } else {
-                        "القفل غير مفعّل • ${biometricCapability.description}"
+                        "بوابة الأمان غير مفعّلة • ${biometricCapability.description}"
                     }
 
                     SettingsSectionCard(
                         icon = Icons.Default.Security,
-                        title = "8. الأمان والخصوصية والقياسات الحيوية",
+                        title = "8. بوابة الدخول والأمان والخصوصية",
                         statusSummary = securitySummary
                     ) {
                         SettingSwitchRow(
-                            title = "تفعيل قفل التطبيق (بصمة الإصبع / قفل الجهاز / PIN)",
+                            title = "تفعيل بوابة قفل التطبيق عند الدخول (البصمة / PIN الذكي)",
                             subtitle = biometricCapability.description,
                             checked = settings.biometricLockEnabled,
                             onCheckedChange = { enabled ->
@@ -830,7 +802,7 @@ fun SettingsScreen(
                                 Icon(Icons.Default.Password, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (!settings.hasPinConfigured) "تعيين رمز حماية شخصي احتياطي (PIN)" else "تغيير أو إزالة رمز الحماية (PIN)",
+                                    text = if (!settings.hasPinConfigured) "تعيين رمز حماية شخصي (PIN)" else "تغيير أو إزالة رمز الحماية (PIN)",
                                     color = SmartLedgerColors.AccentLight,
                                     fontWeight = FontWeight.Bold,
                                     style = MaterialTheme.typography.labelSmall
@@ -850,21 +822,189 @@ fun SettingsScreen(
                         )
                     }
                 }
-            }
 
-            if (matchesSearch("سلة المحذوفات الأرشيف استعادة حساب مؤرشف صنف محذوف نفقة استرجاع سجل التدقيق")) {
+                item {
+                    val lastLocalStatus = if (settings.lastLocalBackupTime.isNotBlank()) {
+                        "آخر نسخة: ${settings.lastLocalBackupTime} (${NumberFormatter.formatFileSize(settings.lastLocalBackupSize)})"
+                    } else {
+                        "لم يتم إنشاء نسخة محلية بعد"
+                    }
+                    SettingsSectionCard(
+                        icon = Icons.Default.Backup,
+                        title = "9. النسخ الاحتياطي المحلي والأرشيف (.slprobackup)",
+                        statusSummary = "${indexedBackups.size} نسخ مفهرسة • $lastLocalStatus"
+                    ) {
+                        if (settings.lastLocalBackupSha256.isNotBlank()) {
+                            Text(
+                                text = "بصمة SHA-256 لآخر نسخة: ${settings.lastLocalBackupSha256.take(16)}...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SmartLedgerColors.StateSuccess
+                            )
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    isWorkingOnBackup = true
+                                    viewModel.createLocalArchiveBackup { res ->
+                                        isWorkingOnBackup = false
+                                        if (res.isSuccess) {
+                                            val rec = res.getOrThrow()
+                                            isBannerError = false
+                                            statusBannerText = "تم حفظ النسخة في أرشيف (${rec.yearFolder}/${rec.monthFolder}) بحجم ${NumberFormatter.formatFileSize(rec.sizeBytes)}."
+                                        } else {
+                                            isBannerError = true
+                                            statusBannerText = res.exceptionOrNull()?.message ?: "تعذر إنشاء النسخة الاحتياطية"
+                                        }
+                                    }
+                                },
+                                enabled = !isWorkingOnBackup,
+                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
+                                colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
+                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
+                            ) {
+                                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("نسخ فوري للأرشيف", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                            }
+
+                            OutlinedButton(
+                                onClick = { showBackupsArchiveSheet = true },
+                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(),
+                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
+                                border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
+                            ) {
+                                Icon(Icons.Default.FolderSpecial, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("أرشيف النسخ (${indexedBackups.size})", color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    exportSafLauncher.launch(BackupRestoreHelper.generateBackupFileName())
+                                },
+                                enabled = !isWorkingOnBackup,
+                                modifier = Modifier.weight(1f).heightIn(min = 38.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
+                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
+                                border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle))
+                            ) {
+                                Icon(Icons.Default.IosShare, contentDescription = null, tint = SmartLedgerColors.TextSecondary, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("تصدير ملف خارجي", color = SmartLedgerColors.TextSecondary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    importSafLauncher.launch(arrayOf("*/*"))
+                                },
+                                enabled = !isWorkingOnBackup,
+                                modifier = Modifier.weight(1f).heightIn(min = 38.dp).pressScaleEffect(enabled = !isWorkingOnBackup),
+                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
+                                border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle))
+                            ) {
+                                Icon(Icons.Default.RestorePage, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("استعادة من ملف خارجي", color = SmartLedgerColors.AccentLight, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    val cloudStatusText = when {
+                        settings.lastCloudBackupTime.isNotBlank() ->
+                            "${driveState.arabicLabel} • آخر رفع: ${settings.lastCloudBackupTime} (${NumberFormatter.formatFileSize(settings.lastCloudBackupSize)})"
+                        settings.googleDriveAccountEmail.isNotBlank() ->
+                            "${driveState.arabicLabel} (${settings.googleDriveAccountEmail})"
+                        else -> driveState.arabicLabel
+                    }
+
+                    SettingsSectionCard(
+                        icon = Icons.Default.CloudSync,
+                        title = "10. النسخ الاحتياطي السحابي (Google Drive)",
+                        statusSummary = cloudStatusText
+                    ) {
+                        SettingSwitchRow(
+                            title = "تفعيل الجدولة التلقائية للنسخ الاحتياطي",
+                            subtitle = "إنشاء نسخة احتياطية دورية كل ${settings.autoBackupIntervalHours} ساعة",
+                            checked = settings.autoBackupEnabled,
+                            onCheckedChange = { enabled ->
+                                viewModel.updateSettings { it.copy(autoBackupEnabled = enabled) }
+                            }
+                        )
+
+                        if (driveState == DriveConnectionState.UPLOADING) {
+                            LinearProgressIndicator(
+                                progress = uploadProgress / 100f,
+                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                                color = SmartLedgerColors.AccentLight,
+                                trackColor = SmartLedgerColors.SurfaceCardElevated
+                            )
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { showGoogleDriveConfigSheet = true },
+                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(),
+                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
+                                border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.AccentPrimary))
+                            ) {
+                                Icon(Icons.Default.Link, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (settings.googleDriveAccountEmail.isBlank()) "ربط حساب Google Drive" else "إدارة حساب Drive",
+                                    color = SmartLedgerColors.AccentLight,
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+
+                            Button(
+                                onClick = {
+                                    if (settings.googleDriveAccessToken.isBlank()) {
+                                        showGoogleDriveConfigSheet = true
+                                    } else {
+                                        driveState = DriveConnectionState.UPLOADING
+                                        uploadProgress = 0
+                                        viewModel.uploadBackupToGoogleDrive(
+                                            onProgress = { p -> uploadProgress = p },
+                                            onResult = { uploadRes ->
+                                                if (uploadRes.isSuccess) {
+                                                    val info = uploadRes.getOrThrow()
+                                                    driveState = DriveConnectionState.SUCCESS
+                                                    isBannerError = false
+                                                    statusBannerText = "تم رفع النسخة إلى Google Drive (${NumberFormatter.formatFileSize(info.sizeBytes)}) بنجاح."
+                                                } else {
+                                                    driveState = DriveConnectionState.ERROR
+                                                    isBannerError = true
+                                                    statusBannerText = uploadRes.exceptionOrNull()?.message ?: "فشل الرفع السحابي"
+                                                }
+                                            }
+                                        )
+                                    }
+                                },
+                                enabled = driveState != DriveConnectionState.UPLOADING,
+                                modifier = Modifier.weight(1f).heightIn(min = 40.dp).pressScaleEffect(enabled = driveState != DriveConnectionState.UPLOADING),
+                                colors = ButtonDefaults.buttonColors(containerColor = SmartLedgerColors.AccentPrimary),
+                                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
+                            ) {
+                                Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("رفع سحابي الآن", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+
                 item {
                     val restorableCount = deletedItems.count { it.EntityType in listOf("Account", "Product", "Expense") }
                     SettingsSectionCard(
                         icon = Icons.Default.RestoreFromTrash,
-                        title = "9. سلة المحذوفات والأرشيف واستعادة السجلات",
+                        title = "11. سلة المحذوفات والأرشيف واستعادة السجلات",
                         statusSummary = "${deletedItems.size} سجل محفوظ • $restorableCount قابل للاستعادة المباشرة"
                     ) {
-                        Text(
-                            text = "يعرض الحسابات والأصناف المؤرشفة والنفقات المحذوفة والقيود العكسية الموثقة، ويتيح استعادة أي حساب أو صنف أو نفقة بضغطة واحدة.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SmartLedgerColors.TextMuted
-                        )
                         Button(
                             onClick = { showTrashRecoverySheet = true },
                             modifier = Modifier
@@ -911,7 +1051,6 @@ fun SettingsScreen(
             )
         }
 
-        // نافذة تعديل هوية المنشأة والفواتير العائمة فوق لوحة المفاتيح
         if (showEditIdentitySheet) {
             FloatingModalDialog(onDismissRequest = { showEditIdentitySheet = false }) {
                 var tradeName by rememberSaveable { mutableStateOf(identity?.TradeName ?: "نشاطي التجاري") }
@@ -1010,7 +1149,6 @@ fun SettingsScreen(
             }
         }
 
-        // نافذة ربط وإدارة Google Drive العائمة فوق لوحة المفاتيح
         if (showGoogleDriveConfigSheet) {
             FloatingModalDialog(onDismissRequest = { showGoogleDriveConfigSheet = false }) {
                 var emailText by rememberSaveable { mutableStateOf(settings.googleDriveAccountEmail) }
@@ -1040,25 +1178,6 @@ fun SettingsScreen(
                         }
                     }
                 ) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCardElevated),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                text = "حول مصادقة Google Drive السحابية وتشفير الرموز:",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = SmartLedgerColors.AccentLight
-                            )
-                            Text(
-                                text = "• يستخدم التطبيق نطاق الصلاحية المعزول (drive.appdata) لحفظ نسخك داخل مجلد التطبيق الخاص دون الوصول لأي ملفات أخرى في حسابك.\n• يُشفّر رمز الوصول محلياً بواسطة مفتاح AES-GCM محمي داخل AndroidKeyStore ولا يُحفظ كنص صريح.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SmartLedgerColors.TextSecondary
-                            )
-                        }
-                    }
-
                     FormSectionGroup(title = "بيانات الربط والمصادقة") {
                         SmartTextField(
                             value = emailText,
@@ -1071,40 +1190,16 @@ fun SettingsScreen(
                         SmartTextField(
                             value = tokenText,
                             onValueChange = { tokenText = it },
-                            label = "رمز الوصول OAuth 2.0 (Access Token - يُشفّر عبر Keystore)",
+                            label = "رمز الوصول OAuth 2.0 (يُشفّر عبر Keystore)",
                             placeholder = "ya29.a0...",
                             helperText = "لا نطلب كلمة مرور Google مطلقاً. يُستخدم الرمز لمصادقة طلبات Drive API v3.",
                             imeAction = ImeAction.Done
                         )
                     }
-
-                    if (settings.googleDriveAccountEmail.isNotBlank() || settings.googleDriveAccessToken.isNotBlank()) {
-                        OutlinedButton(
-                            onClick = {
-                                viewModel.updateSettings {
-                                    it.copy(
-                                        googleDriveAccountEmail = "",
-                                        googleDriveAccessToken = ""
-                                    )
-                                }
-                                showGoogleDriveConfigSheet = false
-                                isBannerError = false
-                                statusBannerText = "تم فصل الحساب السحابي مع الحفاظ على النسخ السابقة."
-                            },
-                            modifier = Modifier.fillMaxWidth().pressScaleEffect(),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = SmartLedgerColors.StateDanger),
-                            border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.StateDangerBorder))
-                        ) {
-                            Icon(Icons.Default.LinkOff, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("فصل الحساب السحابي", fontWeight = FontWeight.Bold)
-                        }
-                    }
                 }
             }
         }
 
-        // نافذة اختيار طابعة البلوتوث العائمة فوق لوحة المفاتيح
         if (showPrinterPickerSheet) {
             val pairedResult = remember { ThermalPrinterHelper.getPairedPrinters(context) }
             val printers = pairedResult.getOrDefault(emptyList())
@@ -1183,7 +1278,6 @@ fun SettingsScreen(
             }
         }
 
-        // نافذة إعداد رمز الحماية الشخصي العائمة فوق لوحة المفاتيح (يُحفظ كبصمة مملحة PBKDF2)
         if (showPinSetupSheet) {
             FloatingModalDialog(onDismissRequest = { showPinSetupSheet = false }) {
                 var pinText by rememberSaveable { mutableStateOf("") }
@@ -1224,7 +1318,6 @@ fun SettingsScreen(
             }
         }
 
-        // نافذة أرشيف النسخ الاحتياطية المفهرسة العائمة
         if (showBackupsArchiveSheet) {
             var recordIdToDelete by rememberSaveable { mutableStateOf<String?>(null) }
             val recordToDelete = remember(indexedBackups, recordIdToDelete) { recordIdToDelete?.let { id -> indexedBackups.firstOrNull { it.id == id } } }
@@ -1259,40 +1352,13 @@ fun SettingsScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Text(
-                                                text = "${rec.yearFolder} / ${rec.monthFolder}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = SmartLedgerColors.AccentLight,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Text(
-                                                text = NumberFormatter.formatFileSize(rec.sizeBytes),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = SmartLedgerColors.StateSuccess,
-                                                fontWeight = FontWeight.Bold
-                                            )
+                                            Text("${rec.yearFolder} / ${rec.monthFolder}", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight, fontWeight = FontWeight.Bold)
+                                            Text(NumberFormatter.formatFileSize(rec.sizeBytes), style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.StateSuccess, fontWeight = FontWeight.Bold)
                                         }
-
                                         Text(rec.fileName, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
-                                        Text(
-                                            text = "التاريخ: ${rec.createdAt} • حسابات: ${rec.accountsCount} • أصناف: ${rec.productsCount} • فواتير: ${rec.invoicesCount}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = SmartLedgerColors.TextMuted
-                                        )
-                                        Text(
-                                            text = "SHA-256: ${rec.sha256.take(20)}...",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = SmartLedgerColors.TextSecondary
-                                        )
-
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.End
-                                        ) {
-                                            TextButton(
-                                                onClick = { recordIdToDelete = rec.id },
-                                                contentPadding = PaddingValues(horizontal = 8.dp)
-                                            ) {
+                                        Text("التاريخ: ${rec.createdAt} • حسابات: ${rec.accountsCount} • أصناف: ${rec.productsCount} • فواتير: ${rec.invoicesCount}", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                            TextButton(onClick = { recordIdToDelete = rec.id }, contentPadding = PaddingValues(horizontal = 8.dp)) {
                                                 Text("حذف", color = SmartLedgerColors.StateDanger, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                             }
                                             Spacer(modifier = Modifier.width(6.dp))
@@ -1343,7 +1409,6 @@ fun SettingsScreen(
             }
         }
 
-        // نافذة سلة المحذوفات والأرشيف واستعادة السجلات العائمة (UX-001)
         if (showTrashRecoverySheet) {
             var trashFilter by rememberSaveable { mutableStateOf("ALL") }
             var trashItemIdToDeletePermanently by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -1403,46 +1468,13 @@ fun SettingsScreen(
                                     border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle))
                                 ) {
                                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = typeLabel,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = if (canRestore) SmartLedgerColors.AccentLight else SmartLedgerColors.StateWarning,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Text(
-                                                text = item.DeletedAt.take(16),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = SmartLedgerColors.TextMuted
-                                            )
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                            Text(typeLabel, style = MaterialTheme.typography.labelSmall, color = if (canRestore) SmartLedgerColors.AccentLight else SmartLedgerColors.StateWarning, fontWeight = FontWeight.Bold)
+                                            Text(item.DeletedAt.take(16), style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextMuted)
                                         }
-
-                                        Text(
-                                            text = item.Title,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = SmartLedgerColors.TextPrimary
-                                        )
-                                        if (!item.Reason.isNullOrBlank()) {
-                                            Text(
-                                                text = "السبب: ${item.Reason}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = SmartLedgerColors.TextSecondary
-                                            )
-                                        }
-
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.End
-                                        ) {
-                                            TextButton(
-                                                onClick = { trashItemIdToDeletePermanently = item.Id },
-                                                contentPadding = PaddingValues(horizontal = 8.dp)
-                                            ) {
+                                        Text(item.Title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = SmartLedgerColors.TextPrimary)
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                            TextButton(onClick = { trashItemIdToDeletePermanently = item.Id }, contentPadding = PaddingValues(horizontal = 8.dp)) {
                                                 Text("حذف نهائي", color = SmartLedgerColors.StateDanger, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                             }
                                             if (canRestore) {
@@ -1494,7 +1526,6 @@ fun SettingsScreen(
             }
         }
 
-        // نافذة تأكيد الاستعادة الآمنة العائمة
         if (pendingRestoreInspection != null) {
             val insp = pendingRestoreInspection!!
             FloatingModalDialog(
@@ -1539,25 +1570,13 @@ fun SettingsScreen(
                         Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text("حجم قاعدة البيانات: ${NumberFormatter.formatFileSize(insp.dbSizeBytes)}", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary)
                             Text(
-                                text = if (insp.isChecksumMatched) {
-                                    "${insp.checksumStatus.arabicDescription} (${insp.actualSha256.take(16)}...)"
-                                } else {
-                                    insp.checksumStatus.arabicDescription
-                                },
+                                text = if (insp.isChecksumMatched) "${insp.checksumStatus.arabicDescription} (${insp.actualSha256.take(16)}...)" else insp.checksumStatus.arabicDescription,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (insp.isChecksumMatched) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateWarning,
                                 fontWeight = FontWeight.Bold
                             )
-                            if (insp.accountsCount > 0 || insp.productsCount > 0 || insp.invoicesCount > 0) {
-                                Text("السجلات: ${insp.accountsCount} حساب • ${insp.productsCount} صنف • ${insp.invoicesCount} فاتورة", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.AccentLight)
-                            }
                         }
                     }
-                    Text(
-                        text = "تنبيه: ستقوم الاستعادة باستبدال البيانات الحالية ببيانات هذه النسخة. سيقوم النظام تلقائياً بحفظ نسخة أمان (Pre-Restore Safety) لبياناتك الحالية قبل الاستبدال.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = SmartLedgerColors.TextSecondary
-                    )
                 }
             }
         }
@@ -1569,6 +1588,7 @@ fun SettingsScreen(
                 confirmText = "استعادة الافتراضيات",
                 onConfirm = {
                     viewModel.resetPreferencesToDefault()
+                    ScreenFieldVisibilityStore.reset(context)
                     showResetConfirmDialog = false
                     isBannerError = false
                     statusBannerText = "تمت استعادة الإعدادات الافتراضية مع الحفاظ على كافة السجلات المالية وإعدادات الحماية."
@@ -1576,93 +1596,5 @@ fun SettingsScreen(
                 onDismiss = { showResetConfirmDialog = false }
             )
         }
-    }
-}
-
-@Composable
-fun SettingsSectionCard(
-    icon: ImageVector,
-    title: String,
-    statusSummary: String,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
-        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
-        shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
-    ) {
-        Column(
-            modifier = Modifier.padding(SmartLedgerTokens.cardInternalPadding),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SmartLedgerColors.AccentSubtle),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(icon, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(18.dp))
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = SmartLedgerColors.TextPrimary
-                    )
-                    Text(
-                        text = statusSummary,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = SmartLedgerColors.AccentLight
-                    )
-                }
-            }
-            Divider(color = SmartLedgerColors.BorderSubtle)
-            content()
-        }
-    }
-}
-
-@Composable
-fun SettingSwitchRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = SmartLedgerColors.TextPrimary
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = SmartLedgerColors.TextMuted
-            )
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = SmartLedgerColors.TextInverse,
-                checkedTrackColor = SmartLedgerColors.AccentPrimary,
-                uncheckedThumbColor = SmartLedgerColors.TextMuted,
-                uncheckedTrackColor = SmartLedgerColors.SurfaceCardElevated
-            )
-        )
     }
 }

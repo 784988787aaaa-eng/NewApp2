@@ -1,174 +1,47 @@
 package com.smartledger.pro.ui.components
 
 import android.os.SystemClock
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.smartledger.pro.ui.theme.SmartLedgerColors
+import com.smartledger.pro.ui.theme.SmartLedgerTokens
 
 /**
- * نموذج الحالات الصريح لدورة حياة نافذة الإدخال (Explicit Window Lifecycle State Machine)
- * التدفق الأساسي:
- * - Open -> EDITING -> VALIDATING -> SAVING -> SAVE_SUCCESS -> Close
- * - عند فشل التحقق: EDITING -> VALIDATION_ERROR (لا تُغلق النافذة ولا تضيع القيم)
- * - عند فشل الحفظ: SAVING -> SAVE_ERROR -> EDITING (لا تُغلق النافذة وتُعرض الرسالة مع بقاء القيم)
- * - عند طلب الإلغاء أو الرجوع مع وجود تعديلات: EDITING -> CONFIRMING_DISCARD
- */
-enum class FormWindowLifecycleState {
-    CLOSED,
-    EDITING,
-    VALIDATING,
-    VALIDATION_ERROR,
-    SAVING,
-    SAVE_ERROR,
-    CONFIRMING_DISCARD,
-    SAVE_SUCCESS
-}
-
-/**
- * موفر سياق داخلي لربط طلب الإغلاق الخارجي (مثل زر الرجوع في أندرويد أو النقر خارج النافذة)
- * بحارس حماية البيانات داخل FormSheetContainer.
- */
-internal val LocalModalCloseInterceptor = compositionLocalOf<((() -> Boolean) -> Unit)?> { null }
-
-/**
- * نافذة عائمة حديثة ومستقلة (FloatingModalDialog)
- * - تعمل فوق الشاشة الحالية وتستقر تلقائياً فوق لوحة المفاتيح عبر `decorFitsSystemWindows = false` و`imePadding()`.
- * - تعترض زر الرجوع في النظام (Back Press) والنقر خارج النافذة وتوجههما إلى آلة الحالات في `FormSheetContainer`
- *   بحيث يستحيل فقدان التعديلات غير المحفوظة بصمت أو إغلاق النافذة أثناء عملية الحفظ الجارية.
- */
-@Composable
-fun FloatingModalDialog(
-    onDismissRequest: () -> Unit,
-    maxWidth: Dp = 540.dp,
-    allowOutsideClickDismiss: Boolean = false,
-    content: @Composable () -> Unit
-) {
-    val keyboardController = LocalSoftwareKeyboardController.current
-    var childCloseHandler by remember { mutableStateOf<(() -> Boolean)?>(null) }
-
-    val safeAttemptDismiss = {
-        val intercepted = childCloseHandler?.invoke() ?: false
-        if (!intercepted) {
-            keyboardController?.hide()
-            onDismissRequest()
-        }
-    }
-
-    Dialog(
-        onDismissRequest = safeAttemptDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = allowOutsideClickDismiss
-        )
-    ) {
-        // اعتراض صريح لزر الرجوع في أندرويد لضمان المرور عبر حارس التعديلات غير المحفوظة وحارس الحفظ الجاري
-        BackHandler(enabled = true) {
-            safeAttemptDismiss()
-        }
-
-        CompositionLocalProvider(
-            LocalModalCloseInterceptor provides { handler -> childCloseHandler = handler }
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(SmartLedgerColors.SurfaceOverlay)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        if (allowOutsideClickDismiss) {
-                            safeAttemptDismiss()
-                        }
-                    }
-                    .imePadding()
-                    .systemBarsPadding()
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .widthIn(max = maxWidth)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { /* منع انتقال النقرة إلى الخلفية */ }
-                        .shadow(
-                            elevation = 24.dp,
-                            shape = RoundedCornerShape(24.dp),
-                            ambientColor = Color.Black,
-                            spotColor = SmartLedgerColors.AccentPrimary.copy(alpha = 0.25f)
-                        )
-                        .clip(RoundedCornerShape(24.dp)),
-                    shape = RoundedCornerShape(24.dp),
-                    color = SmartLedgerColors.SurfacePanel,
-                    tonalElevation = 12.dp,
-                    border = BorderStroke(
-                        width = 1.dp,
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                SmartLedgerColors.AccentLight.copy(alpha = 0.35f),
-                                SmartLedgerColors.BorderSubtle
-                            )
-                        )
-                    )
-                ) {
-                    content()
-                }
-            }
-        }
-    }
-}
-
-/**
- * حاوية النماذج العائمة الموحدة (FormSheetContainer)
- * تطبق دورة حياة FormWindowLifecycleState الصارمة:
- * 1. تمنع الإغلاق التلقائي عند وجود خطأ تحقق أو فشل في الحفظ.
- * 2. تمنع الإغلاق العرضي أثناء تنفيذ الحفظ (isSaving == true).
- * 3. تحمي التعديلات غير المحفوظة عند الضغط على زر الإغلاق أو زر الإلغاء أو زر الرجوع في أندرويد.
- * 4. تفصل التأثير البصري للزر عن استدعاء onPrimaryClick لمنع تكرار العمليات المالية، مع قفل زمني ضد النقر السريع.
+ * حاوية نوافذ الإدخال الفاخرة (FormSheetContainer)
+ * - ترويسة زجاجية متدرجة راقية مع مقبض علوي أنيق وأيقونة مضيئة.
+ * - حماية صارمة للتعديلات غير المحفوظة ومنع الإغلاق الصامت عند الخطأ.
+ * - شريط إجراءات سفلي مدمج بأزرار ذكية متوهجة.
  */
 @Composable
 fun FormSheetContainer(
@@ -196,7 +69,6 @@ fun FormSheetContainer(
     val view = LocalView.current
     val registerInterceptor = LocalModalCloseInterceptor.current
 
-    // مزامنة حالة النافذة مع حالة الحفظ والأخطاء القادمة من طبقة الأعمال (ViewModel/Repository)
     LaunchedEffect(isSaving, errorMessage) {
         when {
             isSaving -> {
@@ -213,20 +85,14 @@ fun FormSheetContainer(
         }
     }
 
-    // مسار موحد لطلب إغلاق النافذة (من زر ×، أو زر إلغاء، أو زر الرجوع في النظام)
     val requestWindowClose: () -> Boolean = {
         when {
-            isSaving || lifecycleState == FormWindowLifecycleState.SAVING -> {
-                // أثناء الحفظ: نمنع الإغلاق العرضي حتى تكتمل العملية وتظهر نتيجتها
-                true
-            }
+            isSaving || lifecycleState == FormWindowLifecycleState.SAVING -> true
             lifecycleState == FormWindowLifecycleState.CONFIRMING_DISCARD -> {
-                // إذا كان تنبيه التجاهل ظاهراً بالفعل وضغط المستخدم رجوع مرة ثانية، نلغي تنبيه التجاهل ونعود للتحرير
                 lifecycleState = FormWindowLifecycleState.EDITING
                 true
             }
             hasUnsavedChanges -> {
-                // انتقال صريح إلى حالة تأكيد تجاهل التعديلات بدلاً من الإغلاق الصامت
                 lifecycleState = FormWindowLifecycleState.CONFIRMING_DISCARD
                 AppHaptics.perform(view, AppHapticType.TICK)
                 true
@@ -247,27 +113,36 @@ fun FormSheetContainer(
     }
 
     val activeBannerError = errorMessage?.takeIf { it.isNotBlank() } ?: localValidationMessage
+    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    val maxSheetHeight = minOf(700.dp, screenHeight * 0.86f)
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(max = 680.dp)
+            .heightIn(max = maxSheetHeight)
     ) {
-        // 1. ترويسة النافذة العائمة (Floating Window Header)
+        // 1. ترويسة النافذة الفاخرة (Luxury Modal Header)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(SmartLedgerColors.SurfaceCardElevated.copy(alpha = 0.45f))
-                .padding(horizontal = 18.dp, vertical = 14.dp)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            primaryButtonColor.copy(alpha = 0.14f),
+                            SmartLedgerColors.SurfaceCardElevated.copy(alpha = 0.35f)
+                        )
+                    )
+                )
+                .padding(horizontal = 18.dp, vertical = 13.dp)
         ) {
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
-                    .padding(bottom = 10.dp)
-                    .width(38.dp)
+                    .padding(bottom = 9.dp)
+                    .width(42.dp)
                     .height(4.dp)
                     .clip(CircleShape)
-                    .background(SmartLedgerColors.BorderStrong.copy(alpha = 0.6f))
+                    .background(primaryButtonColor.copy(alpha = 0.55f))
             )
 
             Row(
@@ -282,10 +157,17 @@ fun FormSheetContainer(
                     if (headerIcon != null) {
                         Box(
                             modifier = Modifier
-                                .size(38.dp)
-                                .clip(RoundedCornerShape(11.dp))
-                                .background(SmartLedgerColors.AccentSubtle)
-                                .border(1.dp, SmartLedgerColors.AccentPrimary.copy(alpha = 0.4f), RoundedCornerShape(11.dp)),
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        colors = listOf(
+                                            primaryButtonColor.copy(alpha = 0.25f),
+                                            SmartLedgerColors.AccentSubtle
+                                        )
+                                    )
+                                )
+                                .border(1.dp, primaryButtonColor.copy(alpha = 0.45f), RoundedCornerShape(12.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -299,12 +181,32 @@ fun FormSheetContainer(
                     }
 
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = SmartLedgerColors.TextPrimary
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = SmartLedgerColors.TextPrimary
+                            )
+                            if (hasUnsavedChanges) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(SmartLedgerColors.AccentSubtle)
+                                        .padding(horizontal = 6.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = "قيد التحرير",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = SmartLedgerColors.AccentLight,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
                         if (!subtitle.isNullOrBlank()) {
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
@@ -334,7 +236,7 @@ fun FormSheetContainer(
                 }
             }
 
-            // حالة CONFIRMING_DISCARD: تأكيد تجاهل التعديلات غير المحفوظة
+            // حالة CONFIRMING_DISCARD
             AnimatedVisibility(
                 visible = lifecycleState == FormWindowLifecycleState.CONFIRMING_DISCARD,
                 enter = expandVertically() + fadeIn(),
@@ -388,7 +290,7 @@ fun FormSheetContainer(
                 }
             }
 
-            // حالة VALIDATION_ERROR / SAVE_ERROR: عرض الخطأ بوضوح مع الحفاظ الكامل على المدخلات
+            // حالة VALIDATION_ERROR / SAVE_ERROR
             AnimatedVisibility(
                 visible = !activeBannerError.isNullOrBlank(),
                 enter = expandVertically() + fadeIn(),
@@ -442,11 +344,11 @@ fun FormSheetContainer(
 
         Divider(color = SmartLedgerColors.BorderSubtle)
 
-        // 3. شريط الإجراءات السفلي الثابت (يظهر دائماً فوق لوحة المفاتيح، ويفصل التأثير البصري عن منطق الحفظ)
+        // 3. شريط الإجراءات السفلي الذكي الثابت
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(SmartLedgerColors.SurfaceCardElevated.copy(alpha = 0.35f))
+                .background(SmartLedgerColors.SurfaceCardElevated.copy(alpha = 0.45f))
                 .padding(horizontal = 18.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -460,7 +362,6 @@ fun FormSheetContainer(
                     lifecycleState = FormWindowLifecycleState.VALIDATING
 
                     if (!isPrimaryEnabled) {
-                        // عند عدم اكتمال التحقق: تبقى النافذة مفتوحة وتوضح للمستخدم ما يلزم إكماله
                         lifecycleState = FormWindowLifecycleState.VALIDATION_ERROR
                         localValidationMessage = onValidationFailedMessage
                         AppHaptics.perform(view, AppHapticType.ERROR)
@@ -475,18 +376,18 @@ fun FormSheetContainer(
                 },
                 enabled = !isSaving && lifecycleState != FormWindowLifecycleState.SAVING,
                 modifier = Modifier
-                    .weight(1.65f)
+                    .weight(1.75f)
                     .heightIn(min = 46.dp)
                     .pressScaleEffect(
                         enabled = !isSaving && lifecycleState != FormWindowLifecycleState.SAVING,
                         hapticType = null
                     ),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isPrimaryEnabled) primaryButtonColor else SmartLedgerColors.SurfaceCardElevated,
                     disabledContainerColor = SmartLedgerColors.SurfaceCardElevated
                 ),
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
             ) {
                 if (isSaving || lifecycleState == FormWindowLifecycleState.SAVING) {
                     CircularProgressIndicator(
@@ -504,6 +405,15 @@ fun FormSheetContainer(
                         overflow = TextOverflow.Ellipsis
                     )
                 } else {
+                    if (isPrimaryEnabled) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = SmartLedgerColors.TextInverse,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
                     Text(
                         text = primaryButtonText,
                         fontWeight = FontWeight.Bold,
@@ -530,7 +440,7 @@ fun FormSheetContainer(
                 border = ButtonDefaults.outlinedButtonBorder.copy(
                     brush = SolidColor(SmartLedgerColors.BorderSubtle)
                 ),
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner)
             ) {
                 Text(
                     text = secondaryButtonText,
@@ -539,154 +449,6 @@ fun FormSheetContainer(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-            }
-        }
-    }
-}
-
-/**
- * بطاقة تجميع حقول رشيقة داخل النوافذ العائمة (FormSectionGroup)
- */
-@Composable
-fun FormSectionGroup(
-    title: String,
-    badgeText: String? = null,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(SmartLedgerColors.SurfaceCard.copy(alpha = 0.75f))
-            .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(14.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = SmartLedgerColors.AccentLight
-            )
-            if (!badgeText.isNullOrBlank()) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(SmartLedgerColors.AccentSubtle)
-                        .padding(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = badgeText,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = SmartLedgerColors.AccentLight
-                    )
-                }
-            }
-        }
-        content()
-    }
-}
-
-/**
- * قسم الإفصاح التدريجي الاختياري (ExpandableAdvancedSection)
- */
-@Composable
-fun ExpandableAdvancedSection(
-    title: String = "خيارات وتفاصيل إضافية",
-    subtitle: String? = null,
-    initiallyExpanded: Boolean = false,
-    badgeText: String? = null,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(SmartLedgerColors.SurfaceCard.copy(alpha = 0.6f))
-            .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(14.dp))
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { expanded = !expanded }
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                Icon(
-                    imageVector = Icons.Default.Tune,
-                    contentDescription = null,
-                    tint = SmartLedgerColors.AccentLight,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = SmartLedgerColors.TextPrimary
-                    )
-                    if (!subtitle.isNullOrBlank()) {
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SmartLedgerColors.TextMuted
-                        )
-                    }
-                }
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (!badgeText.isNullOrBlank()) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(SmartLedgerColors.AccentSubtle)
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = badgeText,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SmartLedgerColors.AccentLight,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                }
-                Icon(
-                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = null,
-                    tint = SmartLedgerColors.TextMuted
-                )
-            }
-        }
-
-        AnimatedVisibility(
-            visible = expanded,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut()
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Divider(color = SmartLedgerColors.BorderSubtle)
-                content()
             }
         }
     }
