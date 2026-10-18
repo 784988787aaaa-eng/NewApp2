@@ -382,36 +382,21 @@ fun PosSalesScreen(
                 )
             }
 
-            if (cartLines.isEmpty()) {
-                item {
-                    SmartEmptyState(
-                        icon = Icons.Default.ShoppingCart,
-                        title = "سلة المبيعات جاهزة",
-                        subtitle = "اضغط على أي صنف في الشريط العلوي، أو امسح الباركود، أو افتح قائمة الأصناف لبدء فاتورة جديدة.",
-                        actionText = "استعراض وإضافة الأصناف",
-                        onActionClick = { showProductPickerSheet = true }
-                    )
+            posCartItems(
+                cartLines = cartLines,
+                onAddProducts = { showProductPickerSheet = true },
+                onUpdateQuantities = { line, major, minor ->
+                    viewModel.updateLineQuantities(line.productId, major, minor)
+                },
+                onEditLineDetails = { line -> editingLineProductId = line.productId },
+                onRemoveLine = { line ->
+                    lastRemovedItem = line
+                    lastUnmatchedBarcode = null
+                    viewModel.removeItemFromCart(line.productId)
+                    isStatusError = false
+                    statusMessage = "تمت إزالة «${line.name}» من السلة."
                 }
-            } else {
-                items(cartLines, key = { it.productId }) { line ->
-                    CartLineCard(
-                        line = line,
-                        onUpdateQuantities = { maj, min ->
-                            viewModel.updateLineQuantities(line.productId, maj, min)
-                        },
-                        onEditLineDetails = {
-                            editingLineProductId = line.productId
-                        },
-                        onRemoveLine = {
-                            lastRemovedItem = line
-                            lastUnmatchedBarcode = null
-                            viewModel.removeItemFromCart(line.productId)
-                            isStatusError = false
-                            statusMessage = "تمت إزالة «${line.name}» من السلة."
-                        }
-                    )
-                }
-            }
+            )
 
             item { Spacer(modifier = Modifier.height(16.dp)) }
         }
