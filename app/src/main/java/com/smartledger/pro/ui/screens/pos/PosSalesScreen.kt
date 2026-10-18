@@ -53,11 +53,11 @@ fun PosSalesScreen(
     val recentInvoices by viewModel.recentInvoices.collectAsState()
     val identity by viewModel.businessIdentity.collectAsState()
     val settings by viewModel.settings.collectAsState()
+    val context = LocalContext.current
     val fieldVisibility by ScreenFieldVisibilityStore.observe(context).collectAsState()
     val financialAccounts by viewModel.financialAccounts.collectAsState()
 
     val cartLines = viewModel.cartLines
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var showProductPickerSheet by rememberSaveable { mutableStateOf(false) }
