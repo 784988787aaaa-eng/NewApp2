@@ -27,7 +27,7 @@ import com.smartledger.pro.ui.theme.SmartLedgerTokens
 import com.smartledger.pro.util.NumberFormatter
 
 @Composable
-private fun TodayMiniMetric(
+fun TodayMiniMetric(
     label: String,
     amount: Double,
     color: Color,
