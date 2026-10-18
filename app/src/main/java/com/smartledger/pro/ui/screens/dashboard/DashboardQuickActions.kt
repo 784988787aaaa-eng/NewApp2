@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.LocalShipping
 import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.ReceiptLong
@@ -27,64 +28,99 @@ import com.smartledger.pro.ui.theme.SmartLedgerColors
  */
 @Composable
 internal fun DashboardQuickActions(onNavigate: (String) -> Unit) {
-                Text(
-                    text = "العمليات السريعة",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = SmartLedgerColors.TextPrimary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        QuickActionTile(
-                            modifier = Modifier.weight(1f),
-                            title = "فاتورة بيع",
-                            subtitle = "نقطة البيع POS",
-                            icon = Icons.Default.PointOfSale,
-                            color = SmartLedgerColors.AccentPrimary
-                        ) { onNavigate("pos_sales") }
-    
-                        QuickActionTile(
-                            modifier = Modifier.weight(1f),
-                            title = "سند قبض / صرف",
-                            subtitle = "تحصيل وسداد",
-                            icon = Icons.Default.ReceiptLong,
-                            color = SmartLedgerColors.StateSuccess
-                        ) { onNavigate("vouchers") }
-    
-                        QuickActionTile(
-                            modifier = Modifier.weight(1f),
-                            title = "فاتورة شراء",
-                            subtitle = "توريد للمخزن",
-                            icon = Icons.Default.LocalShipping,
-                            color = SmartLedgerColors.AccentLight
-                        ) { onNavigate("purchases") }
-                    }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        QuickActionTile(
-                            modifier = Modifier.weight(1f),
-                            title = "المصروفات",
-                            subtitle = "نفقات التشغيل",
-                            icon = Icons.Default.TrendingDown,
-                            color = SmartLedgerColors.StateDanger
-                        ) { onNavigate("expenses") }
-    
-                        QuickActionTile(
-                            modifier = Modifier.weight(1f),
-                            title = "التقارير المالية",
-                            subtitle = "الأرباح والدخل",
-                            icon = Icons.Default.Assessment,
-                            color = SmartLedgerColors.StateWarning
-                        ) { onNavigate("reports") }
-    
-                        QuickActionTile(
-                            modifier = Modifier.weight(1f),
-                            title = "كشوف الحساب",
-                            subtitle = "العملاء والموردون",
-                            icon = Icons.Default.AccountBalanceWallet,
-                            color = SmartLedgerColors.TextSecondary
-                        ) { onNavigate("accounts") }
-                    }
-                }
-    
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = "العمليات السريعة",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = SmartLedgerColors.TextPrimary
+            )
+            Text(
+                text = "الوصول المباشر إلى أكثر المهام استخداماً",
+                style = MaterialTheme.typography.bodySmall,
+                color = SmartLedgerColors.TextMuted
+            )
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                QuickActionTile(
+                    modifier = Modifier.weight(1f),
+                    title = "فاتورة بيع",
+                    subtitle = "نقطة البيع POS",
+                    icon = Icons.Default.PointOfSale,
+                    color = SmartLedgerColors.AccentPrimary
+                ) { onNavigate("pos_sales") }
+
+                QuickActionTile(
+                    modifier = Modifier.weight(1f),
+                    title = "سند قبض / صرف",
+                    subtitle = "تحصيل وسداد",
+                    icon = Icons.Default.ReceiptLong,
+                    color = SmartLedgerColors.StateSuccess
+                ) { onNavigate("vouchers") }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                QuickActionTile(
+                    modifier = Modifier.weight(1f),
+                    title = "فاتورة شراء",
+                    subtitle = "توريد للمخزون",
+                    icon = Icons.Default.LocalShipping,
+                    color = SmartLedgerColors.AccentLight
+                ) { onNavigate("purchases") }
+
+                QuickActionTile(
+                    modifier = Modifier.weight(1f),
+                    title = "المخزون والأصناف",
+                    subtitle = "الأرصدة والجرد",
+                    icon = Icons.Default.Inventory2,
+                    color = SmartLedgerColors.AccentPrimary
+                ) { onNavigate("inventory") }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                QuickActionTile(
+                    modifier = Modifier.weight(1f),
+                    title = "المصروفات",
+                    subtitle = "نفقات التشغيل",
+                    icon = Icons.Default.TrendingDown,
+                    color = SmartLedgerColors.StateDanger
+                ) { onNavigate("expenses") }
+
+                QuickActionTile(
+                    modifier = Modifier.weight(1f),
+                    title = "التقارير المالية",
+                    subtitle = "الأرباح والدخل",
+                    icon = Icons.Default.Assessment,
+                    color = SmartLedgerColors.StateWarning
+                ) { onNavigate("reports") }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                QuickActionTile(
+                    modifier = Modifier.weight(1f),
+                    title = "كشوف الحساب",
+                    subtitle = "العملاء والموردون",
+                    icon = Icons.Default.AccountBalanceWallet,
+                    color = SmartLedgerColors.TextSecondary
+                ) { onNavigate("accounts") }
+
+                Spacer(modifier = Modifier.weight(1f))
+            }
+        }
+    }
 }
