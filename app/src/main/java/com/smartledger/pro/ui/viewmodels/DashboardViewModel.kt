@@ -108,5 +108,3 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         prefsRepo.updateSettings { it.copy(onboardingCompleted = true) }
     }
 }
-
-@OptIn(ExperimentalCoroutinesApi::class)
