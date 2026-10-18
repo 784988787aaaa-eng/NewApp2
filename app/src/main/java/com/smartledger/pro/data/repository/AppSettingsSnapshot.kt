@@ -30,8 +30,12 @@ data class AppSettingsSnapshot(
     val defaultLargeUnit: String = "كرتون",
     val defaultUnitFactor: Double = 24.0,
     val defaultAlertThreshold: Double = 5.0,
-    val showBarcodeField: Boolean = true,
-    val showShelfLocation: Boolean = true,
+    val showBarcodeField: Boolean = true, // legacy shared preference
+    val showShelfLocation: Boolean = true, // legacy shared preference
+    // Per-screen display preferences. Hiding a field never removes stored values.
+    val showBarcodeInInventory: Boolean = true,
+    val showShelfLocationInProduct: Boolean = true,
+    val showBarcodeInPos: Boolean = true,
     val allowNegativeStock: Boolean = true,
     // 3. المبيعات والدفع والحسابات
     val defaultPaymentType: String = "Cash",
