@@ -191,10 +191,12 @@ fun AddPurchaseSheetContent(
             )
 
             if (paymentType != "Credit" && financialAccounts.isNotEmpty()) {
-                FilterChipRow(
-                    items = listOf<Pair<Long?, String>>(null to "الصندوق الافتراضي") + financialAccounts.map { it.Id as Long? to it.Name },
-                    selectedItem = selectedFinAccountId,
-                    onItemSelected = { selectedFinAccountId = it }
+                CompactDropdownPicker(
+                    label = "الصندوق / المحفظة",
+                    options = listOf<Pair<Long?, String>>(null to "الصندوق الافتراضي") + financialAccounts.map { it.Id as Long? to it.Name },
+                    selectedOption = selectedFinAccountId,
+                    onOptionSelected = { selectedFinAccountId = it },
+                    leadingIcon = Icons.Default.AccountBalanceWallet
                 )
             }
 
