@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.SolidColor
@@ -49,6 +50,7 @@ fun InventoryScreen(
     val productCategories by viewModel.productCategories.collectAsState()
     val units by viewModel.units.collectAsState()
     val warehouses by viewModel.warehouses.collectAsState()
+    val fieldVisibility by ScreenFieldVisibilityStore.observe(LocalContext.current).collectAsState()
     var productIdForWarehouseTransfer by rememberSaveable { mutableStateOf<Long?>(null) }
     val productForWarehouseTransfer = remember(products, productIdForWarehouseTransfer) { productIdForWarehouseTransfer?.let { id -> products.firstOrNull { it.Id == id } } }
     val scope = rememberCoroutineScope()
@@ -165,7 +167,7 @@ fun InventoryScreen(
                     onQueryChange = { viewModel.onSearchQueryChanged(it) },
                     placeholder = "ابحث باسم الصنف، الباركود، أو موقع الرف...",
                     resultCount = products.size,
-                    onBarcodeClick = if (AppDesignState.showBarcodeField) {
+                    onBarcodeClick = if (fieldVisibility.inventoryBarcode) {
                         { showBarcodeScanner = true }
                     } else null
                 )
@@ -342,6 +344,8 @@ fun InventoryScreen(
                     categories = productCategories,
                     unitSuggestions = remember(units, products) { (units.map { it.Name } + products.map { it.SmallUnit } + products.mapNotNull { it.LargeUnit }).distinct() },
                     warehouseSuggestions = remember(warehouses, products) { (warehouses.map { it.Name } + products.map { it.Warehouse }).distinct() },
+                    showBarcodeField = fieldVisibility.productBarcode,
+                    showShelfLocationField = fieldVisibility.productShelf,
                     isSaving = isSavingProduct,
                     saveErrorMessage = saveProductError,
                     onOpenExistingProduct = { duplicateProduct ->
