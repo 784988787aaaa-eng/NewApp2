@@ -44,6 +44,8 @@ fun AddProductDialog(
     categories: List<CategoryEntity> = emptyList(),
     unitSuggestions: List<String> = emptyList(),
     warehouseSuggestions: List<String> = emptyList(),
+    showBarcodeField: Boolean = showBarcodeField,
+    showShelfLocationField: Boolean = showShelfLocationField,
     isSaving: Boolean = false,
     saveErrorMessage: String? = null,
     onOpenExistingProduct: (ProductStockItem) -> Unit,
@@ -183,10 +185,10 @@ fun AddProductDialog(
                 isRequired = true,
                 leadingIcon = Icons.Default.ShoppingBag,
                 autoFocusOnAppear = !isEditing && name.isBlank(),
-                nextFocusRequester = if (AppDesignState.showBarcodeField) focusBarcode else focusSmallUnit
+                nextFocusRequester = if (showBarcodeField) focusBarcode else focusSmallUnit
             )
 
-            if (AppDesignState.showBarcodeField) {
+            if (showBarcodeField) {
                 SmartTextField(
                     value = barcode,
                     onValueChange = { barcode = it },
@@ -440,12 +442,12 @@ fun AddProductDialog(
                     placeholder = "5",
                     keyboardType = KeyboardType.Decimal,
                     focusRequester = focusThreshold,
-                    nextFocusRequester = if (AppDesignState.showShelfLocation) focusShelf else null,
-                    imeAction = if (AppDesignState.showShelfLocation) ImeAction.Next else ImeAction.Done,
+                    nextFocusRequester = if (showShelfLocationField) focusShelf else null,
+                    imeAction = if (showShelfLocationField) ImeAction.Next else ImeAction.Done,
                     modifier = Modifier.weight(1f)
                 )
 
-                if (AppDesignState.showShelfLocation) {
+                if (showShelfLocationField) {
                     SmartTextField(
                         value = shelfLocation,
                         onValueChange = { shelfLocation = it },
