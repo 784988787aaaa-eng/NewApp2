@@ -166,11 +166,10 @@ fun InventoryScreen(
                 CompactSearchBar(
                     query = searchQuery,
                     onQueryChange = { viewModel.onSearchQueryChanged(it) },
-                    placeholder = when {
-                        fieldVisibility.inventoryBarcode && fieldVisibility.productShelf -> "ابحث بالاسم أو الباركود أو الرف..."
-                        fieldVisibility.inventoryBarcode -> "ابحث بالاسم أو الباركود..."
-                        fieldVisibility.productShelf -> "ابحث بالاسم أو الرف..."
-                        else -> "ابحث باسم الصنف..."
+                    placeholder = if (fieldVisibility.inventoryBarcode) {
+                        "ابحث بالاسم أو الباركود أو الرف..."
+                    } else {
+                        "ابحث بالاسم أو الرف..."
                     },
                     resultCount = products.size,
                     onBarcodeClick = if (fieldVisibility.inventoryBarcode) {
