@@ -38,6 +38,8 @@ import kotlin.math.abs
 @Composable
 fun VouchersScreen(
     onBack: (() -> Unit)? = null,
+    createAction: String? = null,
+    onCreateActionConsumed: () -> Unit = {},
     viewModel: VouchersViewModel = viewModel()
 ) {
     val accounts by viewModel.accounts.collectAsState()
@@ -47,6 +49,12 @@ fun VouchersScreen(
     val context = LocalContext.current
 
     var isReceiptMode by rememberSaveable { mutableStateOf(true) }
+    LaunchedEffect(createAction) {
+        when (createAction) {
+            "receipt" -> { isReceiptMode = true; onCreateActionConsumed() }
+            "payment" -> { isReceiptMode = false; onCreateActionConsumed() }
+        }
+    }
     var amountText by rememberSaveable { mutableStateOf("") }
     var selectedAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
     var statementText by rememberSaveable { mutableStateOf("") }
