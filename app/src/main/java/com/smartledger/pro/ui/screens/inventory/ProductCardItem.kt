@@ -42,7 +42,9 @@ fun ProductCardItem(
     onClick: () -> Unit,
     onEdit: () -> Unit,
     onQuickStocktake: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    showBarcodeField: Boolean = AppDesignState.showBarcodeField,
+    showShelfLocationField: Boolean = AppDesignState.showShelfLocation
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     val breakdown = remember(product.CurrentStockMinor, product.SmallUnit, product.LargeUnit, product.UnitFactor) {
@@ -87,10 +89,10 @@ fun ProductCardItem(
                     )
 
                     val metaParts = buildList {
-                        if (AppDesignState.showBarcodeField && !product.Barcode.isNullOrBlank()) {
+                        if (showBarcodeField && !product.Barcode.isNullOrBlank()) {
                             add("باركود: ${product.Barcode}")
                         }
-                        if (AppDesignState.showShelfLocation && !product.ShelfLocation.isNullOrBlank()) {
+                        if (showShelfLocationField && !product.ShelfLocation.isNullOrBlank()) {
                             add("رف: ${product.ShelfLocation}")
                         }
                         if (!product.LargeUnit.isNullOrBlank() && product.UnitFactor > 1.0) {
