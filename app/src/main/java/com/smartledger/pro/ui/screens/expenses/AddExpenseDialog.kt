@@ -77,11 +77,11 @@ fun AddExpenseDialog(
     val isFormValid = amount > 0.0 && statement.trim().isNotEmpty()
 
     FormSheetContainer(
-        title = if (entryType == "REVENUE") "تسجيل إيراد تشغيلي آخر" else "تسجيل نفقة تشغيلية",
-        subtitle = "اختر من تصنيفاتك وصناديقك الخاصة أو اكتب اسماً جديداً ليُحفظ تلقائياً",
+        title = if (entryType == "REVENUE") "إيراد" else "مصروف",
+        
         headerIcon = if (entryType == "REVENUE") Icons.Default.TrendingUp else Icons.Default.TrendingDown,
         onDismiss = onDismiss,
-        primaryButtonText = if (entryType == "REVENUE") "تأكيد وقيد الإيراد" else "تأكيد وقيد المصروف",
+        primaryButtonText = "حفظ",
         primaryButtonColor = if (entryType == "REVENUE") SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger,
         isPrimaryEnabled = isFormValid,
         isSaving = isSaving,
@@ -101,7 +101,7 @@ fun AddExpenseDialog(
             }
         }
     ) {
-        FormSectionGroup(title = "1. نوع العملية والمبلغ والتصنيف") {
+        FormSectionGroup(title = "النوع والمبلغ") {
             SegmentedOptionRow(
                 options = listOf(
                     "EXPENSE" to "مصروف تشغيلي (-)",
@@ -142,7 +142,7 @@ fun AddExpenseDialog(
             )
         }
 
-        FormSectionGroup(title = "2. البيان والحساب المالي (الصندوق / المحفظة)") {
+        FormSectionGroup(title = "البيان والحساب") {
             SmartTextField(
                 value = statement,
                 onValueChange = { statement = it },
