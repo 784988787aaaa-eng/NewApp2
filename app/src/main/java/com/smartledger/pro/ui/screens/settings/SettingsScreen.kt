@@ -44,8 +44,6 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by viewModel.settings.collectAsState()
-    val availableMeasurementUnits by viewModel.units.collectAsState()
-    val fieldVisibility by ScreenFieldVisibilityStore.observe(context).collectAsState()
     val identity by viewModel.businessIdentity.collectAsState()
     val indexedBackups by viewModel.indexedBackups.collectAsState()
     val deletedItems by viewModel.deletedItems.collectAsState()
@@ -143,11 +141,50 @@ fun SettingsScreen(
     Scaffold(
         containerColor = SmartLedgerColors.SurfaceWindow,
         topBar = {
-            SettingsScreenHeader(
-                searchQuery = searchQuery,
-                onSearchQueryChange = { searchQuery = it },
-                onResetDefaults = { showResetConfirmDialog = true }
-            )
+            Column(
+                modifier = Modifier
+                    .background(SmartLedgerColors.SurfacePanel)
+                    .padding(horizontal = SmartLedgerTokens.screenHorizontalPadding, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "مركز التحكم والإعدادات",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = SmartLedgerColors.TextPrimary
+                        )
+                        Text(
+                            text = "الدفتر الذكي Pro — الإصدار 3.0.0 • حفظ دائم ومشفر",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SmartLedgerColors.TextMuted
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = { showResetConfirmDialog = true },
+                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
+                        border = ButtonDefaults.outlinedButtonBorder.copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.heightIn(min = 34.dp).pressScaleEffect()
+                    ) {
+                        Icon(Icons.Default.RestartAlt, contentDescription = null, tint = SmartLedgerColors.TextSecondary, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("الافتراضيات", style = MaterialTheme.typography.labelSmall, color = SmartLedgerColors.TextSecondary, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                CompactSearchBar(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    placeholder = "ابحث في الإعدادات (منشأة، عملة، مظهر، نسخ، طابعة، بصمة، محذوفات)..."
+                )
+            }
         }
     ) { innerPadding ->
         LazyColumn(
@@ -555,79 +592,13 @@ fun SettingsScreen(
                 }
             }
 
-            if (matchesSearch("المخزون الباركود موقع الرف البيع بالسالب الحد الأدنى تنبيه الائتمان الهاتف الوحدات قطعة كرتون حقول الإدخال تخصيص إظهار إخفاء")) {
+            if (matchesSearch("المخزون الباركود موقع الرف البيع بالسالب الحد الأدنى تنبيه الائتمان الهاتف الوحدات قطعة كرتون")) {
                 item {
                     SettingsSectionCard(
                         icon = Icons.Default.Inventory2,
                         title = "6. سياسات المخزون ونقطة البيع والحقول",
                         statusSummary = "البيع بالسالب: ${if (settings.allowNegativeStock) "مسموح" else "ممنوع"} • الوحدات الافتراضية: ${settings.defaultSmallUnit} / ${settings.defaultLargeUnit} (${NumberFormatter.formatQuantity(settings.defaultUnitFactor)})"
                     ) {
-                        val smallUnitOptions = remember(availableMeasurementUnits, settings.defaultSmallUnit) {
-                            (availableMeasurementUnits.map { it.Name } + settings.defaultSmallUnit)
-                                .filter { it.isNotBlank() }
-                                .distinct()
-                                .map { it to it }
-                        }
-                        val largeUnitOptions = remember(availableMeasurementUnits, settings.defaultLargeUnit) {
-                            (availableMeasurementUnits.map { it.Name } + settings.defaultLargeUnit)
-                                .filter { it.isNotBlank() }
-                                .distinct()
-                                .map { it to it }
-                        }
-                        var defaultUnitFactorText by remember(settings.defaultUnitFactor) {
-                            mutableStateOf(NumberFormatter.formatQuantity(settings.defaultUnitFactor))
-                        }
-
-                        CompactDropdownPicker(
-                            label = "الوحدة الصغرى الافتراضية",
-                            options = smallUnitOptions,
-                            selectedOption = settings.defaultSmallUnit,
-                            onOptionSelected = { unit ->
-                                viewModel.updateSettings { it.copy(defaultSmallUnit = unit) }
-                            },
-                            leadingIcon = Icons.Default.Straighten
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        CompactDropdownPicker(
-                            label = "الوحدة الكبرى الافتراضية",
-                            options = largeUnitOptions,
-                            selectedOption = settings.defaultLargeUnit,
-                            onOptionSelected = { unit ->
-                                viewModel.updateSettings { it.copy(defaultLargeUnit = unit) }
-                            },
-                            leadingIcon = Icons.Default.Inventory2
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            SmartTextField(
-                                value = defaultUnitFactorText,
-                                onValueChange = { defaultUnitFactorText = it },
-                                label = "عدد الصغرى في الكبرى",
-                                placeholder = "24",
-                                keyboardType = KeyboardType.Decimal,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(
-                                onClick = {
-                                    val factor = NumberFormatter.parseDouble(defaultUnitFactorText, 0.0)
-                                    if (factor >= 1.0) {
-                                        viewModel.updateSettings { it.copy(defaultUnitFactor = factor) }
-                                        isBannerError = false
-                                        statusBannerText = "تم حفظ معامل التحويل"
-                                    } else {
-                                        isBannerError = true
-                                        statusBannerText = "أدخل معامل تحويل أكبر من صفر"
-                                    }
-                                }
-                            ) {
-                                Icon(Icons.Default.Check, contentDescription = "حفظ معامل التحويل", tint = SmartLedgerColors.AccentLight)
-                            }
-                        }
-                        Divider(color = SmartLedgerColors.BorderSubtle)
                         SettingSwitchRow(
                             title = "السماح بالبيع عند نفاد الكمية (الرصيد السالب)",
                             subtitle = "عند التعطيل، سيرفض النظام إصدار فاتورة مبيعات تتجاوز الرصيد المتاح في المخزن",
@@ -637,22 +608,21 @@ fun SettingsScreen(
                             }
                         )
                         Divider(color = SmartLedgerColors.BorderSubtle)
-                        SettingsFieldVisibilityControls(
-                            inventoryBarcode = fieldVisibility.inventoryBarcode,
-                            productBarcode = fieldVisibility.productBarcode,
-                            productShelf = fieldVisibility.productShelf,
-                            posBarcode = fieldVisibility.posBarcode,
-                            onInventoryBarcodeChange = { show ->
-                                ScreenFieldVisibilityStore.update(context) { it.copy(inventoryBarcode = show) }
-                            },
-                            onProductBarcodeChange = { show ->
-                                ScreenFieldVisibilityStore.update(context) { it.copy(productBarcode = show) }
-                            },
-                            onProductShelfChange = { show ->
-                                ScreenFieldVisibilityStore.update(context) { it.copy(productShelf = show) }
-                            },
-                            onPosBarcodeChange = { show ->
-                                ScreenFieldVisibilityStore.update(context) { it.copy(posBarcode = show) }
+                        SettingSwitchRow(
+                            title = "إظهار حقول وأزرار الباركود",
+                            subtitle = "عرض مسح الباركود في شريط المخزون ونقطة البيع",
+                            checked = settings.showBarcodeField,
+                            onCheckedChange = { show ->
+                                viewModel.updateSettings { it.copy(showBarcodeField = show) }
+                            }
+                        )
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        SettingSwitchRow(
+                            title = "إظهار حقل موقع الرف في المخزون",
+                            subtitle = "تحديد رقم الرف أو الممر لكل صنف",
+                            checked = settings.showShelfLocation,
+                            onCheckedChange = { show ->
+                                viewModel.updateSettings { it.copy(showShelfLocation = show) }
                             }
                         )
                         Divider(color = SmartLedgerColors.BorderSubtle)
@@ -1599,7 +1569,6 @@ fun SettingsScreen(
                 confirmText = "استعادة الافتراضيات",
                 onConfirm = {
                     viewModel.resetPreferencesToDefault()
-                    ScreenFieldVisibilityStore.reset(context)
                     showResetConfirmDialog = false
                     isBannerError = false
                     statusBannerText = "تمت استعادة الإعدادات الافتراضية مع الحفاظ على كافة السجلات المالية وإعدادات الحماية."
@@ -1607,5 +1576,93 @@ fun SettingsScreen(
                 onDismiss = { showResetConfirmDialog = false }
             )
         }
+    }
+}
+
+@Composable
+fun SettingsSectionCard(
+    icon: ImageVector,
+    title: String,
+    statusSummary: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
+        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
+        shape = RoundedCornerShape(SmartLedgerTokens.cardCorner)
+    ) {
+        Column(
+            modifier = Modifier.padding(SmartLedgerTokens.cardInternalPadding),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SmartLedgerColors.AccentSubtle),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, contentDescription = null, tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(18.dp))
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = SmartLedgerColors.TextPrimary
+                    )
+                    Text(
+                        text = statusSummary,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SmartLedgerColors.AccentLight
+                    )
+                }
+            }
+            Divider(color = SmartLedgerColors.BorderSubtle)
+            content()
+        }
+    }
+}
+
+@Composable
+fun SettingSwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = SmartLedgerColors.TextPrimary
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = SmartLedgerColors.TextMuted
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = SmartLedgerColors.TextInverse,
+                checkedTrackColor = SmartLedgerColors.AccentPrimary,
+                uncheckedThumbColor = SmartLedgerColors.TextMuted,
+                uncheckedTrackColor = SmartLedgerColors.SurfaceCardElevated
+            )
+        )
     }
 }
