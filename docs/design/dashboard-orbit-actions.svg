@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1000" viewBox="0 0 1440 1000" role="img" aria-labelledby="title desc">
 <title id="title">SmartLedger Pro — Orbit quick actions and navigation concept</title>
-<desc id="desc">Arabic RTL accounting dashboard with an expanded orbital quick action menu, western numerals, and adaptive navigation principles.</desc>
+<desc id="desc">Arabic RTL accounting dashboard with one global create button. Its choices remain fully hidden until the button is pressed. Western numerals and adaptive navigation.</desc>
 <defs>
  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0A1220"/><stop offset="1" stop-color="#132238"/></linearGradient>
  <linearGradient id="orb" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#38BDF8"/><stop offset="1" stop-color="#2563EB"/></linearGradient>
@@ -49,8 +49,8 @@
 </g>
 <!-- orbit actions overlay -->
 <rect x="48" y="692" width="1150" height="250" rx="22" fill="#101B2B" stroke="#2A3D55" stroke-dasharray="5 7"/>
-<text x="1160" y="728" text-anchor="end" class="t h">إضافة ذكية — قائمة مدارية</text>
-<text x="1160" y="754" text-anchor="end" class="m s">قائمة تظهر عند الطلب وتختفي بعد الاختيار أو اللمس خارجها</text>
+<text x="1160" y="728" text-anchor="end" class="t h">إضافة موحدة</text>
+<text x="1160" y="754" text-anchor="end" class="m s">تظهر الخيارات عند الضغط وتختفي بعد الاختيار أو الإغلاق</text>
 <!-- orbital paths -->
 <ellipse cx="632" cy="835" rx="350" ry="76" fill="none" stroke="#294A66" stroke-width="1.5" stroke-dasharray="5 8"/>
 <ellipse cx="632" cy="835" rx="250" ry="54" fill="none" stroke="#294A66" stroke-width="1.2" stroke-dasharray="4 8"/>
