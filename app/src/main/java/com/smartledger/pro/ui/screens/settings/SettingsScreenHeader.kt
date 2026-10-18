@@ -90,7 +90,7 @@ internal fun SettingsScreenHeader(
         CompactSearchBar(
             query = searchQuery,
             onQueryChange = onSearchQueryChange,
-            placeholder = "ابحث في الإعدادات (منشأة، عملة، مظهر، نسخ، طابعة، بصمة، محذوفات)..."
+            placeholder = "ابحث في الإعدادات (الحقول، الباركود، المخزون، المنشأة، العملة، المظهر، النسخ، الطابعة)..."
         )
     }
 }
