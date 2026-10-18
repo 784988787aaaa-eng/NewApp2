@@ -88,11 +88,11 @@ fun CheckoutSheetContent(
     val canSubmit = finalTotal > 0.0 && !requiresNamedCustomer && !isDiscountExceeding && !isPartialInvalid
 
     FormSheetContainer(
-        title = "سداد وترحيل الفاتورة",
+        title = "إتمام البيع",
         subtitle = "العميل: ${selectedCustomer?.PersonName ?: "عميل نقدي عام"}",
         headerIcon = Icons.Default.PointOfSale,
         onDismiss = onClose,
-        primaryButtonText = "تأكيد وترحيل الفاتورة",
+        primaryButtonText = "تأكيد البيع",
         isPrimaryEnabled = canSubmit,
         isSaving = isSaving,
         errorMessage = errorMessage,
@@ -159,7 +159,7 @@ fun CheckoutSheetContent(
         }
 
         if (paymentType != "Credit" && financialAccounts.isNotEmpty()) {
-            FormSectionGroup(title = "الصندوق / المحفظة المستلمة للنقد") {
+            FormSectionGroup(title = "الصندوق المستلم") {
                 FilterChipRow(
                     items = listOf<Pair<Long?, String>>(null to "الصندوق الافتراضي") + financialAccounts.map { it.Id as Long? to it.Name },
                     selectedItem = selectedFinAccountId,
@@ -168,7 +168,7 @@ fun CheckoutSheetContent(
             }
         }
 
-        FormSectionGroup(title = "الخصم والمبالغ المستلمة") {
+        FormSectionGroup(title = "الخصم والسداد") {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 SmartTextField(
                     value = discountText,
