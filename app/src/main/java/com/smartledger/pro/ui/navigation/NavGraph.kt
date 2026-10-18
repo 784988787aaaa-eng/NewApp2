@@ -12,6 +12,8 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -61,6 +63,7 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector)
 fun MainAppScaffold(navController: NavHostController = rememberNavController()) {
     var privacyModeEnabled by rememberSaveable { mutableStateOf(false) }
     var pendingCreateAction by rememberSaveable { mutableStateOf<String?>(null) }
+    var createMenuExpanded by rememberSaveable { mutableStateOf(false) }
 
     fun openCreateAction(action: String) {
         pendingCreateAction = when (action) {
@@ -92,7 +95,14 @@ fun MainAppScaffold(navController: NavHostController = rememberNavController()) 
     Scaffold(
         containerColor = SmartLedgerColors.SurfaceWindow,
         floatingActionButton = {
-            GlobalCreateActionMenu(onActionSelected = ::openCreateAction)
+            GlobalCreateActionMenu(
+                expanded = createMenuExpanded,
+                onExpandedChange = { createMenuExpanded = it },
+                onActionSelected = { action ->
+                    createMenuExpanded = false
+                    openCreateAction(action)
+                }
+            )
         },
         bottomBar = {
             val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -145,10 +155,11 @@ fun MainAppScaffold(navController: NavHostController = rememberNavController()) 
     ) { innerPadding ->
         val durationMs = if (AppSensoryConfig.reduceMotion) 0 else 210
 
-        NavHost(
+        Box(modifier = Modifier.fillMaxSize()) {
+            NavHost(
             navController = navController,
             startDestination = Screen.Dashboard.route,
-            modifier = Modifier.padding(innerPadding),
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
             enterTransition = {
                 if (durationMs == 0) EnterTransition.None
                 else slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(durationMs)) + fadeIn(tween(durationMs))
@@ -234,6 +245,18 @@ fun MainAppScaffold(navController: NavHostController = rememberNavController()) 
             composable(Screen.Settings.route) {
                 SettingsScreen()
             }
+            }
+
+            if (createMenuExpanded) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { createMenuExpanded = false }
+                )
+            }
         }
     }
 }
@@ -247,9 +270,10 @@ private data class GlobalCreateOption(
 
 @Composable
 private fun GlobalCreateActionMenu(
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     onActionSelected: (String) -> Unit
 ) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
     val columns = when {
         configuration.screenHeightDp < 520 -> 2
@@ -273,7 +297,7 @@ private fun GlobalCreateActionMenu(
         )
     }
 
-    BackHandler(enabled = expanded) { expanded = false }
+    BackHandler(enabled = expanded) { onExpandedChange(false) }
 
     Box(modifier = Modifier.size(56.dp)) {
         options.forEachIndexed { index, option ->
@@ -303,7 +327,6 @@ private fun GlobalCreateActionMenu(
                         color = SmartLedgerColors.SurfaceCardElevated,
                         border = BorderStroke(1.dp, SmartLedgerColors.AccentPrimary.copy(alpha = 0.72f)),
                         onClick = {
-                            expanded = false
                             onActionSelected(option.key)
                         }
                     ) {
@@ -335,7 +358,7 @@ private fun GlobalCreateActionMenu(
         }
 
         FloatingActionButton(
-            onClick = { expanded = !expanded },
+            onClick = { onExpandedChange(!expanded) },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .size(56.dp)
