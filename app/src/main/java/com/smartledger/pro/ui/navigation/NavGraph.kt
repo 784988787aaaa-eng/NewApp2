@@ -138,6 +138,7 @@ fun MainAppScaffold(navController: NavHostController = rememberNavController()) 
                             unselectedTextColor = SmartLedgerColors.TextMuted
                         ),
                         onClick = {
+                            createMenuExpanded = false
                             if (currentRoute != screen.route) {
                                 navController.navigate(screen.route) {
                                     popUpTo(navController.graph.findStartDestination().id) {
@@ -328,15 +329,15 @@ private fun GlobalCreateActionMenu(
                             .semantics { contentDescription = option.title },
                         shape = CircleShape,
                         color = SmartLedgerColors.SurfaceCardElevated,
-                        border = BorderStroke(1.dp, SmartLedgerColors.AccentPrimary.copy(alpha = 0.72f)),
-                        onClick = {
-                            onActionSelected(option.key)
-                        }
+                        border = BorderStroke(1.dp, SmartLedgerColors.AccentPrimary.copy(alpha = 0.72f))
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
+                        IconButton(
+                            onClick = { onActionSelected(option.key) },
+                            modifier = Modifier.fillMaxSize()
+                        ) {
                             Icon(
                                 imageVector = option.icon,
-                                contentDescription = null,
+                                contentDescription = option.title,
                                 tint = SmartLedgerColors.AccentLight,
                                 modifier = Modifier.size(24.dp)
                             )
