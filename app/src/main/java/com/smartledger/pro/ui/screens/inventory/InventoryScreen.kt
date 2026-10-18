@@ -246,7 +246,9 @@ fun InventoryScreen(
                             initialStockCountProductId = product.Id
                             showRapidStockCountSheet = true
                         },
-                        onDelete = { productIdToDelete = product.Id }
+                        onDelete = { productIdToDelete = product.Id },
+                        showBarcodeField = fieldVisibility.productBarcode,
+                        showShelfLocationField = fieldVisibility.productShelf
                     )
                 }
             }
@@ -300,7 +302,9 @@ fun InventoryScreen(
                             productIdForWarehouseTransfer = pId
                         }
                     } else null,
-                    onClose = { selectedProductIdForDetails = null }
+                    onClose = { selectedProductIdForDetails = null },
+                    showBarcodeField = fieldVisibility.productBarcode,
+                    showShelfLocationField = fieldVisibility.productShelf
                 )
             }
         }
