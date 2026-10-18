@@ -148,10 +148,12 @@ fun AddPurchaseSheetContent(
                 listOf<Pair<AccountBalanceSummary?, String>>(null to "مورد نقدي عام") +
                     suppliers.map { it to it.PersonName }
             }
-            FilterChipRow(
-                items = supplierOptions,
-                selectedItem = selectedSupplier,
-                onItemSelected = { selectedSupplier = it }
+            CompactDropdownPicker(
+                label = "المورد",
+                options = supplierOptions,
+                selectedOption = selectedSupplier,
+                onOptionSelected = { selectedSupplier = it },
+                leadingIcon = Icons.Default.Person
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
