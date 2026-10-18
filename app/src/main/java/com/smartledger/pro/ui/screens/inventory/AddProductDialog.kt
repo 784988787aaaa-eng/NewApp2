@@ -221,10 +221,7 @@ fun AddProductDialog(
                 }
                 var warehouseMenuExpanded by rememberSaveable(stateKey) { mutableStateOf(false) }
 
-                ExposedDropdownMenuBox(
-                    expanded = warehouseMenuExpanded,
-                    onExpandedChange = { warehouseMenuExpanded = it && availableWarehouses.isNotEmpty() }
-                ) {
+                Box(modifier = Modifier.fillMaxWidth()) {
                     OutlinedTextField(
                         value = warehouse,
                         onValueChange = {},
@@ -233,20 +230,24 @@ fun AddProductDialog(
                         label = { Text("المخزن") },
                         leadingIcon = { Icon(Icons.Default.Warehouse, contentDescription = null) },
                         trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = warehouseMenuExpanded)
+                            Icon(
+                                imageVector = if (warehouseMenuExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = null
+                            )
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .menuAnchor(),
+                            .clickable { warehouseMenuExpanded = availableWarehouses.isNotEmpty() },
                         shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = SmartLedgerColors.AccentPrimary,
                             unfocusedBorderColor = SmartLedgerColors.BorderSubtle
                         )
                     )
-                    ExposedDropdownMenu(
+                    DropdownMenu(
                         expanded = warehouseMenuExpanded,
-                        onDismissRequest = { warehouseMenuExpanded = false }
+                        onDismissRequest = { warehouseMenuExpanded = false },
+                        modifier = Modifier.widthIn(min = 180.dp, max = 320.dp)
                     ) {
                         availableWarehouses.forEach { option ->
                             DropdownMenuItem(
