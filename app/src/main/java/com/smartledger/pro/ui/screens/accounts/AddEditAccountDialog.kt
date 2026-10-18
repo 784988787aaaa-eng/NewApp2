@@ -80,11 +80,11 @@ fun AddEditAccountDialog(
         note != (existingAccount?.Note ?: "")
 
     FormSheetContainer(
-        title = if (isEditing) "تعديل بيانات الحساب" else "فتح حساب مالي جديد",
-        subtitle = "تحديد الدفتر وبيانات التواصل والرصيد الافتتاحي وسقف الائتمان",
+        title = if (isEditing) "تعديل الحساب" else "حساب جديد",
+        
         headerIcon = Icons.Default.PersonAdd,
         onDismiss = onDismiss,
-        primaryButtonText = if (isEditing) "حفظ التعديلات" else "اعتماد وفتح الحساب",
+        primaryButtonText = "حفظ",
         isPrimaryEnabled = isFormValid,
         isSaving = isSaving,
         hasUnsavedChanges = hasUnsavedChanges,
@@ -106,7 +106,7 @@ fun AddEditAccountDialog(
             }
         }
     ) {
-        FormSectionGroup(title = "1. الدفتر والاسم والاتصال") {
+        FormSectionGroup(title = "البيانات الأساسية") {
             if (books.isNotEmpty()) {
                 FilterChipRow(
                     items = books.map { it.Id to it.Name },
@@ -145,7 +145,7 @@ fun AddEditAccountDialog(
         }
 
         if (!isEditing) {
-            FormSectionGroup(title = "2. الرصيد الافتتاحي التأسيسي (اختياري)") {
+            FormSectionGroup(title = "الرصيد الافتتاحي") {
                 SegmentedOptionRow(
                     options = listOf(
                         true to "عليه / لنا (مدين)",
@@ -168,7 +168,7 @@ fun AddEditAccountDialog(
             }
         }
 
-        FormSectionGroup(title = if (isEditing) "2. الضوابط الائتمانية والملاحظات" else "3. الضوابط الائتمانية والملاحظات") {
+        FormSectionGroup(title = if (isEditing) "الائتمان والملاحظات" else "الائتمان والملاحظات") {
             SmartTextField(
                 value = creditLimitText,
                 onValueChange = { creditLimitText = it },
