@@ -247,7 +247,7 @@ fun InventoryScreen(
                             showRapidStockCountSheet = true
                         },
                         onDelete = { productIdToDelete = product.Id },
-                        showBarcodeField = fieldVisibility.productBarcode,
+                        showBarcodeField = fieldVisibility.inventoryBarcode,
                         showShelfLocationField = fieldVisibility.productShelf
                     )
                 }
@@ -353,7 +353,7 @@ fun InventoryScreen(
                     categories = productCategories,
                     unitSuggestions = remember(units, products) { (units.map { it.Name } + products.map { it.SmallUnit } + products.mapNotNull { it.LargeUnit }).distinct() },
                     warehouseSuggestions = remember(warehouses, products) { (warehouses.map { it.Name } + products.map { it.Warehouse }).distinct() },
-                    showBarcodeField = fieldVisibility.inventoryBarcode,
+                    showBarcodeField = fieldVisibility.productBarcode,
                     showShelfLocationField = fieldVisibility.productShelf,
                     isSaving = isSavingProduct,
                     saveErrorMessage = saveProductError,
