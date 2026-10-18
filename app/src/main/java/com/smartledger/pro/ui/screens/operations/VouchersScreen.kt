@@ -284,10 +284,12 @@ fun VouchersScreen(
                                 listOf<Pair<Long?, String>>(null to "الصندوق الافتراضي") +
                                     financialAccounts.map { it.Id as Long? to it.Name }
                             }
-                            FilterChipRow(
-                                items = accOptions,
-                                selectedItem = selectedFinancialAccountId,
-                                onItemSelected = { selectedFinancialAccountId = it }
+                            CompactDropdownPicker(
+                                label = "الصندوق / المحفظة",
+                                options = accOptions,
+                                selectedOption = selectedFinancialAccountId,
+                                onOptionSelected = { selectedFinancialAccountId = it },
+                                leadingIcon = Icons.Default.AccountBalanceWallet
                             )
                         }
 
