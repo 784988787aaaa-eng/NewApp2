@@ -238,7 +238,7 @@ fun AddProductDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .menuAnchor(),
-                        shape = RoundedCornerShape(SmartLedgerTokens.fieldCorner),
+                        shape = RoundedCornerShape(SmartLedgerTokens.buttonCorner),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = SmartLedgerColors.AccentPrimary,
                             unfocusedBorderColor = SmartLedgerColors.BorderSubtle
