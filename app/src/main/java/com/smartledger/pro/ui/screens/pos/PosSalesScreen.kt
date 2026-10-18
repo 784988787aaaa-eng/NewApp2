@@ -32,6 +32,7 @@ import com.smartledger.pro.data.local.entity.InvoiceEntity
 import com.smartledger.pro.data.local.entity.InvoiceLineEntity
 import com.smartledger.pro.domain.model.UnitConversionEngine
 import com.smartledger.pro.ui.components.*
+import com.smartledger.pro.ui.screens.settings.ScreenFieldVisibilityStore
 import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
 import com.smartledger.pro.ui.theme.SmartLedgerTokens
@@ -52,6 +53,7 @@ fun PosSalesScreen(
     val recentInvoices by viewModel.recentInvoices.collectAsState()
     val identity by viewModel.businessIdentity.collectAsState()
     val settings by viewModel.settings.collectAsState()
+    val fieldVisibility by ScreenFieldVisibilityStore.observe(context).collectAsState()
     val financialAccounts by viewModel.financialAccounts.collectAsState()
 
     val cartLines = viewModel.cartLines
@@ -227,7 +229,7 @@ fun PosSalesScreen(
                     query = quickSearchQuery,
                     onQueryChange = { quickSearchQuery = it },
                     placeholder = "ابحث عن صنف لإضافته فوراً أو امسح الباركود...",
-                    onBarcodeClick = if (AppDesignState.showBarcodeField) {
+                    onBarcodeClick = if (fieldVisibility.posBarcode) {
                         { showBarcodeScanner = true }
                     } else null
                 )
