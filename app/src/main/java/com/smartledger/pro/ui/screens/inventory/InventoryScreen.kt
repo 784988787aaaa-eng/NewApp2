@@ -30,6 +30,7 @@ import com.smartledger.pro.data.local.entity.CategoryEntity
 import com.smartledger.pro.data.local.entity.WarehouseEntity
 import com.smartledger.pro.domain.model.UnitConversionEngine
 import com.smartledger.pro.ui.components.*
+import com.smartledger.pro.ui.screens.settings.ScreenFieldVisibilityStore
 import com.smartledger.pro.ui.theme.AppDesignState
 import com.smartledger.pro.ui.theme.SmartLedgerColors
 import com.smartledger.pro.ui.theme.SmartLedgerTokens
