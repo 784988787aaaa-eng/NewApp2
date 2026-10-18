@@ -42,6 +42,7 @@ import java.io.IOException
 import java.util.Locale
 
 @Composable
+@Composable
 fun ReportMetricRow(title: String, amount: Double, color: Color, isBold: Boolean = false) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),

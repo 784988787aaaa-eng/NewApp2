@@ -442,5 +442,3 @@ fun ReportsScreen(
         }
     }
 }
-
-@Composable
