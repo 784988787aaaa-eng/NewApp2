@@ -44,6 +44,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by viewModel.settings.collectAsState()
+    val fieldVisibility by ScreenFieldVisibilityStore.observe(context).collectAsState()
     val identity by viewModel.businessIdentity.collectAsState()
     val indexedBackups by viewModel.indexedBackups.collectAsState()
     val deletedItems by viewModel.deletedItems.collectAsState()
@@ -570,20 +571,34 @@ fun SettingsScreen(
                         )
                         Divider(color = SmartLedgerColors.BorderSubtle)
                         SettingSwitchRow(
-                            title = "إظهار حقول وأزرار الباركود",
-                            subtitle = "عرض مسح الباركود في شريط المخزون ونقطة البيع",
-                            checked = settings.showBarcodeField,
+                            title = "الباركود في المخزون",
+                            checked = fieldVisibility.inventoryBarcode,
                             onCheckedChange = { show ->
-                                viewModel.updateSettings { it.copy(showBarcodeField = show) }
+                                ScreenFieldVisibilityStore.update(context) { it.copy(inventoryBarcode = show) }
                             }
                         )
                         Divider(color = SmartLedgerColors.BorderSubtle)
                         SettingSwitchRow(
-                            title = "إظهار حقل موقع الرف في المخزون",
-                            subtitle = "تحديد رقم الرف أو الممر لكل صنف",
-                            checked = settings.showShelfLocation,
+                            title = "الباركود في بطاقة الصنف",
+                            checked = fieldVisibility.productBarcode,
                             onCheckedChange = { show ->
-                                viewModel.updateSettings { it.copy(showShelfLocation = show) }
+                                ScreenFieldVisibilityStore.update(context) { it.copy(productBarcode = show) }
+                            }
+                        )
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        SettingSwitchRow(
+                            title = "موقع الرف في بطاقة الصنف",
+                            checked = fieldVisibility.productShelf,
+                            onCheckedChange = { show ->
+                                ScreenFieldVisibilityStore.update(context) { it.copy(productShelf = show) }
+                            }
+                        )
+                        Divider(color = SmartLedgerColors.BorderSubtle)
+                        SettingSwitchRow(
+                            title = "الباركود في نقطة البيع",
+                            checked = fieldVisibility.posBarcode,
+                            onCheckedChange = { show ->
+                                ScreenFieldVisibilityStore.update(context) { it.copy(posBarcode = show) }
                             }
                         )
                         Divider(color = SmartLedgerColors.BorderSubtle)
@@ -1530,6 +1545,7 @@ fun SettingsScreen(
                 confirmText = "استعادة الافتراضيات",
                 onConfirm = {
                     viewModel.resetPreferencesToDefault()
+                    ScreenFieldVisibilityStore.reset(context)
                     showResetConfirmDialog = false
                     isBannerError = false
                     statusBannerText = "تمت استعادة الإعدادات الافتراضية مع الحفاظ على كافة السجلات المالية وإعدادات الحماية."
