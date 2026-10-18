@@ -87,11 +87,11 @@ fun AddPurchaseSheetContent(
     val isFormValid = selectedProduct != null && qty > 0.0 && unitCost > 0.0 && !requiresSupplier && !isPartialInvalid
 
     FormSheetContainer(
-        title = "تسجيل فاتورة مشتريات وتوريد",
-        subtitle = "إدخال البضاعة للمخزن بالوحدة الصغرى أو الكبرى وتحديث حساب المورد",
+        title = "فاتورة شراء",
+        
         headerIcon = Icons.Default.LocalShipping,
         onDismiss = onDismiss,
-        primaryButtonText = "تأكيد وتوريد الفاتورة",
+        primaryButtonText = "حفظ وتوريد",
         isPrimaryEnabled = isFormValid,
         isSaving = isSaving,
         errorMessage = errorMessage,
@@ -103,7 +103,7 @@ fun AddPurchaseSheetContent(
             }
         }
     ) {
-        FormSectionGroup(title = "1. الصنف المراد توريده ووحدة الشراء") {
+        FormSectionGroup(title = "الصنف والوحدة") {
             if (products.isEmpty()) {
                 Text("لا توجد أصناف معرفة بعد. أضف الصنف أولاً من شاشة المخزون.", color = SmartLedgerColors.StateDanger, style = MaterialTheme.typography.bodyMedium)
             } else {
@@ -143,7 +143,7 @@ fun AddPurchaseSheetContent(
         val prod = selectedProduct
         val unitName = if (useMajorUnit && !prod?.LargeUnit.isNullOrBlank()) prod!!.LargeUnit!! else (prod?.SmallUnit ?: "وحدة")
 
-        FormSectionGroup(title = "2. المورد والكمية والتكلفة") {
+        FormSectionGroup(title = "المورد والكمية") {
             val supplierOptions = remember(suppliers) {
                 listOf<Pair<AccountBalanceSummary?, String>>(null to "مورد نقدي عام") +
                     suppliers.map { it to it.PersonName }
@@ -175,7 +175,7 @@ fun AddPurchaseSheetContent(
         }
 
         FormSectionGroup(
-            title = "3. طريقة السداد للمورد",
+            title = "السداد",
             badgeText = if (total > 0.0) "الإجمالي: ${NumberFormatter.formatCurrency(total, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}" else null
         ) {
             SegmentedOptionRow(
