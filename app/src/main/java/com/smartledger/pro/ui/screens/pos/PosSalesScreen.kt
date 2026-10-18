@@ -228,7 +228,7 @@ fun PosSalesScreen(
                 CompactSearchBar(
                     query = quickSearchQuery,
                     onQueryChange = { quickSearchQuery = it },
-                    placeholder = "ابحث عن صنف لإضافته فوراً أو امسح الباركود...",
+                    placeholder = if (fieldVisibility.posBarcode) "ابحث عن صنف أو امسح الباركود..." else "ابحث عن صنف...",
                     onBarcodeClick = if (fieldVisibility.posBarcode) {
                         { showBarcodeScanner = true }
                     } else null
