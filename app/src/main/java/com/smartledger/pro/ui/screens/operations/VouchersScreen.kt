@@ -38,6 +38,8 @@ import kotlin.math.abs
 @Composable
 fun VouchersScreen(
     onBack: (() -> Unit)? = null,
+    createAction: String? = null,
+    onCreateActionConsumed: () -> Unit = {},
     viewModel: VouchersViewModel = viewModel()
 ) {
     val accounts by viewModel.accounts.collectAsState()
@@ -47,6 +49,12 @@ fun VouchersScreen(
     val context = LocalContext.current
 
     var isReceiptMode by rememberSaveable { mutableStateOf(true) }
+    LaunchedEffect(createAction) {
+        when (createAction) {
+            "receipt" -> { isReceiptMode = true; onCreateActionConsumed() }
+            "payment" -> { isReceiptMode = false; onCreateActionConsumed() }
+        }
+    }
     var amountText by rememberSaveable { mutableStateOf("") }
     var selectedAccountId by rememberSaveable { mutableStateOf<Long?>(null) }
     var statementText by rememberSaveable { mutableStateOf("") }
@@ -276,10 +284,12 @@ fun VouchersScreen(
                                 listOf<Pair<Long?, String>>(null to "الصندوق الافتراضي") +
                                     financialAccounts.map { it.Id as Long? to it.Name }
                             }
-                            FilterChipRow(
-                                items = accOptions,
-                                selectedItem = selectedFinancialAccountId,
-                                onItemSelected = { selectedFinancialAccountId = it }
+                            CompactDropdownPicker(
+                                label = "الصندوق / المحفظة",
+                                options = accOptions,
+                                selectedOption = selectedFinancialAccountId,
+                                onOptionSelected = { selectedFinancialAccountId = it },
+                                leadingIcon = Icons.Default.AccountBalanceWallet
                             )
                         }
 
@@ -356,58 +366,7 @@ fun VouchersScreen(
                 )
             }
 
-            if (recentVouchers.isEmpty()) {
-                item {
-                    Text("لا توجد سندات مرحلة بعد.", style = MaterialTheme.typography.bodyMedium, color = SmartLedgerColors.TextMuted)
-                }
-            } else {
-                items(recentVouchers, key = { it.Id }) { v ->
-                    val isRec = v.Type == "Receive"
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = SmartLedgerColors.SurfaceCard),
-                        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(SmartLedgerColors.BorderSubtle)),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "${v.PersonName ?: "حساب"} • ${if (isRec) "سند قبض" else "سند صرف"}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = SmartLedgerColors.TextPrimary
-                                )
-                                Text(
-                                    text = "${v.Note ?: ""} • ${v.OccurredAt.take(16)}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = SmartLedgerColors.TextMuted
-                                )
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = NumberFormatter.formatCurrency(v.Amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isRec) SmartLedgerColors.StateSuccess else SmartLedgerColors.StateDanger
-                                )
-                                IconButton(
-                                    onClick = {
-                                        val shareMsg = "${if (isRec) "إيصال سند قبض" else "إيصال سند صرف"}\nالحساب: ${v.PersonName ?: ""}\nالمبلغ: ${NumberFormatter.formatCurrency(v.Amount, AppDesignState.currencySymbol, AppDesignState.decimalPlaces)}\nالبيان: ${v.Note ?: ""}\nالتاريخ: ${v.OccurredAt.take(16)}"
-                                        ThermalPrinterHelper.shareTextSafely(context, "إيصال سند", shareMsg)
-                                    },
-                                    modifier = Modifier.size(30.dp)
-                                ) {
-                                    Icon(Icons.Default.Share, contentDescription = "مشاركة السند", tint = SmartLedgerColors.AccentLight, modifier = Modifier.size(16.dp))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            recentVouchersItems(recentVouchers, context)
 
             item { Spacer(modifier = Modifier.height(20.dp)) }
         }
