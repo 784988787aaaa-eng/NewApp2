@@ -68,10 +68,6 @@ fun AddExpenseDialog(
     val categorySuggestions = remember(domainCategories) {
         domainCategories.map { HierarchicalCategoryValidator.formatCategoryPath(it.Id, domainCategories) }
     }
-    val sourceSuggestions = remember(financialAccounts) {
-        financialAccounts.map { it.Name }
-    }
-
     val focusStatement = remember { FocusRequester() }
     val amount = NumberFormatter.parseDouble(amountText, 0.0)
     val isFormValid = amount > 0.0 && statement.trim().isNotEmpty()
@@ -153,17 +149,15 @@ fun AddExpenseDialog(
                 imeAction = ImeAction.Next
             )
 
-            SmartAutocompleteField(
-                value = sourceText,
-                onValueChange = { typed ->
-                    sourceText = typed
-                    selectedAccountId = financialAccounts.firstOrNull { it.Name.equals(typed.trim(), ignoreCase = true) }?.Id
+            CompactDropdownPicker(
+                label = if (entryType == "REVENUE") "الحساب المستلم" else "حساب السداد",
+                options = listOf<Pair<Long?, String>>(null to "صندوق عام") + financialAccounts.map { it.Id as Long? to it.Name },
+                selectedOption = selectedAccountId,
+                onOptionSelected = { accountId ->
+                    selectedAccountId = accountId
+                    sourceText = financialAccounts.firstOrNull { it.Id == accountId }?.Name ?: "صندوق عام"
                 },
-                label = if (entryType == "REVENUE") "الحساب المالي المستلم (صندوق / محفظة / بنك)" else "الحساب المالي المسدد منه (صندوق / محفظة / بنك)",
-                placeholder = "اكتب أو اختر الصندوق أو المحفظة...",
-                suggestions = sourceSuggestions,
-                leadingIcon = Icons.Default.AccountBalanceWallet,
-                imeAction = ImeAction.Done
+                leadingIcon = Icons.Default.AccountBalanceWallet
             )
         }
     }
