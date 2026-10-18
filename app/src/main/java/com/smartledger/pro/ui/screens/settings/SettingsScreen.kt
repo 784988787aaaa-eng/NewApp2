@@ -639,6 +639,7 @@ fun SettingsScreen(
                         Divider(color = SmartLedgerColors.BorderSubtle)
                         SettingSwitchRow(
                             title = "الباركود في المخزون",
+                            subtitle = "",
                             checked = fieldVisibility.inventoryBarcode,
                             onCheckedChange = { show ->
                                 ScreenFieldVisibilityStore.update(context) { it.copy(inventoryBarcode = show) }
@@ -647,6 +648,7 @@ fun SettingsScreen(
                         Divider(color = SmartLedgerColors.BorderSubtle)
                         SettingSwitchRow(
                             title = "الباركود في بطاقة الصنف",
+                            subtitle = "",
                             checked = fieldVisibility.productBarcode,
                             onCheckedChange = { show ->
                                 ScreenFieldVisibilityStore.update(context) { it.copy(productBarcode = show) }
@@ -655,6 +657,7 @@ fun SettingsScreen(
                         Divider(color = SmartLedgerColors.BorderSubtle)
                         SettingSwitchRow(
                             title = "موقع الرف في بطاقة الصنف",
+                            subtitle = "",
                             checked = fieldVisibility.productShelf,
                             onCheckedChange = { show ->
                                 ScreenFieldVisibilityStore.update(context) { it.copy(productShelf = show) }
@@ -663,6 +666,7 @@ fun SettingsScreen(
                         Divider(color = SmartLedgerColors.BorderSubtle)
                         SettingSwitchRow(
                             title = "الباركود في نقطة البيع",
+                            subtitle = "",
                             checked = fieldVisibility.posBarcode,
                             onCheckedChange = { show ->
                                 ScreenFieldVisibilityStore.update(context) { it.copy(posBarcode = show) }
