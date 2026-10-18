@@ -43,7 +43,9 @@ fun ProductDetailsSheetContent(
     onEdit: () -> Unit,
     onAdjustStock: () -> Unit,
     onTransferWarehouse: (() -> Unit)? = null,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    showBarcodeField: Boolean = AppDesignState.showBarcodeField,
+    showShelfLocationField: Boolean = AppDesignState.showShelfLocation
 ) {
     val movementsFlow = remember(product.Id) { viewModel.getMovementsForProduct(product.Id) }
     val movements by movementsFlow.collectAsState(initial = emptyList())
@@ -59,8 +61,11 @@ fun ProductDetailsSheetContent(
 
     FormSheetContainer(
         title = product.Name,
-        subtitle = "باركود: ${product.Barcode ?: "غير محدد"} • ${product.Warehouse}" +
-            if (!product.ShelfLocation.isNullOrBlank()) " • رف: ${product.ShelfLocation}" else "",
+        subtitle = buildList {
+            if (showBarcodeField && !product.Barcode.isNullOrBlank()) add("باركود: ${product.Barcode}")
+            add(product.Warehouse)
+            if (showShelfLocationField && !product.ShelfLocation.isNullOrBlank()) add("رف: ${product.ShelfLocation}")
+        }.joinToString(" • "),
         headerIcon = Icons.Default.Inventory2,
         onDismiss = onClose,
         primaryButtonText = "تعديل بيانات الصنف",
