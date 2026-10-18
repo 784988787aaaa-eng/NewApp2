@@ -175,5 +175,3 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         )
     }
 }
-
-@OptIn(ExperimentalCoroutinesApi::class)
