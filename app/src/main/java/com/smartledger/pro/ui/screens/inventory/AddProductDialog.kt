@@ -139,11 +139,10 @@ fun AddProductDialog(
         retailPriceText != (if (existingProduct != null) NumberFormatter.formatQuantity(existingProduct.RetailPrice) else "")
 
     FormSheetContainer(
-        title = if (isEditing) "تعديل بيانات الصنف بالمخزن" else "تعريف صنف جديد بالمخزن",
-        subtitle = "ضبط الوحدات الكبرى والصغرى ومعامل التحويل وأسعار البيع",
+        title = if (isEditing) "تعديل الصنف" else "صنف جديد",
         headerIcon = Icons.Default.Inventory2,
         onDismiss = onDismiss,
-        primaryButtonText = if (isEditing) "حفظ التعديلات" else "تأكيد وحفظ الصنف",
+        primaryButtonText = if (isEditing) "حفظ التعديلات" else "حفظ",
         isPrimaryEnabled = isFormValid,
         isSaving = isSaving,
         hasUnsavedChanges = hasUnsavedChanges,
@@ -217,14 +216,50 @@ fun AddProductDialog(
                     )
                 }
 
-                SmartAutocompleteField(
-                    value = warehouse,
-                    onValueChange = { warehouse = it },
-                    label = "المخزن / المستودع",
-                    placeholder = "اختر أو اكتب اسم المخزن...",
-                    suggestions = warehouseSuggestions,
-                    leadingIcon = Icons.Default.Warehouse
-                )
+                val availableWarehouses = remember(warehouseSuggestions) {
+                    warehouseSuggestions.map(String::trim).filter(String::isNotBlank).distinct()
+                }
+                var warehouseMenuExpanded by rememberSaveable(stateKey) { mutableStateOf(false) }
+
+                ExposedDropdownMenuBox(
+                    expanded = warehouseMenuExpanded,
+                    onExpandedChange = { warehouseMenuExpanded = it && availableWarehouses.isNotEmpty() }
+                ) {
+                    OutlinedTextField(
+                        value = warehouse,
+                        onValueChange = {},
+                        readOnly = true,
+                        singleLine = true,
+                        label = { Text("المخزن") },
+                        leadingIcon = { Icon(Icons.Default.Warehouse, contentDescription = null) },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = warehouseMenuExpanded)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(),
+                        shape = RoundedCornerShape(SmartLedgerTokens.fieldCorner),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = SmartLedgerColors.AccentPrimary,
+                            unfocusedBorderColor = SmartLedgerColors.BorderSubtle
+                        )
+                    )
+                    ExposedDropdownMenu(
+                        expanded = warehouseMenuExpanded,
+                        onDismissRequest = { warehouseMenuExpanded = false }
+                    ) {
+                        availableWarehouses.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option, maxLines = 1) },
+                                onClick = {
+                                    warehouse = option
+                                    warehouseMenuExpanded = false
+                                },
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
 
                 if (duplicateBarcodeProduct != null) {
                     Row(
