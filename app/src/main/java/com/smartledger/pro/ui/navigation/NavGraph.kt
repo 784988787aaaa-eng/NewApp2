@@ -303,7 +303,7 @@ private fun GlobalCreateActionMenu(
                             .semantics { contentDescription = option.title },
                         shape = CircleShape,
                         color = SmartLedgerColors.SurfaceCardElevated,
-                        border = BorderStroke(1.dp, SmartLedgerColors.AccentPrimary.copy(alpha = 0.72f),
+                        border = BorderStroke(1.dp, SmartLedgerColors.AccentPrimary.copy(alpha = 0.72f)),
                         onClick = {
                             expanded = false
                             onActionSelected(option.key)
