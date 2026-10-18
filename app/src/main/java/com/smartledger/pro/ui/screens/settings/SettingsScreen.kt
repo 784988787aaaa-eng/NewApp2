@@ -555,7 +555,7 @@ fun SettingsScreen(
                 }
             }
 
-            if (matchesSearch("المخزون الباركود موقع الرف البيع بالسالب الحد الأدنى تنبيه الائتمان الهاتف الوحدات قطعة كرتون")) {
+            if (matchesSearch("المخزون الباركود موقع الرف البيع بالسالب الحد الأدنى تنبيه الائتمان الهاتف الوحدات قطعة كرتون حقول الإدخال تخصيص إظهار إخفاء")) {
                 item {
                     SettingsSectionCard(
                         icon = Icons.Default.Inventory2,
@@ -637,38 +637,21 @@ fun SettingsScreen(
                             }
                         )
                         Divider(color = SmartLedgerColors.BorderSubtle)
-                        SettingSwitchRow(
-                            title = "الباركود في المخزون",
-                            subtitle = "",
-                            checked = fieldVisibility.inventoryBarcode,
-                            onCheckedChange = { show ->
+                        SettingsFieldVisibilityControls(
+                            inventoryBarcode = fieldVisibility.inventoryBarcode,
+                            productBarcode = fieldVisibility.productBarcode,
+                            productShelf = fieldVisibility.productShelf,
+                            posBarcode = fieldVisibility.posBarcode,
+                            onInventoryBarcodeChange = { show ->
                                 ScreenFieldVisibilityStore.update(context) { it.copy(inventoryBarcode = show) }
-                            }
-                        )
-                        Divider(color = SmartLedgerColors.BorderSubtle)
-                        SettingSwitchRow(
-                            title = "الباركود في بطاقة الصنف",
-                            subtitle = "",
-                            checked = fieldVisibility.productBarcode,
-                            onCheckedChange = { show ->
+                            },
+                            onProductBarcodeChange = { show ->
                                 ScreenFieldVisibilityStore.update(context) { it.copy(productBarcode = show) }
-                            }
-                        )
-                        Divider(color = SmartLedgerColors.BorderSubtle)
-                        SettingSwitchRow(
-                            title = "موقع الرف في بطاقة الصنف",
-                            subtitle = "",
-                            checked = fieldVisibility.productShelf,
-                            onCheckedChange = { show ->
+                            },
+                            onProductShelfChange = { show ->
                                 ScreenFieldVisibilityStore.update(context) { it.copy(productShelf = show) }
-                            }
-                        )
-                        Divider(color = SmartLedgerColors.BorderSubtle)
-                        SettingSwitchRow(
-                            title = "الباركود في نقطة البيع",
-                            subtitle = "",
-                            checked = fieldVisibility.posBarcode,
-                            onCheckedChange = { show ->
+                            },
+                            onPosBarcodeChange = { show ->
                                 ScreenFieldVisibilityStore.update(context) { it.copy(posBarcode = show) }
                             }
                         )
@@ -1626,3 +1609,63 @@ fun SettingsScreen(
         }
     }
 }
+
+/**
+ * Focused, reusable controls for optional inventory and point-of-sale fields.
+ * Keeping field visibility separate from business policy switches makes this
+ * settings section easier to maintain without touching inventory/accounting rules.
+ */
+@Composable
+private fun SettingsFieldVisibilityControls(
+    inventoryBarcode: Boolean,
+    productBarcode: Boolean,
+    productShelf: Boolean,
+    posBarcode: Boolean,
+    onInventoryBarcodeChange: (Boolean) -> Unit,
+    onProductBarcodeChange: (Boolean) -> Unit,
+    onProductShelfChange: (Boolean) -> Unit,
+    onPosBarcodeChange: (Boolean) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = "تخصيص حقول الإدخال",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = SmartLedgerColors.TextPrimary
+        )
+        Text(
+            text = "أظهر الحقول التي يحتاجها نشاطك فقط. تغيير هذه الخيارات يؤثر على الواجهة ولا يحذف بيانات الأصناف المسجلة.",
+            style = MaterialTheme.typography.bodySmall,
+            color = SmartLedgerColors.TextMuted
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        SettingSwitchRow(
+            title = "الباركود في المخزون",
+            subtitle = "إظهار أو إخفاء حقل الباركود في شاشة المخزون",
+            checked = inventoryBarcode,
+            onCheckedChange = onInventoryBarcodeChange
+        )
+        Divider(color = SmartLedgerColors.BorderSubtle)
+        SettingSwitchRow(
+            title = "الباركود في بطاقة الصنف",
+            subtitle = "إظهار حقل الباركود عند إضافة الصنف أو تعديله",
+            checked = productBarcode,
+            onCheckedChange = onProductBarcodeChange
+        )
+        Divider(color = SmartLedgerColors.BorderSubtle)
+        SettingSwitchRow(
+            title = "موقع الرف في بطاقة الصنف",
+            subtitle = "إظهار موقع الرف للمتاجر التي تنظّم الأصناف على الرفوف",
+            checked = productShelf,
+            onCheckedChange = onProductShelfChange
+        )
+        Divider(color = SmartLedgerColors.BorderSubtle)
+        SettingSwitchRow(
+            title = "الباركود في نقطة البيع",
+            subtitle = "إظهار حقل الباركود في شاشة البيع السريع",
+            checked = posBarcode,
+            onCheckedChange = onPosBarcodeChange
+        )
+    }
+}
+
