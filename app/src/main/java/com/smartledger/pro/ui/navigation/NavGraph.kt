@@ -170,7 +170,7 @@ fun MainAppScaffold(navController: NavHostController = rememberNavController()) 
                     else slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.End, tween(durationMs)) + fadeIn(tween(durationMs))
                 },
                 popExitTransition = {
-                    if (durationMs == 0) EnterTransition.None
+                    if (durationMs == 0) ExitTransition.None
                     else slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, tween(durationMs)) + fadeOut(tween(durationMs))
                 }
             ) {
