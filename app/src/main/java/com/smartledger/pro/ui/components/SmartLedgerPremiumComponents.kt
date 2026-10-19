@@ -84,7 +84,7 @@ fun SmartSplitActionButton(
 
 @Composable
 fun SmartUsageModePill(currentMode: AppUsageMode, onModeSelected: (AppUsageMode) -> Unit) {
-    val modes = listOf(AppUsageMode.CLASSIC, AppUsageMode.NORMAL, AppUsageMode.PROFESSIONAL)
+    val modes = AppUsageMode.values().toList()
     Row(
         Modifier.background(SmartLedgerColors.SurfaceCard, RoundedCornerShape(12.dp))
             .border(1.dp, SmartLedgerColors.BorderSubtle, RoundedCornerShape(12.dp)).padding(3.dp),
