@@ -10,10 +10,8 @@ set -e
 APP_BASE_NAME=`basename "$0"`
 APP_HOME="`pwd -P`"
 
-# If gradle is already installed in PATH (like GitHub Actions setup-gradle) use it directly
-if command -v gradle >/dev/null 2>&1; then
-    exec gradle "$@"
-fi
+# Always use the pinned Gradle Wrapper distribution. Never fall back to a
+# globally installed Gradle version, which may be incompatible with this project.
 
 # Fallback: check Java
 if [ -n "$JAVA_HOME" ] ; then
