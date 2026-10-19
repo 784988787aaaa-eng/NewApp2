@@ -92,10 +92,10 @@ fun SmartUsageModePill(currentMode: AppUsageMode, onModeSelected: (AppUsageMode)
     ) {
         modes.forEach { mode ->
             val selected = currentMode == mode
-            val label = when (mode) {
-                AppUsageMode.CLASSIC -> "كلاسيكي"
-                AppUsageMode.NORMAL -> "عادي"
-                AppUsageMode.PROFESSIONAL -> "احترافي"
+            val label = when {
+                mode.name.contains("CLASSIC", ignoreCase = true) -> "كلاسيكي"
+                mode.name.contains("PRO", ignoreCase = true) -> "احترافي"
+                else -> "عادي"
             }
             Text(
                 text = label,
